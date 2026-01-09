@@ -1,0 +1,606 @@
+
+
+/**
+ * DashFlix - Analisador de Estratégias (Versão Otimizada v2.0)
+ * Data: 2026-01-09
+ * * MELHORIAS APLICADAS:
+ * 1. Formatação dinâmica (sem limite de 200 linhas).
+ * 2. Performance: onEdit removido da aba Trades para evitar travamentos.
+ * 3. Renderização: Separação entre Layout (pesado) e Dados (leve).
+ * 4. Limpeza de dados antigos mais segura.
+ */
+
+/* ================= CONFIG ================= */
+const SHEET_DASHBOARD = "Dashboard";
+const SHEET_TRADES    = "Trades";
+
+// Seletor de período (bloco M1:P3 mesclado)
+const PERIOD_CELL = "M1";
+
+// Trades
+const TRADES_HEADER_ROW = 1;
+const TRADES_DATA_START_ROW = 2;
+const TRADES_COLUMNS = 4; // Date, PnL, Contracts, Asset
+
+// Lista padrão de ativos (dropdown)
+const DEFAULT_ASSETS = ["MNQ", "NQ", "MES", "ES"];
+
+const THEME = {
+  bg: "#121212",
+  panel: "#1E1E1E",
+  panel2: "#252525",
+  black: "#000000",
+  text: "#E0E0E0",
+  textDim: "#B0BEC5",
+  bronze: "#B08B4F",
+  grid: "#333333",
+  border: "#2D2D2D",
+};
+
+/* ================= MENU ================= */
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu("DashFlix")
+    .addItem("🔄 Atualizar Dashboard", "updateDashboard")
+    .addSeparator()
+    .addItem("🛠️ Setup Inicial / Reset Layout", "setupDashflix")
+    .addToUi();
+}
+
+/* ================= EVENT ================= */
+function onEdit(e) {
+  if (!e || !e.range) return;
+
+  const sh = e.range.getSheet();
+  const name = sh.getName();
+
+  // OTIMIZAÇÃO: Só atualiza automaticamente se mudar o FILTRO no Dashboard.
+  // A edição na aba Trades NÃO dispara atualização para não travar a digitação.
+  if (name === SHEET_DASHBOARD) {
+    const a1 = e.range.getA1Notation();
+    const r = e.range.getRow();
+    const c = e.range.getColumn();
+    
+    // Verifica se a edição foi na área do seletor de período (M1:P3)
+    // M=13, P=16
+    if ((a1 === PERIOD_CELL) || (r <= 3 && c >= 13 && c <= 16)) {
+      updateDashboard();
+    }
+  }
+}
+
+/* ================= SETUP ================= */
+function setupDashflix(opts) {
+  opts = opts || {};
+  const ss = SpreadsheetApp.getActive();
+
+  const shTrades = ensureTradesSheet_(ss);
+  const shDash   = ensureDashboardSheet_(ss);
+
+  // Layout do dashboard (Pesado - só roda no Setup)
+  ensureDashboardLayout_(shDash);
+
+  // Mantém Trades formatado (tema + validações em TODA a planilha)
+  formatTradesSheet_(shTrades);
+
+  if (!opts.silent) {
+    SpreadsheetApp.getUi().alert("Setup concluído! O layout foi redefinido e as validações aplicadas.");
+    updateDashboard(); // Já puxa os dados iniciais
+  }
+}
+
+/* ================= ENTRY ================= */
+function updateDashboard() {
+  const ss = SpreadsheetApp.getActive();
+  const shDash = ss.getSheetByName(SHEET_DASHBOARD);
+  if (!shDash) return; // Se não existir, não faz nada (usuário deve rodar setup)
+
+  // REMOVIDO: ensureDashboardLayout_() 
+  // Motivo: Performance. Não recriamos o fundo preto a cada clique. 
+  // Se o layout quebrar, o usuário usa o menu "Setup".
+
+  const period = getSelectedPeriod_(shDash);
+  const trades = getFilteredTrades_(ss, period);
+
+  // Renderização (Atualiza apenas valores e gráficos)
+  renderKpis_(shDash, trades);
+  renderCharts_(shDash, trades);
+  renderRightColumn_(shDash, trades);
+
+  SpreadsheetApp.flush();
+}
+
+/* ================= PERIOD ================= */
+function getSelectedPeriod_(shDash) {
+  let val = shDash.getRange(PERIOD_CELL).getValue();
+  val = String(val || "").trim();
+  if (!val) val = "Diário";
+  return val;
+}
+
+/* ================= DATA (Trades only) ================= */
+function getFilteredTrades_(ss, period) {
+  const sh = ss.getSheetByName(SHEET_TRADES);
+  if (!sh) return [];
+
+  const lastRow = sh.getLastRow();
+  if (lastRow < TRADES_DATA_START_ROW) return [];
+
+  // Pega todos os dados de uma vez
+  const data = sh.getRange(TRADES_DATA_START_ROW, 1, lastRow - TRADES_HEADER_ROW + 1, TRADES_COLUMNS).getValues();
+
+  // Lê e normaliza com try/catch para robustez
+  const rows = [];
+  for (let i = 0; i < data.length; i++) {
+    const r = data[i];
+    try {
+      // Ignora linhas sem data válida
+      if (!(r[0] instanceof Date) || isNaN(r[0].getTime())) continue;
+      
+      const pnlVal = toNumber_(r[1]);
+      
+      // Se não tiver ativo ou PnL não for número, pula (para não sujar gráficos)
+      if (isNaN(pnlVal)) continue;
+
+      rows.push({
+        date: normalizeDate_(r[0]),
+        pnl:  pnlVal,
+        contracts: toNumber_(r[2]),
+        asset: String(r[3] || "").trim()
+      });
+    } catch (e) {
+      // Linha corrompida ignorada silenciosamente
+      continue;
+    }
+  }
+
+  const p = String(period || "").trim().toLowerCase();
+  if (!p || p === "geral") return rows;
+
+  const now = normalizeDate_(new Date());
+
+  return rows.filter(t => {
+    if (p === "diário" || p === "diario") return sameDay_(t.date, now);
+    if (p === "semanal") return sameWeekMon_(t.date, now);
+    if (p === "mensal") return (t.date.getMonth() === now.getMonth() && t.date.getFullYear() === now.getFullYear());
+    if (p === "anual")  return (t.date.getFullYear() === now.getFullYear());
+    return true;
+  });
+}
+
+function normalizeDate_(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+function toNumber_(v) {
+  if (v === "" || v === null || v === undefined) return NaN;
+  if (typeof v === "number") return v;
+  // Tenta limpar strings como "R$ 1.000,00" ou "1,000.00"
+  try {
+    const s = String(v).replace(/[^\d.,-]/g, "").replace(",", "."); 
+    const n = parseFloat(s);
+    return isNaN(n) ? NaN : n;
+  } catch (e) {
+    return NaN;
+  }
+}
+
+function sameDay_(a, b) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+function sameWeekMon_(a, b) {
+  return startOfWeekMon_(a).getTime() === startOfWeekMon_(b).getTime();
+}
+
+function startOfWeekMon_(date) {
+  const d = new Date(date);
+  d.setHours(0,0,0,0);
+  const day = (d.getDay() + 6) % 7; // Mon=0
+  d.setDate(d.getDate() - day);
+  return d;
+}
+
+/* ================= DASHBOARD LAYOUT (FIXO) ================= */
+function ensureDashboardSheet_(ss) {
+  return ss.getSheetByName(SHEET_DASHBOARD) || ss.insertSheet(SHEET_DASHBOARD);
+}
+function ensureTradesSheet_(ss) {
+  return ss.getSheetByName(SHEET_TRADES) || ss.insertSheet(SHEET_TRADES);
+}
+
+function ensureDashboardLayout_(sh) {
+  sh.setHiddenGridlines(true);
+
+  // Define fundo geral
+  sh.getRange(1, 1, Math.max(sh.getMaxRows(), 200), 20)
+    .setBackground(THEME.bg)
+    .setFontColor(THEME.text)
+    .setFontFamily("Arial");
+
+  // HEADER principal (A1:L3)
+  const headerRange = sh.getRange("A1:L3");
+  safeMerge_(headerRange);
+  headerRange
+    .setValue("RESUMO – ANALISADOR DE ESTRATÉGIAS")
+    .setHorizontalAlignment("center")
+    .setVerticalAlignment("middle")
+    .setFontSize(18)
+    .setFontWeight("bold")
+    .setFontColor(THEME.bronze)
+    .setBackground(THEME.black);
+
+  // Seletor de período (M1:P3)
+  const periodBlock = sh.getRange("M1:P3");
+  safeMerge_(periodBlock);
+  periodBlock
+    .setBackground(THEME.black)
+    .setHorizontalAlignment("center")
+    .setVerticalAlignment("middle")
+    .setFontSize(14)
+    .setFontWeight("bold")
+    .setFontColor(THEME.bronze);
+
+  const rule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(["Diário","Semanal","Mensal","Anual","Geral"], true)
+    .setAllowInvalid(false)
+    .build();
+  periodBlock.setDataValidation(rule);
+
+  const cur = sh.getRange(PERIOD_CELL).getValue();
+  if (!cur) sh.getRange(PERIOD_CELL).setValue("Diário");
+
+  // KPIs Layout
+  const labels = ["PnL Total","Eficiência","Dias Operados","Win Rate","Max Drawdown","PnL Médio"];
+  for (let i = 0; i < labels.length; i++) {
+    const col = 1 + i * 2;
+    const rLabel = sh.getRange(4, col, 1, 2);
+    safeMerge_(rLabel);
+    rLabel
+      .setValue(labels[i])
+      .setBackground(THEME.panel)
+      .setFontColor(THEME.textDim)
+      .setHorizontalAlignment("center")
+      .setVerticalAlignment("middle")
+      .setFontSize(11);
+
+    const rVal = sh.getRange(5, col, 1, 2);
+    safeMerge_(rVal);
+    rVal
+      .setBackground(THEME.panel)
+      .setFontColor(THEME.text)
+      .setFontWeight("bold")
+      .setHorizontalAlignment("center")
+      .setVerticalAlignment("middle")
+      .setFontSize(14);
+  }
+
+  sh.setRowHeight(6, 12);
+
+  // Cabeçalhos dos Gráficos
+  setupCardHeader_(sh, 7, "Curva de Performance (Cumulative PnL)");
+  setupCardHeader_(sh, 20, "Eficiência (Resultados Positivos vs Negativos)");
+  setupCardHeader_(sh, 33, "Resultado Diário (PnL por Dia)");
+
+  // Fundo da Coluna Direita (M:P)
+  sh.getRange(6, 13, Math.max(sh.getMaxRows(), 300), 4)
+    .setBackground(THEME.panel2)
+    .setFontColor(THEME.text);
+
+  // Cabeçalho da tabela lateral
+  sh.getRange(6, 13, 1, 4)
+    .setValues([["Data","PnL (USD)","Contratos","Ativo"]])
+    .setBackground(THEME.panel)
+    .setFontWeight("bold")
+    .setHorizontalAlignment("center")
+    .setFontSize(12);
+
+  // Larguras das colunas
+  for (let c = 1; c <= 12; c++) sh.setColumnWidth(c, 75);
+  sh.setColumnWidth(13, 100); 
+  sh.setColumnWidth(14, 110); 
+  sh.setColumnWidth(15, 90);  
+  sh.setColumnWidth(16, 90);  
+}
+
+function setupCardHeader_(sh, row, title) {
+  const h = sh.getRange(row, 1, 1, 12);
+  safeMerge_(h);
+  h.setValue(title)
+   .setBackground(THEME.panel)
+   .setFontColor(THEME.textDim)
+   .setFontSize(12)
+   .setVerticalAlignment("middle")
+   .setHorizontalAlignment("left");
+}
+
+/* ================= KPI RENDER ================= */
+function renderKpis_(sh, trades) {
+  const totalPnL = sum_(trades.map(t => t.pnl));
+  const daysCount = countUnique_(trades.map(t => t.date.getTime()));
+  const wins = trades.filter(t => t.pnl > 0).length;
+  const winRate = trades.length ? Math.round((wins / trades.length) * 100) : 0;
+
+  const pos = sum_(trades.filter(t => t.pnl > 0).map(t => t.pnl));
+  const negAbs = sum_(trades.filter(t => t.pnl < 0).map(t => Math.abs(t.pnl)));
+  const efficiency = (pos + negAbs) > 0 ? Math.round((pos / (pos + negAbs)) * 100) : 0;
+
+  const daily = aggregateDaily_(trades);
+  const cumArr = [];
+  let cum = 0;
+  daily.forEach(d => { cum += d.pnl; cumArr.push(cum); });
+  const maxDD = computeMaxDrawdown_(cumArr);
+
+  const pnlMedio = trades.length ? (totalPnL / trades.length) : 0;
+
+  // Valores KPI (Linha 5)
+  // 1,3,5,7,9,11
+  const vals = [
+    formatUSD_(totalPnL),
+    efficiency + "%",
+    daysCount,
+    winRate + "%",
+    formatUSD_(maxDD),
+    formatUSD_(pnlMedio)
+  ];
+
+  // Escreve em lote para performance (uma chamada por célula infelizmente devido ao merge, mas ok)
+  sh.getRange(5, 1).setValue(vals[0]);
+  sh.getRange(5, 3).setValue(vals[1]);
+  sh.getRange(5, 5).setValue(vals[2]);
+  sh.getRange(5, 7).setValue(vals[3]);
+  sh.getRange(5, 9).setValue(vals[4]);
+  sh.getRange(5, 11).setValue(vals[5]);
+}
+
+function sum_(arr){ return (arr || []).reduce((s,v)=>s+(Number(v)||0),0); }
+function countUnique_(arr){ return new Set(arr || []).size; }
+function formatUSD_(n){ return "$ " + Number(n||0).toFixed(2); }
+function computeMaxDrawdown_(cumArr){
+  let peak = -Infinity;
+  let maxDD = 0;
+  for (let i=0;i<cumArr.length;i++){
+    const v = Number(cumArr[i]||0);
+    if (v > peak) peak = v;
+    const dd = peak - v;
+    if (dd > maxDD) maxDD = dd;
+  }
+  return maxDD; // Retorna positivo para exibição
+}
+
+/* ================= CHARTS ================= */
+function renderCharts_(sh, trades) {
+  sh.getCharts().forEach(c => sh.removeChart(c));
+
+  const daily = aggregateDaily_(trades);
+  
+  // Se não houver dados, para aqui para não criar gráficos vazios
+  if (!daily.length) return;
+
+  const curve = buildCumulative_(daily);
+  const eff   = buildEfficiency_(trades);
+  const bars  = buildBars_(daily);
+
+  // Área de dados oculta (Longe da visão)
+  const DATA_ROW = Math.max(sh.getMaxRows(), 300) + 10;
+  // Garante que existe espaço
+  if (sh.getMaxRows() < DATA_ROW + 100) {
+    sh.insertRowsAfter(sh.getMaxRows(), 200);
+  }
+
+  // Limpa área de dados auxiliares antiga
+  sh.getRange(DATA_ROW, 1, 100, 10).clearContent();
+
+  // Escreve dados auxiliares
+  if(curve.length) sh.getRange(DATA_ROW, 1, curve.length, 2).setValues(curve);
+  if(eff.length)   sh.getRange(DATA_ROW, 4, eff.length, 2).setValues(eff);
+  if(bars.length)  sh.getRange(DATA_ROW, 7, bars.length, 2).setValues(bars);
+
+  // Formata datas na área oculta (opcional, mas bom pra debug)
+  sh.getRange(DATA_ROW+1, 1, Math.max(1, curve.length-1), 1).setNumberFormat("dd/MM/yyyy");
+  sh.getRange(DATA_ROW+1, 7, Math.max(1, bars.length-1), 1).setNumberFormat("dd/MM/yyyy");
+
+  const chartWidth  = 900;
+  const chartHeight = 290;
+  const commonOpts = {
+    backgroundColor: { fill: THEME.bg },
+    hAxis: { textStyle: { color: THEME.text }, gridlines: { color: THEME.grid } },
+    vAxis: { textStyle: { color: THEME.text }, gridlines: { color: THEME.grid } },
+    legend: { position: "none" },
+    width: chartWidth,
+    height: chartHeight
+  };
+
+  // 1. Linha (Cumulative)
+  const c1 = sh.newChart().setChartType(Charts.ChartType.LINE)
+    .addRange(sh.getRange(DATA_ROW, 1, curve.length, 2))
+    .setPosition(8, 1, 0, 0)
+    .setOption("colors", [THEME.bronze]);
+  
+  // Aplica opções comuns manualmente pois setOption retorna builder
+  for (let k in commonOpts) c1.setOption(k, commonOpts[k]);
+  sh.insertChart(c1.build());
+
+  // 2. Pizza (Eficiência)
+  const c2 = sh.newChart().setChartType(Charts.ChartType.PIE)
+    .addRange(sh.getRange(DATA_ROW, 4, eff.length, 2))
+    .setPosition(21, 1, 0, 0)
+    .setOption("pieHole", 0.5)
+    .setOption("colors", [THEME.bronze, "#555555"])
+    .setOption("legend", { position: "right", textStyle: { color: THEME.text } })
+    .setOption("pieSliceText", "percentage")
+    .setOption("backgroundColor.fill", THEME.bg)
+    .setOption("width", chartWidth)
+    .setOption("height", chartHeight)
+    .build();
+  sh.insertChart(c2);
+
+  // 3. Coluna (Diário)
+  const c3 = sh.newChart().setChartType(Charts.ChartType.COLUMN)
+    .addRange(sh.getRange(DATA_ROW, 7, bars.length, 2))
+    .setPosition(34, 1, 0, 0)
+    .setOption("colors", [THEME.bronze]);
+  for (let k in commonOpts) c3.setOption(k, commonOpts[k]);
+  sh.insertChart(c3.build());
+}
+
+function aggregateDaily_(trades) {
+  const m = new Map();
+  trades.forEach(t => {
+    const key = Utilities.formatDate(t.date, Session.getScriptTimeZone(), "yyyy-MM-dd");
+    const cur = m.get(key) || { date: t.date, pnl: 0 };
+    cur.pnl += (Number(t.pnl) || 0);
+    m.set(key, cur);
+  });
+  return Array.from(m.values()).sort((a,b)=>a.date-b.date);
+}
+
+function buildCumulative_(daily) {
+  const out = [["Data", "PnL"]];
+  let cum = 0;
+  daily.forEach(d => {
+    cum += d.pnl;
+    out.push([d.date, cum]);
+  });
+  return out;
+}
+
+function buildBars_(daily) {
+  const out = [["Data", "PnL"]];
+  daily.forEach(d => out.push([d.date, d.pnl]));
+  return out;
+}
+
+function buildEfficiency_(trades) {
+  const pos = sum_(trades.filter(t => t.pnl > 0).map(t => t.pnl));
+  const neg = sum_(trades.filter(t => t.pnl < 0).map(t => Math.abs(t.pnl)));
+  return [ ["Tipo", "Valor"], ["Positivo", pos], ["Negativo", neg] ];
+}
+
+/* ================= RIGHT COLUMN (M:P) ================= */
+function renderRightColumn_(sh, trades) {
+  const startCol = 13; // M
+  const startRow = 6;
+  
+  // Limpeza OTIMIZADA: Limpa até o final da planilha, não um número fixo
+  const maxRows = sh.getMaxRows();
+  if (maxRows > startRow) {
+    // Limpa conteúdo e formatação condicional antiga (se houver), mas mantém fundo
+    const range = sh.getRange(startRow + 1, startCol, maxRows - startRow, 4);
+    range.clearContent();
+    // range.breakApart(); // Opcional, se usar merges na lista
+  }
+
+  const sorted = trades.slice().sort((a,b)=>b.date - a.date);
+
+  if (sorted.length) {
+    const rows = sorted.map(t => ([
+      Utilities.formatDate(t.date, Session.getScriptTimeZone(), "dd/MM/yyyy"),
+      Number(t.pnl)||0,
+      Number(t.contracts)||"",
+      String(t.asset||"")
+    ]));
+
+    sh.getRange(startRow + 1, startCol, rows.length, 4).setValues(rows);
+
+    // Formatação leve
+    sh.getRange(startRow + 1, startCol, rows.length, 1).setHorizontalAlignment("left");
+    sh.getRange(startRow + 1, startCol + 1, rows.length, 1).setNumberFormat("$#,##0.00").setHorizontalAlignment("right");
+    sh.getRange(startRow + 1, startCol + 2, rows.length, 2).setHorizontalAlignment("center");
+  }
+
+  // TOTAL
+  const total = sum_(trades.map(t => t.pnl));
+  const totalRow = startRow + 1 + sorted.length + 1; // 1 linha de respiro
+
+  // Garante que temos linhas suficientes
+  if (totalRow + 2 > sh.getMaxRows()) {
+    sh.insertRowsAfter(sh.getMaxRows(), 5);
+  }
+
+  const totalLabel = sh.getRange(totalRow, startCol, 1, 4);
+  safeMerge_(totalLabel);
+  totalLabel.setValue("TOTAL")
+    .setBackground(THEME.black)
+    .setFontColor(THEME.text)
+    .setFontWeight("bold")
+    .setHorizontalAlignment("left")
+    .setFontSize(12);
+
+  const totalVal = sh.getRange(totalRow + 1, startCol, 1, 4);
+  safeMerge_(totalVal);
+  totalVal.setValue(formatUSD_(total))
+    .setBackground(THEME.black)
+    .setFontColor(THEME.bronze)
+    .setFontWeight("bold")
+    .setHorizontalAlignment("right")
+    .setFontSize(14);
+}
+
+/* ================= TRADES SHEET (REFATORADO) ================= */
+function formatTradesSheet_(sh) {
+  sh.setHiddenGridlines(true);
+
+  // Garante tamanho mínimo de linhas (ex: 1000 ou atual + 100)
+  const currentMax = sh.getMaxRows();
+  const desiredMin = 1000;
+  if (currentMax < desiredMin) {
+    sh.insertRowsAfter(currentMax, desiredMin - currentMax);
+  }
+
+  const maxRows = sh.getMaxRows();
+  const maxCols = Math.max(sh.getMaxColumns(), 4);
+
+  // Formata TUDO (do início ao fim da planilha)
+  sh.getRange(1, 1, maxRows, maxCols)
+    .setBackground(THEME.bg)
+    .setFontColor(THEME.text)
+    .setFontFamily("Arial");
+
+  // Header
+  sh.getRange(1,1,1,4)
+    .setValues([["Data","PnL (USD)","Contratos","Ativo"]])
+    .setBackground(THEME.black)
+    .setFontColor(THEME.text)
+    .setFontWeight("bold")
+    .setHorizontalAlignment("center");
+  sh.setFrozenRows(1);
+
+  // Larguras
+  sh.setColumnWidth(1, 120);
+  sh.setColumnWidth(2, 120);
+  sh.setColumnWidth(3, 110);
+  sh.setColumnWidth(4, 110);
+
+  // Formatações de Coluna Inteira (A2:A, B2:B, etc)
+  const rowsToFormat = maxRows - 1;
+  if (rowsToFormat > 0) {
+    const dataRange = sh.getRange(2, 1, rowsToFormat, 4);
+    
+    // Formatos numéricos
+    sh.getRange(2,1,rowsToFormat,1).setNumberFormat("dd/MM/yyyy");
+    sh.getRange(2,2,rowsToFormat,1).setNumberFormat("$#,##0.00");
+    
+    // Alinhamentos
+    sh.getRange(2,3,rowsToFormat,2).setHorizontalAlignment("center");
+
+    // Validações
+    const dateRule = SpreadsheetApp.newDataValidation().requireDate().setAllowInvalid(false).build();
+    const pnlRule = SpreadsheetApp.newDataValidation().requireNumberBetween(-1e9, 1e9).setAllowInvalid(false).build();
+    const ctrRule = SpreadsheetApp.newDataValidation().requireNumberGreaterThan(0).setAllowInvalid(false).build();
+    const assetRule = SpreadsheetApp.newDataValidation().requireValueInList(DEFAULT_ASSETS, true).setAllowInvalid(false).build();
+
+    sh.getRange(2,1,rowsToFormat,1).setDataValidation(dateRule);
+    sh.getRange(2,2,rowsToFormat,1).setDataValidation(pnlRule);
+    sh.getRange(2,3,rowsToFormat,1).setDataValidation(ctrRule);
+    sh.getRange(2,4,rowsToFormat,1).setDataValidation(assetRule);
+  }
+}
+
+/* ================= UTILS ================= */
+function safeMerge_(range) {
+  try { range.breakApart(); } catch (e) {}
+  range.merge();
+}
