@@ -8,6 +8,7 @@ using System.Globalization;
 using System.IO;
 using IOPath = System.IO.Path;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Windows; // TextAlignment
 using System.Windows.Controls;
@@ -3737,6 +3738,42 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         public int GetQty() => _qty;
 
+        private static bool TryParseFlexibleNumber(string input, out double value)
+        {
+            value = 0.0;
+            if (string.IsNullOrWhiteSpace(input))
+                return false;
+
+            string trimmed = input.Trim();
+            int lastDot = trimmed.LastIndexOf('.');
+            int lastComma = trimmed.LastIndexOf(',');
+            int decimalIndex = Math.Max(lastDot, lastComma);
+
+            var sb = new StringBuilder(trimmed.Length);
+            for (int i = 0; i < trimmed.Length; i++)
+            {
+                char c = trimmed[i];
+                if (char.IsDigit(c))
+                {
+                    sb.Append(c);
+                }
+                else if ((c == '-' || c == '+') && i == 0)
+                {
+                    sb.Append(c);
+                }
+                else if (i == decimalIndex && (c == '.' || c == ','))
+                {
+                    sb.Append('.');
+                }
+            }
+
+            string normalized = sb.ToString();
+            if (string.IsNullOrWhiteSpace(normalized) || normalized == "-" || normalized == "+")
+                return false;
+
+            return double.TryParse(normalized, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
+        }
+
         public void SetLastOrderInfo(string info)
         {
             try
@@ -3765,9 +3802,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (_txtStop == null) return 0.0;
                 string s = _txtStop.Text?.Trim() ?? "";
                 if (string.IsNullOrEmpty(s) || s == "-") return 0.0;
-                if (double.TryParse(s, NumberStyles.Any, CultureInfo.CurrentCulture, out double v))
-                    return Math.Max(0.0, v);
-                if (double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out v))
+                if (TryParseFlexibleNumber(s, out double v))
                     return Math.Max(0.0, v);
                 return 0.0;
             }
@@ -3897,10 +3932,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                 input.PreviewTextInput += (s, e) =>
                 {
-                    var decimalSep = CultureInfo.CurrentCulture.NumberFormat.NumberDecimalSeparator;
-                    var groupSep = CultureInfo.CurrentCulture.NumberFormat.NumberGroupSeparator;
                     string text = e.Text;
-                    if (text.All(c => Char.IsDigit(c)) || text == decimalSep || text == groupSep) e.Handled = false;
+                    if (text.All(c => Char.IsDigit(c)) || text == "." || text == ",") e.Handled = false;
                     else e.Handled = true;
                 };
                 DataObject.AddPastingHandler(input, (s, e) =>
@@ -3908,7 +3941,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     if (e.DataObject.GetDataPresent(DataFormats.Text))
                     {
                         string pasted = e.DataObject.GetData(DataFormats.Text) as string;
-                        if (!double.TryParse(pasted, NumberStyles.Number, CultureInfo.CurrentCulture, out _)) e.CancelCommand();
+                        if (!TryParseFlexibleNumber(pasted, out _)) e.CancelCommand();
                     }
                     else e.CancelCommand();
                 });
@@ -3927,12 +3960,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                             _txtStop.Text = "-";
                             _txtStop.Foreground = Brushes.White;
                         }
-                        else if (double.TryParse(txt, NumberStyles.Number, CultureInfo.CurrentCulture, out double v))
-                        {
-                            _txtStop.Text = v.ToString("N2", CultureInfo.CurrentCulture);
-                            _txtStop.Foreground = BronzeBrush;
-                        }
-                        else if (double.TryParse(txt, NumberStyles.Number, CultureInfo.InvariantCulture, out v))
+                        else if (TryParseFlexibleNumber(txt, out double v))
                         {
                             _txtStop.Text = v.ToString("N2", CultureInfo.CurrentCulture);
                             _txtStop.Foreground = BronzeBrush;
