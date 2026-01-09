@@ -561,8 +561,7 @@ function renderRightColumn_(sh, trades) {
   }
 
   const sorted = trades.slice().sort((a,b)=>b.date - a.date);
-  const rightColumnLimit = getRightColumnLimit_(sh);
-  const limited = sorted.slice(0, rightColumnLimit);
+  const limited = sorted.slice(0, RIGHT_COLUMN_LIMIT);
 
   if (limited.length) {
     const rows = limited.map(t => ([
