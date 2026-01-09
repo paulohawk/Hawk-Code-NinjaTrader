@@ -545,6 +545,16 @@ function updateChartsAppearance_(sh) {
 
   charts.forEach(chart => {
     let builder = chart.modify();
+    const chartType = chart.getChartType();
+
+    if (chartType === Charts.ChartType.LINE) {
+      builder = builder.setPosition(8, 1, 0, 0);
+    } else if (chartType === Charts.ChartType.PIE) {
+      builder = builder.setPosition(24, 1, 0, 0);
+    } else if (chartType === Charts.ChartType.COLUMN) {
+      builder = builder.setPosition(37, 1, 0, 0);
+    }
+
     Object.keys(styleOptions).forEach(key => {
       builder = builder.setOption(key, styleOptions[key]);
     });
