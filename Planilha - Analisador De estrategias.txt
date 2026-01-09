@@ -1,5 +1,3 @@
-
-
 /**
  * DashFlix - Analisador de Estratégias (Versão Otimizada v2.0)
  * Data: 2026-01-09
@@ -69,10 +67,44 @@ function onEdit(e) {
 
   // OTIMIZAÇÃO: Só atualiza automaticamente se mudar o FILTRO no Dashboard.
   // A edição na aba Trades NÃO dispara atualização para não travar a digitação.
+const THEME = {
+  bg: "#121212",
+  panel: "#1E1E1E",
+  panel2: "#252525",
+  black: "#000000",
+  text: "#E0E0E0",
+  textDim: "#B0BEC5",
+  bronze: "#B08B4F",
+  grid: "#444444",
+  border: "#2D2D2D",
+};
+
+/* ================= MENU ================= */
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu("DashFlix")
+    .addItem("🔄 Atualizar Dashboard", "updateDashboard")
+    .addSeparator()
+    .addItem("🛠️ Setup Inicial / Reset Layout", "setupDashflix")
+    .addToUi();
+}
+
+/* ================= EVENT ================= */
+function onEdit(e) {
+  if (!e || !e.range) return;
+
+  const sh = e.range.getSheet();
+  const name = sh.getName();
+
+  // OTIMIZAÇÃO: Só atualiza automaticamente se mudar o FILTRO no Dashboard.
+  // A edição na aba Trades NÃO dispara atualização para não travar a digitação.
   if (name === SHEET_DASHBOARD) {
     const a1 = e.range.getA1Notation();
     const r = e.range.getRow();
     const c = e.range.getColumn();
+    
+    // Verifica se a edição foi na área do seletor de período (M1:P3)
+    // M=13, P=16
     
     // Verifica se a edição foi na área do seletor de período (M1:P3)
     // M=13, P=16
@@ -90,6 +122,8 @@ function onEdit(e) {
     }
   }
 }
+
+/* ================= SETUP ================= */
 
 /* ================= SETUP ================= */
 function setupDashflix(opts) {
@@ -354,6 +388,40 @@ function setupCardHeader_(sh, row, title) {
 }
 
 /* ================= KPI RENDER ================= */
+
+  // Fundo da Coluna Direita (M:P)
+  sh.getRange(6, 13, Math.max(sh.getMaxRows(), 300), 4)
+    .setBackground(THEME.panel2)
+    .setFontColor(THEME.text);
+
+  // Cabeçalho da tabela lateral
+  sh.getRange(6, 13, 1, 4)
+    .setValues([["Data","PnL (USD)","Contratos","Ativo"]])
+    .setBackground(THEME.panel)
+    .setFontWeight("bold")
+    .setHorizontalAlignment("center")
+    .setFontSize(12);
+
+  // Larguras das colunas
+  for (let c = 1; c <= 12; c++) sh.setColumnWidth(c, 75);
+  sh.setColumnWidth(13, 100); 
+  sh.setColumnWidth(14, 110); 
+  sh.setColumnWidth(15, 90);  
+  sh.setColumnWidth(16, 90);  
+}
+
+function setupCardHeader_(sh, row, title) {
+  const h = sh.getRange(row, 1, 1, 12);
+  safeMerge_(h);
+  h.setValue(title)
+   .setBackground(THEME.panel)
+   .setFontColor(THEME.textDim)
+   .setFontSize(12)
+   .setVerticalAlignment("middle")
+   .setHorizontalAlignment("left");
+}
+
+/* ================= KPI RENDER ================= */
 function renderKpis_(sh, trades, dashboardData) {
   const totalPnL = sum_(trades.map(t => t.pnl));
   const daysCount = countUnique_(trades.map(t => t.date.getTime()));
@@ -527,6 +595,14 @@ function updateChartsAppearance_(sh) {
     vAxis: { textStyle: { color: THEME.text }, gridlines: { color: THEME.grid } }
   };
 
+  charts.forEach((chart, index) => {
+    let builder = chart.modify();
+
+    if (index === 0) {
+      builder = builder.setPosition(8, 1, 0, 0);
+    } else if (index === 1) {
+      builder = builder.setPosition(24, 1, 0, 0);
+    } else if (index === 2) {
   charts.forEach(chart => {
     let builder = chart.modify();
     const chartType = chart.getChartType();
@@ -594,6 +670,7 @@ function renderRightColumn_(sh, trades) {
 
   if (maxListLength > 0) {
     const listRange = sh.getRange(listStartRow, startCol, maxListLength, 4);
+    listRange.breakApart();
     listRange
       .setFontFamily("Arial")
       .setFontSize(10)
@@ -637,6 +714,17 @@ function renderRightColumn_(sh, trades) {
   // Garante que temos linhas suficientes
   if (totalRow + 2 > sh.getMaxRows()) {
     sh.insertRowsAfter(sh.getMaxRows(), 5);
+  }
+
+  const totalLabel = sh.getRange(totalRow, startCol, 1, 4);
+  safeMerge_(totalLabel);
+  totalLabel.setValue("TOTAL")
+    .setBackground(THEME.black)
+    .setFontColor(THEME.text)
+    .setFontWeight("bold")
+    .setHorizontalAlignment("left")
+    .setFontSize(12);
+
   }
 
   const totalLabel = sh.getRange(totalRow, startCol, 1, 4);
