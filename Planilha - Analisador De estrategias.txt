@@ -31,6 +31,8 @@ const CHART_CURVE_ROWS = 200;
 const CHART_BARS_ROWS = 200;
 const CHART_EFF_ROWS = 3;
 
+const RIGHT_COLUMN_ROWS_PROP = "dashflix.rightColumnRows";
+
 const THEME = {
   bg: "#121212",
   panel: "#1E1E1E",
@@ -508,14 +510,16 @@ function padTable_(rows, targetRows, targetCols) {
 function renderRightColumn_(sh, trades) {
   const startCol = 13; // M
   const startRow = 6;
-  
-  // Limpeza OTIMIZADA: Limpa até o final da planilha, não um número fixo
+
+  const props = PropertiesService.getDocumentProperties();
+  const prevCount = parseInt(props.getProperty(RIGHT_COLUMN_ROWS_PROP) || "0", 10);
   const maxRows = sh.getMaxRows();
-  if (maxRows > startRow) {
-    // Limpa conteúdo e formatação condicional antiga (se houver), mas mantém fundo
-    const range = sh.getRange(startRow + 1, startCol, maxRows - startRow, 4);
-    range.clearContent();
-    // range.breakApart(); // Opcional, se usar merges na lista
+  if (prevCount > 0 && maxRows > startRow) {
+    const rowsToClear = Math.min(prevCount, maxRows - startRow);
+    if (rowsToClear > 0) {
+      const range = sh.getRange(startRow + 1, startCol, rowsToClear, 4);
+      range.clearContent();
+    }
   }
 
   const sorted = trades.slice().sort((a,b)=>b.date - a.date);
@@ -562,6 +566,9 @@ function renderRightColumn_(sh, trades) {
     .setFontWeight("bold")
     .setHorizontalAlignment("right")
     .setFontSize(14);
+
+  const renderedRows = sorted.length + 3;
+  props.setProperty(RIGHT_COLUMN_ROWS_PROP, String(renderedRows));
 }
 
 /* ================= TRADES SHEET (REFATORADO) ================= */
