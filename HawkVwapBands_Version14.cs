@@ -232,6 +232,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 		private D2D.LinearGradientBrush _dxGradientBrush;
 		private D2D.GradientStopCollection _dxGradientStops;
 		private D2D.SolidColorBrush _dxHighlightBrush;
+		private bool _sharpDxReady;
 
 		// Layout constants
 		private const float PanelMargin = 8f;
@@ -654,28 +655,38 @@ namespace NinjaTrader.NinjaScript.Indicators
 		public override void OnRenderTargetChanged()
 		{
 			DisposeDx();
+			_sharpDxReady = false;
 
 			if (RenderTarget != null)
 			{
-				_dwriteFactory = new DW.Factory();
-				_textFormat = new DW.TextFormat(_dwriteFactory, PanelFont, PanelFontSize)
+				try
 				{
-					TextAlignment = DW.TextAlignment.Leading,
-					ParagraphAlignment = DW.ParagraphAlignment.Near
-				};
+					_dwriteFactory = new DW.Factory();
+					_textFormat = new DW.TextFormat(_dwriteFactory, PanelFont, PanelFontSize)
+					{
+						TextAlignment = DW.TextAlignment.Leading,
+						ParagraphAlignment = DW.ParagraphAlignment.Near
+					};
 
-				_dxBorderBrush   = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0xFF, 0xD4, 0xA0, 0x17)));
-				_dxTextBrush     = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0xE6, 0xCC, 0xCC, 0xCC)));
-				var stops = new[]
+					_dxBorderBrush   = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0xFF, 0xD4, 0xA0, 0x17)));
+					_dxTextBrush     = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0xE6, 0xCC, 0xCC, 0xCC)));
+					var stops = new[]
+					{
+						new D2D.GradientStop { Color = ToColor4(Media.Color.FromArgb(0xC0, 0x50, 0x50, 0x50)), Position = 0.0f },
+						new D2D.GradientStop { Color = ToColor4(Media.Color.FromArgb(0xB4, 0x28, 0x28, 0x28)), Position = 1.0f }
+					};
+					_dxGradientStops = new D2D.GradientStopCollection(RenderTarget, stops, D2D.Gamma.StandardRgb, D2D.ExtendMode.Clamp);
+					_dxGradientBrush = new D2D.LinearGradientBrush(RenderTarget,
+						new D2D.LinearGradientBrushProperties { StartPoint = new Vector2(0f, 0f), EndPoint = new Vector2(0f, 1f) },
+						_dxGradientStops);
+					_dxHighlightBrush = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)));
+					_sharpDxReady = true;
+				}
+				catch
 				{
-					new D2D.GradientStop { Color = ToColor4(Media.Color.FromArgb(0xC0, 0x50, 0x50, 0x50)), Position = 0.0f },
-					new D2D.GradientStop { Color = ToColor4(Media.Color.FromArgb(0xB4, 0x28, 0x28, 0x28)), Position = 1.0f }
-				};
-				_dxGradientStops = new D2D.GradientStopCollection(RenderTarget, stops, D2D.Gamma.StandardRgb, D2D.ExtendMode.Clamp);
-				_dxGradientBrush = new D2D.LinearGradientBrush(RenderTarget,
-					new D2D.LinearGradientBrushProperties { StartPoint = new Vector2(0f, 0f), EndPoint = new Vector2(0f, 1f) },
-					_dxGradientStops);
-				_dxHighlightBrush = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)));
+					DisposeDx();
+					_sharpDxReady = false;
+				}
 			}
 
 			base.OnRenderTargetChanged();
@@ -688,36 +699,43 @@ namespace NinjaTrader.NinjaScript.Indicators
 			if (!EnableVisuals)
 				return;
 
-			if (RenderTarget == null || ChartPanel == null || string.IsNullOrEmpty(_infoText) ||
+			if (RenderTarget == null || !_sharpDxReady || ChartPanel == null || string.IsNullOrEmpty(_infoText) ||
 			    _dwriteFactory == null || _textFormat == null || _dxGradientBrush == null ||
 			    _dxBorderBrush == null || _dxTextBrush == null || _dxHighlightBrush == null)
 				return;
 
-			using (var textLayout = new DW.TextLayout(_dwriteFactory, _infoText, _textFormat, float.MaxValue, float.MaxValue))
+			try
 			{
-				float boxW = (float)textLayout.Metrics.Width + 2f * PanelPadding;
-				float boxH = (float)textLayout.Metrics.Height + 2f * PanelPadding;
-
-				float x = (float)Math.Floor(ChartPanel.X + PanelMargin) + 0.5f;
-				float y = (float)Math.Floor(ChartPanel.Y + ChartPanel.H - PanelLift - boxH) + 0.5f;
-
-				var rect = new D2D.RoundedRectangle
+				using (var textLayout = new DW.TextLayout(_dwriteFactory, _infoText, _textFormat, float.MaxValue, float.MaxValue))
 				{
-					Rect = new RectangleF(x, y, boxW, boxH),
-					RadiusX = PanelCornerRadius,
-					RadiusY = PanelCornerRadius
-				};
+					float boxW = (float)textLayout.Metrics.Width + 2f * PanelPadding;
+					float boxH = (float)textLayout.Metrics.Height + 2f * PanelPadding;
 
-				_dxGradientBrush.StartPoint = new Vector2(x, y);
-				_dxGradientBrush.EndPoint   = new Vector2(x, y + boxH);
+					float x = (float)Math.Floor(ChartPanel.X + PanelMargin) + 0.5f;
+					float y = (float)Math.Floor(ChartPanel.Y + ChartPanel.H - PanelLift - boxH) + 0.5f;
 
-				RenderTarget.FillRoundedRectangle(rect, _dxGradientBrush);
-				RenderTarget.DrawLine(new Vector2(x + PanelCornerRadius, y + 1f), new Vector2(x + boxW - PanelCornerRadius, y + 1f), _dxHighlightBrush, 1.0f);
-				RenderTarget.DrawRoundedRectangle(rect, _dxBorderBrush, 1.4f);
+					var rect = new D2D.RoundedRectangle
+					{
+						Rect = new RectangleF(x, y, boxW, boxH),
+						RadiusX = PanelCornerRadius,
+						RadiusY = PanelCornerRadius
+					};
 
-				float textX = x + PanelPadding;
-				float textY = y + PanelPadding;
-				RenderTarget.DrawTextLayout(new Vector2(textX, textY), textLayout, _dxTextBrush, D2D.DrawTextOptions.None);
+					_dxGradientBrush.StartPoint = new Vector2(x, y);
+					_dxGradientBrush.EndPoint   = new Vector2(x, y + boxH);
+
+					RenderTarget.FillRoundedRectangle(rect, _dxGradientBrush);
+					RenderTarget.DrawLine(new Vector2(x + PanelCornerRadius, y + 1f), new Vector2(x + boxW - PanelCornerRadius, y + 1f), _dxHighlightBrush, 1.0f);
+					RenderTarget.DrawRoundedRectangle(rect, _dxBorderBrush, 1.4f);
+
+					float textX = x + PanelPadding;
+					float textY = y + PanelPadding;
+					RenderTarget.DrawTextLayout(new Vector2(textX, textY), textLayout, _dxTextBrush, D2D.DrawTextOptions.None);
+				}
+			}
+			catch
+			{
+				_sharpDxReady = false;
 			}
 		}
 
@@ -743,6 +761,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				_dxHighlightBrush = null;
 				_textFormat = null;
 				_dwriteFactory = null;
+				_sharpDxReady = false;
 			}
 		}
 
