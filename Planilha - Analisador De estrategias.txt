@@ -30,13 +30,13 @@ const CHART_DATA_START_ROW = 300;
 const CHART_CURVE_ROWS = 200;
 const CHART_BARS_ROWS = 200;
 const CHART_EFF_ROWS = 3;
+const CHART_WIDTH = 900;
+const CHART_HEIGHT = 290;
 
 const TRADES_FORMAT_BUFFER = 100;
 
 const RIGHT_COLUMN_ROWS_PROP = "dashflix.rightColumnRows";
 const RIGHT_COLUMN_LIMIT = 50;
-const RIGHT_COLUMN_LIMIT_LABEL_RANGE = "M4:O4";
-const RIGHT_COLUMN_LIMIT_CELL = "P4";
 
 const THEME = {
   bg: "#121212",
@@ -67,8 +67,7 @@ function onEdit(e) {
   const sh = e.range.getSheet();
   const name = sh.getName();
 
-  // OTIMIZAÇÃO: Só atualiza automaticamente se mudar o FILTRO no Dashboard.
-  // A edição na aba Trades NÃO dispara atualização para não travar a digitação.
+  // Atualiza automaticamente se mudar o FILTRO no Dashboard.
   if (name === SHEET_DASHBOARD) {
     const a1 = e.range.getA1Notation();
     const r = e.range.getRow();
@@ -77,6 +76,15 @@ function onEdit(e) {
     // Verifica se a edição foi na área do seletor de período (M1:P3)
     // M=13, P=16
     if ((a1 === PERIOD_CELL) || (r <= 3 && c >= 13 && c <= 16)) {
+      updateDashboard();
+    }
+  }
+
+  // Atualiza quando a edição acontece na aba Trades (dados relevantes).
+  if (name === SHEET_TRADES) {
+    const r = e.range.getRow();
+    const c = e.range.getColumn();
+    if (r >= TRADES_DATA_START_ROW && c >= 1 && c <= TRADES_COLUMNS) {
       updateDashboard();
     }
   }
@@ -119,6 +127,7 @@ function updateDashboard() {
 
   // Renderização (Atualiza apenas valores e gráficos)
   renderKpis_(shDash, trades, dashboardData);
+  refreshDashboardChartHeaders_(shDash);
   ensureCharts_(shDash);
   renderCharts_(shDash, dashboardData);
   renderRightColumn_(shDash, trades);
@@ -296,35 +305,22 @@ function ensureDashboardLayout_(sh) {
 
   sh.setRowHeight(6, 12);
 
-  // Limite da coluna direita (M4:P4)
-  const limitLabel = sh.getRange(RIGHT_COLUMN_LIMIT_LABEL_RANGE);
-  safeMerge_(limitLabel);
-  limitLabel
-    .setValue("Limite lista lateral")
+  // Cabeçalho da coluna direita (M4:P4)
+  const rightHeader = sh.getRange("M4:P4");
+  safeMerge_(rightHeader);
+  rightHeader
+    .setValue("Histórico de Trades")
     .setBackground(THEME.panel)
     .setFontColor(THEME.textDim)
-    .setHorizontalAlignment("left")
-    .setVerticalAlignment("middle")
-    .setFontSize(10);
-
-  const limitCell = sh.getRange(RIGHT_COLUMN_LIMIT_CELL);
-  limitCell
-    .setBackground(THEME.panel)
-    .setFontColor(THEME.text)
     .setHorizontalAlignment("center")
     .setVerticalAlignment("middle")
-    .setFontSize(10);
-  if (!limitCell.getValue()) limitCell.setValue(RIGHT_COLUMN_LIMIT);
-  const limitRule = SpreadsheetApp.newDataValidation()
-    .requireNumberGreaterThan(0)
-    .setAllowInvalid(false)
-    .build();
-  limitCell.setDataValidation(limitRule);
+    .setFontSize(11)
+    .setFontWeight("bold");
 
   // Cabeçalhos dos Gráficos
   setupCardHeader_(sh, 7, "Curva de Performance (Cumulative PnL)");
-  setupCardHeader_(sh, 20, "Eficiência (Resultados Positivos vs Negativos)");
-  setupCardHeader_(sh, 33, "Resultado Diário (PnL por Dia)");
+  setupCardHeader_(sh, 23, "Eficiência (Resultados Positivos vs Negativos)");
+  setupCardHeader_(sh, 36, "Resultado Diário (PnL por Dia)");
 
   // Fundo da Coluna Direita (M:P)
   sh.getRange(6, 13, Math.max(sh.getMaxRows(), 300), 4)
@@ -356,6 +352,19 @@ function setupCardHeader_(sh, row, title) {
    .setFontSize(12)
    .setVerticalAlignment("middle")
    .setHorizontalAlignment("left");
+}
+
+function refreshDashboardChartHeaders_(sh) {
+  const oldRows = [20, 33];
+  oldRows.forEach(row => {
+    const range = sh.getRange(row, 1, 1, 12);
+    range.breakApart();
+    range.clearContent();
+  });
+
+  setupCardHeader_(sh, 7, "Curva de Performance (Cumulative PnL)");
+  setupCardHeader_(sh, 23, "Eficiência (Resultados Positivos vs Negativos)");
+  setupCardHeader_(sh, 36, "Resultado Diário (PnL por Dia)");
 }
 
 /* ================= KPI RENDER ================= */
@@ -430,6 +439,8 @@ function renderCharts_(sh, dashboardData) {
   curveRange.setValues(padTable_(curve, CHART_CURVE_ROWS, 2));
   effRange.setValues(padTable_(eff, CHART_EFF_ROWS, 2));
   barsRange.setValues(padTable_(bars, CHART_BARS_ROWS, 2));
+
+  updateChartsAppearance_(sh);
 }
 
 function buildDashboardData_(trades) {
@@ -478,15 +489,14 @@ function ensureCharts_(sh) {
   const charts = sh.getCharts();
   if (charts.length >= 3) return;
 
-  const chartWidth  = 900;
-  const chartHeight = 290;
   const commonOpts = {
     backgroundColor: { fill: THEME.bg },
+    chartArea: { backgroundColor: THEME.bg },
     hAxis: { textStyle: { color: THEME.text }, gridlines: { color: THEME.grid } },
     vAxis: { textStyle: { color: THEME.text }, gridlines: { color: THEME.grid } },
     legend: { position: "none" },
-    width: chartWidth,
-    height: chartHeight
+    width: CHART_WIDTH,
+    height: CHART_HEIGHT
   };
 
   const curveRange = sh.getRange(CHART_DATA_START_ROW, 1, CHART_CURVE_ROWS, 2);
@@ -502,23 +512,48 @@ function ensureCharts_(sh) {
 
   const c2 = sh.newChart().setChartType(Charts.ChartType.PIE)
     .addRange(effRange)
-    .setPosition(21, 1, 0, 0)
+    .setPosition(24, 1, 0, 0)
     .setOption("pieHole", 0.5)
     .setOption("colors", [THEME.bronze, "#555555"])
     .setOption("legend", { position: "right", textStyle: { color: THEME.text } })
     .setOption("pieSliceText", "percentage")
     .setOption("backgroundColor.fill", THEME.bg)
-    .setOption("width", chartWidth)
-    .setOption("height", chartHeight)
+    .setOption("width", CHART_WIDTH)
+    .setOption("height", CHART_HEIGHT)
     .build();
   sh.insertChart(c2);
 
   const c3 = sh.newChart().setChartType(Charts.ChartType.COLUMN)
     .addRange(barsRange)
-    .setPosition(34, 1, 0, 0)
+    .setPosition(37, 1, 0, 0)
     .setOption("colors", [THEME.bronze]);
   for (let k in commonOpts) c3.setOption(k, commonOpts[k]);
   sh.insertChart(c3.build());
+}
+
+function updateChartsAppearance_(sh) {
+  const charts = sh.getCharts();
+  if (!charts.length) return;
+
+  charts.forEach(chart => {
+    const builder = chart.modify();
+    const chartType = chart.getChartType();
+    if (chartType === Charts.ChartType.LINE) {
+      builder.setPosition(8, 1, 0, 0);
+    } else if (chartType === Charts.ChartType.PIE) {
+      builder.setPosition(24, 1, 0, 0);
+    } else if (chartType === Charts.ChartType.COLUMN) {
+      builder.setPosition(37, 1, 0, 0);
+    }
+    builder
+      .setOption("backgroundColor", { fill: THEME.bg })
+      .setOption("chartArea", { backgroundColor: THEME.bg })
+      .setOption("hAxis", { textStyle: { color: THEME.text }, gridlines: { color: THEME.grid } })
+      .setOption("vAxis", { textStyle: { color: THEME.text }, gridlines: { color: THEME.grid } })
+      .setOption("width", CHART_WIDTH)
+      .setOption("height", CHART_HEIGHT);
+    sh.updateChart(builder.build());
+  });
 }
 
 function ensureChartDataRange_(sh) {
@@ -548,6 +583,10 @@ function padTable_(rows, targetRows, targetCols) {
 function renderRightColumn_(sh, trades) {
   const startCol = 13; // M
   const startRow = 6;
+  const totalRow = 44;
+  const listStartRow = startRow + 1;
+  const maxListRow = totalRow - 1;
+  const maxListLength = Math.max(0, maxListRow - listStartRow + 1);
 
   const props = PropertiesService.getDocumentProperties();
   const prevCount = parseInt(props.getProperty(RIGHT_COLUMN_ROWS_PROP) || "0", 10);
@@ -561,8 +600,31 @@ function renderRightColumn_(sh, trades) {
   }
 
   const sorted = trades.slice().sort((a,b)=>b.date - a.date);
-  const limit = getRightColumnLimit_(sh);
+  const limit = Math.min(getRightColumnLimit_(sh), maxListLength);
   const limited = sorted.slice(0, limit);
+
+  if (maxListLength > 0) {
+    const listRange = sh.getRange(listStartRow, startCol, maxListLength, 4);
+    listRange.breakApart();
+    listRange
+      .setFontFamily("Arial")
+      .setFontSize(10)
+      .setVerticalAlignment("middle");
+    sh.setRowHeights(listStartRow, maxListLength, 20);
+
+    const dateRange = sh.getRange(listStartRow, startCol, maxListLength, 1);
+    const pnlRange = sh.getRange(listStartRow, startCol + 1, maxListLength, 1);
+    const contractsRange = sh.getRange(listStartRow, startCol + 2, maxListLength, 1);
+    const assetRange = sh.getRange(listStartRow, startCol + 3, maxListLength, 1);
+
+    dateRange.setNumberFormat("dd/MM/yyyy").setHorizontalAlignment("left");
+    pnlRange.setNumberFormat("$#,##0.00").setHorizontalAlignment("right");
+    contractsRange.setHorizontalAlignment("center");
+    assetRange.setHorizontalAlignment("center");
+  }
+
+  sh.setRowHeight(totalRow, 20);
+  sh.setRowHeight(totalRow + 1, 22);
 
   if (limited.length) {
     const rows = limited.map(t => ([
@@ -572,17 +634,11 @@ function renderRightColumn_(sh, trades) {
       String(t.asset||"")
     ]));
 
-    sh.getRange(startRow + 1, startCol, rows.length, 4).setValues(rows);
-
-    // Formatação leve
-    sh.getRange(startRow + 1, startCol, rows.length, 1).setHorizontalAlignment("left");
-    sh.getRange(startRow + 1, startCol + 1, rows.length, 1).setNumberFormat("$#,##0.00").setHorizontalAlignment("right");
-    sh.getRange(startRow + 1, startCol + 2, rows.length, 2).setHorizontalAlignment("center");
+    sh.getRange(listStartRow, startCol, rows.length, 4).setValues(rows);
   }
 
   // TOTAL
   const total = sum_(trades.map(t => t.pnl));
-  const totalRow = startRow + 1 + limited.length + 1; // 1 linha de respiro
 
   // Garante que temos linhas suficientes
   if (totalRow + 2 > sh.getMaxRows()) {
@@ -607,15 +663,11 @@ function renderRightColumn_(sh, trades) {
     .setHorizontalAlignment("right")
     .setFontSize(14);
 
-  const renderedRows = limited.length + 3;
+  const renderedRows = totalRow - startRow + 1;
   props.setProperty(RIGHT_COLUMN_ROWS_PROP, String(renderedRows));
 }
 
 function getRightColumnLimit_(sh) {
-  if (!sh) return RIGHT_COLUMN_LIMIT;
-  const raw = sh.getRange(RIGHT_COLUMN_LIMIT_CELL).getValue();
-  const parsed = parseInt(raw, 10);
-  if (!isNaN(parsed) && parsed > 0) return parsed;
   return RIGHT_COLUMN_LIMIT;
 }
 
