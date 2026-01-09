@@ -232,7 +232,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 		private D2D.LinearGradientBrush _dxGradientBrush;
 		private D2D.GradientStopCollection _dxGradientStops;
 		private D2D.SolidColorBrush _dxHighlightBrush;
-		private bool _sharpDxReady;
+		private bool _panelDxReady;
 
 		// Layout constants
 		private const float PanelMargin = 8f;
@@ -655,7 +655,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 		public override void OnRenderTargetChanged()
 		{
 			DisposeDx();
-			_sharpDxReady = false;
+			_panelDxReady = false;
 
 			if (RenderTarget != null)
 			{
@@ -680,12 +680,12 @@ namespace NinjaTrader.NinjaScript.Indicators
 						new D2D.LinearGradientBrushProperties { StartPoint = new Vector2(0f, 0f), EndPoint = new Vector2(0f, 1f) },
 						_dxGradientStops);
 					_dxHighlightBrush = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)));
-					_sharpDxReady = true;
+					_panelDxReady = true;
 				}
 				catch
 				{
 					DisposeDx();
-					_sharpDxReady = false;
+					_panelDxReady = false;
 				}
 			}
 
@@ -699,7 +699,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 			if (!EnableVisuals)
 				return;
 
-			if (RenderTarget == null || !_sharpDxReady || ChartPanel == null || string.IsNullOrEmpty(_infoText) ||
+			if (RenderTarget == null || !_panelDxReady || ChartPanel == null || string.IsNullOrEmpty(_infoText) ||
 			    _dwriteFactory == null || _textFormat == null || _dxGradientBrush == null ||
 			    _dxBorderBrush == null || _dxTextBrush == null || _dxHighlightBrush == null)
 				return;
@@ -735,7 +735,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 			}
 			catch
 			{
-				_sharpDxReady = false;
+				_panelDxReady = false;
 			}
 		}
 
@@ -761,7 +761,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				_dxHighlightBrush = null;
 				_textFormat = null;
 				_dwriteFactory = null;
-				_sharpDxReady = false;
+				_panelDxReady = false;
 			}
 		}
 
