@@ -334,8 +334,8 @@ function ensureDashboardLayout_(sh) {
 
   // Cabeçalhos dos Gráficos
   setupCardHeader_(sh, 7, "Curva de Performance (Cumulative PnL)");
-  setupCardHeader_(sh, 20, "Eficiência (Resultados Positivos vs Negativos)");
-  setupCardHeader_(sh, 33, "Resultado Diário (PnL por Dia)");
+  setupCardHeader_(sh, 23, "Eficiência (Resultados Positivos vs Negativos)");
+  setupCardHeader_(sh, 36, "Resultado Diário (PnL por Dia)");
 
   // Fundo da Coluna Direita (M:P)
   sh.getRange(6, 13, Math.max(sh.getMaxRows(), 300), 4)
