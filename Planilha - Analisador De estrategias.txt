@@ -599,6 +599,23 @@ function renderRightColumn_(sh, trades) {
   const limit = Math.min(getRightColumnLimit_(sh), maxListLength);
   const limited = sorted.slice(0, limit);
 
+  if (maxListLength > 0) {
+    const listRange = sh.getRange(listStartRow, startCol, maxListLength, 4);
+    listRange
+      .setFontFamily("Arial")
+      .setFontSize(10)
+      .setVerticalAlignment("middle");
+    sh.getRange(listStartRow, startCol, maxListLength, 1)
+      .setNumberFormat("dd/MM/yyyy")
+      .setHorizontalAlignment("left");
+    sh.getRange(listStartRow, startCol + 1, maxListLength, 1)
+      .setNumberFormat("$#,##0.00")
+      .setHorizontalAlignment("right");
+    sh.getRange(listStartRow, startCol + 2, maxListLength, 2)
+      .setHorizontalAlignment("center");
+    sh.setRowHeights(listStartRow, maxListLength, 20);
+  }
+
   if (limited.length) {
     const rows = limited.map(t => ([
       Utilities.formatDate(t.date, Session.getScriptTimeZone(), "dd/MM/yyyy"),
