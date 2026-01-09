@@ -400,11 +400,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 			ComputeSignals();
 
-			if (EnableVisuals)
-			{
-				UpdateInfoText();
-				PublishSnapshot();
-			}
+			UpdateInfoText();
+			PublishSnapshot();
 
 			string modeLabel = GetModeLabel();
 			if (!string.Equals(modeLabel, _lastModeLabel, StringComparison.Ordinal))
@@ -507,7 +504,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 		{
 			PlotVWAP1U[0] = upper[0];
 			PlotVWAP1L[0] = lower[0];
-			Draw.Region(this, "dev1", CurrentBar, 0, PlotVWAP1U, PlotVWAP1L, null, SD1AreaBrush, SD1AreaOpacity);
+			if (EnableVisuals)
+				Draw.Region(this, "dev1", CurrentBar, 0, PlotVWAP1U, PlotVWAP1L, null, SD1AreaBrush, SD1AreaOpacity);
 		}
 
 		void PlotDevTwo()
@@ -515,8 +513,11 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotDevOne();
 			PlotVWAP2U[0] = upper[1];
 			PlotVWAP2L[0] = lower[1];
-			Draw.Region(this, "dev2", CurrentBar, 0, PlotVWAP1U, PlotVWAP2U, null, SD2AreaBrush, SD2AreaOpacity);
-			Draw.Region(this, "dev3", CurrentBar, 0, PlotVWAP1L, PlotVWAP2L, null, SD2AreaBrush, SD2AreaOpacity);
+			if (EnableVisuals)
+			{
+				Draw.Region(this, "dev2", CurrentBar, 0, PlotVWAP1U, PlotVWAP2U, null, SD2AreaBrush, SD2AreaOpacity);
+				Draw.Region(this, "dev3", CurrentBar, 0, PlotVWAP1L, PlotVWAP2L, null, SD2AreaBrush, SD2AreaOpacity);
+			}
 		}
 
 		void PlotDevThree()
@@ -524,8 +525,11 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotDevTwo();
 			PlotVWAP3U[0] = upper[2];
 			PlotVWAP3L[0] = lower[2];
-			Draw.Region(this, "dev4", CurrentBar, 0, PlotVWAP2U, PlotVWAP3U, null, SD3AreaBrush, SD3AreaOpacity);
-			Draw.Region(this, "dev5", CurrentBar, 0, PlotVWAP2L, PlotVWAP3L, null, SD3AreaBrush, SD3AreaOpacity);
+			if (EnableVisuals)
+			{
+				Draw.Region(this, "dev4", CurrentBar, 0, PlotVWAP2U, PlotVWAP3U, null, SD3AreaBrush, SD3AreaOpacity);
+				Draw.Region(this, "dev5", CurrentBar, 0, PlotVWAP2L, PlotVWAP3L, null, SD3AreaBrush, SD3AreaOpacity);
+			}
 		}
 
 		void PlotDevFour()
@@ -533,8 +537,11 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotDevThree();
 			PlotVWAP4U[0] = upper[3];
 			PlotVWAP4L[0] = lower[3];
-			Draw.Region(this, "dev6", CurrentBar, 0, PlotVWAP3U, PlotVWAP4U, null, SD4AreaBrush, SD4AreaOpacity);
-			Draw.Region(this, "dev7", CurrentBar, 0, PlotVWAP3L, PlotVWAP4L, null, SD4AreaBrush, SD4AreaOpacity);
+			if (EnableVisuals)
+			{
+				Draw.Region(this, "dev6", CurrentBar, 0, PlotVWAP3U, PlotVWAP4U, null, SD4AreaBrush, SD4AreaOpacity);
+				Draw.Region(this, "dev7", CurrentBar, 0, PlotVWAP3L, PlotVWAP4L, null, SD4AreaBrush, SD4AreaOpacity);
+			}
 		}
 
 		void PlotDevFive()
@@ -542,8 +549,11 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotDevFour();
 			PlotVWAP5U[0] = upper[4];
 			PlotVWAP5L[0] = lower[4];
-			Draw.Region(this, "dev8", CurrentBar, 0, PlotVWAP4U, PlotVWAP5U, null, SD5AreaBrush, SD5AreaOpacity);
-			Draw.Region(this, "dev9", CurrentBar, 0, PlotVWAP4L, PlotVWAP5L, null, SD5AreaBrush, SD5AreaOpacity);
+			if (EnableVisuals)
+			{
+				Draw.Region(this, "dev8", CurrentBar, 0, PlotVWAP4U, PlotVWAP5U, null, SD5AreaBrush, SD5AreaOpacity);
+				Draw.Region(this, "dev9", CurrentBar, 0, PlotVWAP4L, PlotVWAP5L, null, SD5AreaBrush, SD5AreaOpacity);
+			}
 		}
 
 		//*************************************************************************************
@@ -561,8 +571,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 		private void UpdateInfoText()
 		{
-			if (!EnableVisuals) { _infoText = string.Empty; return; }
-
 			if (TickSize <= 0 || double.IsNaN(curVWAP) || double.IsNaN(deviation))
 			{
 				_infoText = string.Empty;
@@ -601,7 +609,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 		private void PublishSnapshot()
 		{
-			if (!EnableVisuals) return; // sem feed quando desabilitado
 			DateTime tradingDay = Time[0].Date;
 			if (_sessionIterator != null)
 				tradingDay = _sessionIterator.GetTradingDay(Time[0]);
@@ -648,7 +655,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 		{
 			DisposeDx();
 
-			if (RenderTarget != null && EnableVisuals)
+			if (RenderTarget != null)
 			{
 				_dwriteFactory = new DW.Factory();
 				_textFormat = new DW.TextFormat(_dwriteFactory, PanelFont, PanelFontSize)
