@@ -594,8 +594,7 @@ function renderRightColumn_(sh, trades) {
 
   const sorted = trades.slice().sort((a,b)=>b.date - a.date);
   const listStartRow = startRow + 1;
-  const maxListRow = totalRow - 1;
-  const maxListLength = Math.max(0, maxListRow - listStartRow + 1);
+  const maxListLength = Math.max(0, (totalRow - 1) - listStartRow + 1);
   const limit = Math.min(getRightColumnLimit_(sh), maxListLength);
   const limited = sorted.slice(0, limit);
 
@@ -624,12 +623,17 @@ function renderRightColumn_(sh, trades) {
       String(t.asset||"")
     ]));
 
-    sh.getRange(listStartRow, startCol, rows.length, 4).setValues(rows);
+    const endRow = Math.min(listStartRow + rows.length - 1, totalRow - 1);
+    const rowsToWrite = Math.max(0, endRow - listStartRow + 1);
+    if (rowsToWrite > 0) {
+      sh.getRange(listStartRow, startCol, rowsToWrite, 4)
+        .setValues(rows.slice(0, rowsToWrite));
 
-    // Formatação leve
-    sh.getRange(listStartRow, startCol, rows.length, 1).setHorizontalAlignment("left");
-    sh.getRange(listStartRow, startCol + 1, rows.length, 1).setNumberFormat("$#,##0.00").setHorizontalAlignment("right");
-    sh.getRange(listStartRow, startCol + 2, rows.length, 2).setHorizontalAlignment("center");
+      // Formatação leve
+      sh.getRange(listStartRow, startCol, rowsToWrite, 1).setHorizontalAlignment("left");
+      sh.getRange(listStartRow, startCol + 1, rowsToWrite, 1).setNumberFormat("$#,##0.00").setHorizontalAlignment("right");
+      sh.getRange(listStartRow, startCol + 2, rowsToWrite, 2).setHorizontalAlignment("center");
+    }
   }
 
   // TOTAL
