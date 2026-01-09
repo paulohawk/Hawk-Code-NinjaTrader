@@ -46,7 +46,7 @@ const THEME = {
   text: "#E0E0E0",
   textDim: "#B0BEC5",
   bronze: "#B08B4F",
-  grid: "#333333",
+  grid: "#444444",
   border: "#2D2D2D",
 };
 
