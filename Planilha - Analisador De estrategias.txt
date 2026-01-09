@@ -572,23 +572,23 @@ function padTable_(rows, targetRows, targetCols) {
 /* ================= RIGHT COLUMN (M:P) ================= */
 function renderRightColumn_(sh, trades) {
   const startCol = 13; // M
-  const startRow = 6;
+  const listStartRow = 7;
+  const maxListRow = 43;
   const totalRow = 44;
 
   const props = PropertiesService.getDocumentProperties();
   const prevCount = parseInt(props.getProperty(RIGHT_COLUMN_ROWS_PROP) || "0", 10);
   const maxRows = sh.getMaxRows();
-  if (prevCount > 0 && maxRows > startRow) {
-    const rowsToClear = Math.min(prevCount, maxRows - startRow);
+  if (prevCount > 0 && maxRows >= listStartRow) {
+    const rowsToClear = Math.min(prevCount, maxRows - listStartRow + 1);
     if (rowsToClear > 0) {
-      const range = sh.getRange(startRow + 1, startCol, rowsToClear, 4);
+      const range = sh.getRange(listStartRow, startCol, rowsToClear, 4);
       range.clearContent();
     }
   }
 
   const sorted = trades.slice().sort((a,b)=>b.date - a.date);
-  const listStartRow = startRow + 1;
-  const maxListLength = Math.max(0, (totalRow - 1) - listStartRow + 1);
+  const maxListLength = Math.max(0, maxListRow - listStartRow + 1);
   const limit = Math.min(getRightColumnLimit_(sh), maxListLength);
   const limited = sorted.slice(0, limit);
 
@@ -610,6 +610,7 @@ function renderRightColumn_(sh, trades) {
   }
 
   if (limited.length) {
+    sh.getRange(listStartRow, startCol, maxListLength, 4).breakApart();
     const rows = limited.map(t => ([
       Utilities.formatDate(t.date, Session.getScriptTimeZone(), "dd/MM/yyyy"),
       Number(t.pnl)||0,
@@ -617,7 +618,7 @@ function renderRightColumn_(sh, trades) {
       String(t.asset||"")
     ]));
 
-    const endRow = Math.min(listStartRow + rows.length - 1, totalRow - 1);
+    const endRow = Math.min(listStartRow + rows.length - 1, maxListRow);
     const rowsToWrite = Math.max(0, endRow - listStartRow + 1);
     if (rowsToWrite > 0) {
       sh.getRange(listStartRow, startCol, rowsToWrite, 4)
@@ -656,7 +657,7 @@ function renderRightColumn_(sh, trades) {
     .setHorizontalAlignment("right")
     .setFontSize(14);
 
-  const renderedRows = totalRow - startRow + 1;
+  const renderedRows = totalRow - listStartRow + 1;
   props.setProperty(RIGHT_COLUMN_ROWS_PROP, String(renderedRows));
 }
 
