@@ -64,9 +64,11 @@ function updateDashboard() {
 /* ================= DATA ================= */
 function getFilteredTrades(period) {
   const ss = SpreadsheetApp.getActive();
-  const sh = getSheetByNameInsensitive(ss, SHEET_TRADES);
+  const sh = getTradesSheet(ss);
   if (!sh) {
-    Logger.log("Trades sheet not found.");
+    Logger.log(
+      `Trades sheet not found. Expected a sheet named "${SHEET_TRADES}".`
+    );
     return [];
   }
 
@@ -144,6 +146,14 @@ function getSheetByNameInsensitive(ss, name) {
   return ss
     .getSheets()
     .find((sheet) => sheet.getName().toLowerCase() === target);
+}
+
+function getTradesSheet(ss) {
+  const direct = ss.getSheetByName(SHEET_TRADES);
+  if (direct) return direct;
+  const lower = ss.getSheetByName(SHEET_TRADES.toLowerCase());
+  if (lower) return lower;
+  return null;
 }
 
 /* ================= KPIs ================= */
