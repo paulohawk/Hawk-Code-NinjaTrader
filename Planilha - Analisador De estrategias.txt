@@ -573,8 +573,8 @@ function padTable_(rows, targetRows, targetCols) {
 function renderRightColumn_(sh, trades) {
   const startCol = 13; // M
   const listStartRow = 7;
-  const maxListRow = 43;
   const totalRow = 44;
+  const maxListRow = totalRow - 1;
 
   const props = PropertiesService.getDocumentProperties();
   const prevCount = parseInt(props.getProperty(RIGHT_COLUMN_ROWS_PROP) || "0", 10);
@@ -589,7 +589,7 @@ function renderRightColumn_(sh, trades) {
 
   const sorted = trades.slice().sort((a,b)=>b.date - a.date);
   const maxListLength = Math.max(0, maxListRow - listStartRow + 1);
-  const limit = Math.min(getRightColumnLimit_(sh), maxListLength);
+  const limit = Math.min(getRightColumnLimit_(sh), totalRow - 1, maxListLength);
   const limited = sorted.slice(0, limit);
 
   if (maxListLength > 0) {
@@ -619,7 +619,7 @@ function renderRightColumn_(sh, trades) {
     ]));
 
     const endRow = Math.min(listStartRow + rows.length - 1, maxListRow);
-    const rowsToWrite = Math.max(0, endRow - listStartRow + 1);
+    const rowsToWrite = Math.max(0, Math.min(rows.length, endRow - listStartRow + 1));
     if (rowsToWrite > 0) {
       sh.getRange(listStartRow, startCol, rowsToWrite, 4)
         .setValues(rows.slice(0, rowsToWrite));
