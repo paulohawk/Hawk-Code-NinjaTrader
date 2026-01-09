@@ -30,6 +30,8 @@ const CHART_DATA_START_ROW = 300;
 const CHART_CURVE_ROWS = 200;
 const CHART_BARS_ROWS = 200;
 const CHART_EFF_ROWS = 3;
+const CHART_WIDTH = 900;
+const CHART_HEIGHT = 290;
 
 const TRADES_FORMAT_BUFFER = 100;
 
@@ -439,6 +441,8 @@ function renderCharts_(sh, dashboardData) {
   curveRange.setValues(padTable_(curve, CHART_CURVE_ROWS, 2));
   effRange.setValues(padTable_(eff, CHART_EFF_ROWS, 2));
   barsRange.setValues(padTable_(bars, CHART_BARS_ROWS, 2));
+
+  updateChartsAppearance_(sh);
 }
 
 function buildDashboardData_(trades) {
@@ -487,15 +491,13 @@ function ensureCharts_(sh) {
   const charts = sh.getCharts();
   if (charts.length >= 3) return;
 
-  const chartWidth  = 900;
-  const chartHeight = 290;
   const commonOpts = {
     backgroundColor: { fill: THEME.bg },
     hAxis: { textStyle: { color: THEME.text }, gridlines: { color: THEME.grid } },
     vAxis: { textStyle: { color: THEME.text }, gridlines: { color: THEME.grid } },
     legend: { position: "none" },
-    width: chartWidth,
-    height: chartHeight
+    width: CHART_WIDTH,
+    height: CHART_HEIGHT
   };
 
   const curveRange = sh.getRange(CHART_DATA_START_ROW, 1, CHART_CURVE_ROWS, 2);
@@ -517,8 +519,8 @@ function ensureCharts_(sh) {
     .setOption("legend", { position: "right", textStyle: { color: THEME.text } })
     .setOption("pieSliceText", "percentage")
     .setOption("backgroundColor.fill", THEME.bg)
-    .setOption("width", chartWidth)
-    .setOption("height", chartHeight)
+    .setOption("width", CHART_WIDTH)
+    .setOption("height", CHART_HEIGHT)
     .build();
   sh.insertChart(c2);
 
@@ -528,6 +530,26 @@ function ensureCharts_(sh) {
     .setOption("colors", [THEME.bronze]);
   for (let k in commonOpts) c3.setOption(k, commonOpts[k]);
   sh.insertChart(c3.build());
+}
+
+function updateChartsAppearance_(sh) {
+  const charts = sh.getCharts();
+  if (!charts.length) return;
+
+  const styleOptions = {
+    backgroundColor: { fill: THEME.bg },
+    chartArea: { backgroundColor: { fill: THEME.bg } },
+    hAxis: { textStyle: { color: THEME.text }, gridlines: { color: THEME.grid } },
+    vAxis: { textStyle: { color: THEME.text }, gridlines: { color: THEME.grid } }
+  };
+
+  charts.forEach(chart => {
+    let builder = chart.modify();
+    Object.keys(styleOptions).forEach(key => {
+      builder = builder.setOption(key, styleOptions[key]);
+    });
+    sh.updateChart(builder.build());
+  });
 }
 
 function ensureChartDataRange_(sh) {
