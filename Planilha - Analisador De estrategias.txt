@@ -37,6 +37,21 @@ const THEME = {
   border: "#2D2D2D",
 };
 
+const PERIOD_RULES = {
+  diario: (t, now) => sameDay_(t.date, now),
+  "diário": (t, now) => sameDay_(t.date, now),
+  semanal: (t, now) => sameWeekMon_(t.date, now),
+  mensal: (t, now) => (
+    t.date.getMonth() === now.getMonth() && t.date.getFullYear() === now.getFullYear()
+  ),
+  anual: (t, now) => t.date.getFullYear() === now.getFullYear(),
+  "últimos 30 dias": (t, now) => t.date >= addDays_(now, -30),
+  "ultimos 30 dias": (t, now) => t.date >= addDays_(now, -30),
+  "últimos 12 meses": (t, now) => t.date >= addMonths_(now, -12),
+  "ultimos 12 meses": (t, now) => t.date >= addMonths_(now, -12),
+  geral: () => true,
+};
+
 /* ================= MENU ================= */
 function onOpen() {
   SpreadsheetApp.getUi()
@@ -155,23 +170,32 @@ function getFilteredTrades_(ss, period) {
   }
 
   const p = String(period || "").trim().toLowerCase();
-  if (!p || p === "geral") return rows;
-
   const now = normalizeDate_(new Date());
 
-  return rows.filter(t => {
-    if (p === "diário" || p === "diario") return sameDay_(t.date, now);
-    if (p === "semanal") return sameWeekMon_(t.date, now);
-    if (p === "mensal") return (t.date.getMonth() === now.getMonth() && t.date.getFullYear() === now.getFullYear());
-    if (p === "anual")  return (t.date.getFullYear() === now.getFullYear());
-    return true;
-  });
+  const rule = PERIOD_RULES[p];
+  if (!p || !rule) return rows;
+
+  return rows.filter(t => rule(t, now));
 }
 
 function normalizeDate_(d) {
   const x = new Date(d);
   x.setHours(0, 0, 0, 0);
   return x;
+}
+
+function addDays_(date, days) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function addMonths_(date, months) {
+  const d = new Date(date);
+  d.setMonth(d.getMonth() + months);
+  d.setHours(0, 0, 0, 0);
+  return d;
 }
 
 function toNumber_(v) {
