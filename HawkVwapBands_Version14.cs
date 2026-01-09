@@ -1,0 +1,823 @@
+#region Using declarations
+using System;
+using System.Collections.Generic;
+using System.Collections.Concurrent;
+using System.ComponentModel;
+using System.ComponentModel.DataAnnotations;
+using System.Linq;
+using System.Text;
+using System.IO;
+using System.Reflection;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Markup;            // XamlWriter/XamlReader
+using System.Xml.Serialization;
+using NinjaTrader.Cbi;
+using NinjaTrader.Gui;
+using NinjaTrader.Gui.Chart;
+using NinjaTrader.Gui.SuperDom;
+using NinjaTrader.Gui.Tools;            // Stroke, DashStyleHelper
+using NinjaTrader.Core.FloatingPoint;
+using NinjaTrader.Data;
+using NinjaTrader.NinjaScript;
+using NinjaTrader.NinjaScript.DrawingTools;
+using SharpDX;
+using D2D = SharpDX.Direct2D1;
+using DW = SharpDX.DirectWrite;
+using Media = System.Windows.Media;
+#endregion
+
+//This namespace holds Indicators in this folder and is required. Do not change it. 
+namespace NinjaTrader.NinjaScript.Indicators
+{
+	#region Snapshot feed
+	public static class HawkVwapBandsFeed
+	{
+		public class Snapshot
+		{
+			public DateTime UtcTime { get; set; }
+			public DateTime BarTime { get; set; }
+			public DateTime SessionTradingDay { get; set; }
+			public string InstrumentFullName { get; set; }
+			public string Mode { get; set; }
+			public double Vwap { get; set; }
+			public double[] Upper { get; set; } = new double[5];
+			public double[] Lower { get; set; } = new double[5];
+			public int NumDeviations { get; set; }
+			public int TouchMarginTicks { get; set; }
+			public int SignalLong { get; set; }
+			public int SignalShort { get; set; }
+			public int TouchedBandIndex { get; set; } // 0..5
+			public int TouchedSide { get; set; }      // -1 lower, +1 upper, 0 none
+			public BarsPeriodType? BarsPeriodType { get; set; }
+			public int? BarsPeriodValue { get; set; }
+			public int FeedStaleTimeoutSeconds { get; set; }
+		}
+
+		private static readonly ConcurrentDictionary<string, Snapshot> _snapshots = new ConcurrentDictionary<string, Snapshot>();
+
+		public static void Publish(string instrument, Snapshot snap)
+		{
+			if (!string.IsNullOrEmpty(instrument) && snap != null)
+				_snapshots[instrument] = snap;
+		}
+
+		public static bool TryGetSnapshot(string instrument, out Snapshot snap)
+		{
+			snap = null;
+			if (string.IsNullOrEmpty(instrument)) return false;
+
+			if (_snapshots.TryGetValue(instrument, out snap))
+			{
+				int t = snap?.FeedStaleTimeoutSeconds ?? 0;
+				if (t > 0 && (DateTime.UtcNow - snap.UtcTime).TotalSeconds > t)
+				{
+					snap = null;
+					return false;
+				}
+				return true;
+			}
+			return false;
+		}
+	}
+	#endregion
+
+	public class HawkVwapBands : Indicator
+	{
+		// Local helpers for serialization (XAML-based, no Serialize dependency)
+		private static string BrushToString(Brush b)
+		{
+			try { return b == null ? null : XamlWriter.Save(b); } catch { return null; }
+		}
+		private static Brush StringToBrush(string s)
+		{
+			try { return string.IsNullOrEmpty(s) ? null : (Brush)XamlReader.Parse(s); } catch { return null; }
+		}
+
+		// Inputs
+		[NinjaScriptProperty, Range(1, 5)]
+		[Display(Name="Number of deviations", Order=1, GroupName="Standard Deviations")]
+		public int NumDeviations { get; set; } = 5;
+
+		// Modo das bandas
+		[NinjaScriptProperty]
+		[Display(Name="Use Fibo Bands", Order=1, GroupName="Modo das Bandas")]
+		public bool UseFiboBands { get; set; } = false;
+
+		[NinjaScriptProperty]
+		[Display(Name="Use Fixed Bands (%)", Order=2, GroupName="Modo das Bandas")]
+		public bool UseFixedBands { get; set; } = false;
+
+		//Deviation 1
+		[Display(Name="Deviation 1", Order=2, GroupName="Standard Deviations 1")]
+		public double SD1 { get; set; } = 1.28;
+		[Display(Name="SD1 Fill Opacity", Order=3, GroupName="Standard Deviations 1")]
+		public int SD1AreaOpacity { get; set; } = 5;
+		[XmlIgnore]
+		[Display(Name="SD1 Fill Color", Order=4, GroupName="Standard Deviations 1")]
+		public Brush SD1AreaBrush { get; set; } = Brushes.DimGray;
+		[Browsable(false)]
+		public string SD1AreaBrushSerializable { get => BrushToString(SD1AreaBrush); set => SD1AreaBrush = StringToBrush(value) ?? Brushes.DimGray; }
+
+		//Deviation 2
+		[Display(Name="Deviation 2", Order=5, GroupName="Standard Deviations 2")]
+		public double SD2 { get; set; } = 2.01;
+		[Display(Name="SD2 Fill Opacity", Order=6, GroupName="Standard Deviations 2")]
+		public int SD2AreaOpacity { get; set; } = 10;
+		[XmlIgnore]
+		[Display(Name="SD2 Fill Color", Order=7, GroupName="Standard Deviations 2")]
+		public Brush SD2AreaBrush { get; set; } = Brushes.DimGray;
+		[Browsable(false)]
+		public string SD2AreaBrushSerializable { get => BrushToString(SD2AreaBrush); set => SD2AreaBrush = StringToBrush(value) ?? Brushes.DimGray; }
+
+		//Deviation 3
+		[Display(Name="Deviation 3", Order=8, GroupName="Standard Deviations 3")]
+		public double SD3 { get; set; } = 2.51;
+		[Display(Name="SD3 Fill Opacity", Order=9, GroupName="Standard Deviations 3")]
+		public int SD3AreaOpacity { get; set; } = 15;
+		[XmlIgnore]
+		[Display(Name="SD3 Fill Color", Order=10, GroupName="Standard Deviations 3")]
+		public Brush SD3AreaBrush { get; set; } = Brushes.DimGray;
+		[Browsable(false)]
+		public string SD3AreaBrushSerializable { get => BrushToString(SD3AreaBrush); set => SD3AreaBrush = StringToBrush(value) ?? Brushes.DimGray; }
+
+		//Deviation 4
+		[Display(Name="Deviation 4", Order=11, GroupName="Standard Deviations 4")]
+		public double SD4 { get; set; } = 3.1;
+		[Display(Name="SD4 Fill Opacity", Order=12, GroupName="Standard Deviations 4")]
+		public int SD4AreaOpacity { get; set; } = 20;
+		[XmlIgnore]
+		[Display(Name="SD4 Fill Color", Order=13, GroupName="Standard Deviations 4")]
+		public Brush SD4AreaBrush { get; set; } = Brushes.DimGray;
+		[Browsable(false)]
+		public string SD4AreaBrushSerializable { get => BrushToString(SD4AreaBrush); set => SD4AreaBrush = StringToBrush(value) ?? Brushes.DimGray; }
+
+		//Deviation 5
+		[Display(Name="Deviation 5", Order=14, GroupName="Standard Deviations 5")]
+		public double SD5 { get; set; } = 4.0;
+		[Display(Name="SD5 Fill Opacity", Order=15, GroupName="Standard Deviations 5")]
+		public int SD5AreaOpacity { get; set; } = 5;
+		[XmlIgnore]
+		[Display(Name="SD5 Fill Color", Order=16, GroupName="Standard Deviations 5")]
+		public Brush SD5AreaBrush { get; set; } = Brushes.DarkGoldenrod;
+		[Browsable(false)]
+		public string SD5AreaBrushSerializable { get => BrushToString(SD5AreaBrush); set => SD5AreaBrush = StringToBrush(value) ?? Brushes.DarkGoldenrod; }
+
+		// Bandas Fixas (%)
+		[NinjaScriptProperty]
+		[Display(Name="Fixed 1 (%)", Order=1, GroupName="Bandas Fixas (%)")]
+		public double Fixed1Pct { get; set; } = 0.5;
+
+		[NinjaScriptProperty]
+		[Display(Name="Fixed 2 (%)", Order=2, GroupName="Bandas Fixas (%)")]
+		public double Fixed2Pct { get; set; } = 1.0;
+
+		[NinjaScriptProperty]
+		[Display(Name="Fixed 3 (%)", Order=3, GroupName="Bandas Fixas (%)")]
+		public double Fixed3Pct { get; set; } = 1.5;
+
+		[NinjaScriptProperty]
+		[Display(Name="Fixed 4 (%)", Order=4, GroupName="Bandas Fixas (%)")]
+		public double Fixed4Pct { get; set; } = 2.0;
+
+		[NinjaScriptProperty]
+		[Display(Name="Fixed 5 (%)", Order=5, GroupName="Bandas Fixas (%)")]
+		public double Fixed5Pct { get; set; } = 2.5;
+
+		// Debug / Log
+		[NinjaScriptProperty]
+		[Display(Name="Enable Verbose Log (legacy)", Order=19, GroupName="Debug")]
+		public bool EnableVerboseLog { get; set; } = false; // compat
+
+		[NinjaScriptProperty]
+		[Display(Name="Log Level (Off/Error/Info/Verbose)", Order=20, GroupName="Debug")]
+		public string LogLevel { get; set; } = "Info";
+
+		[NinjaScriptProperty, Range(0, 3600)]
+		[Display(Name="Feed Stale Timeout (sec)", Order=21, GroupName="Debug")]
+		public int FeedStaleTimeoutSeconds { get; set; } = 300; // aumentado p/ reduzir falsos stale
+
+		[NinjaScriptProperty, Range(0, 10)]
+		[Display(Name="Touch Margin (ticks)", Order=22, GroupName="Debug")]
+		public int TouchMarginTicks { get; set; } = 1;
+
+		// Internals
+		double iCumVolume = 0;
+		double iCumTypicalVolume = 0;
+		double curVWAP = 0;
+		double deviation = 0;
+		double v2Sum = 0;
+		double hl3 = 0;
+
+		// Band buffers
+		private readonly double[] upper = new double[5];
+		private readonly double[] lower = new double[5];
+
+		// Signals
+		private Series<int> signalLong;
+		private Series<int> signalShort;
+		private Series<int> touchedBandIndex;
+		private Series<int> touchedSide;
+
+		// Hawk panel text
+		private string _infoText = string.Empty;
+
+		// DX resources
+		private DW.Factory _dwriteFactory;
+		private DW.TextFormat _textFormat;
+		private D2D.SolidColorBrush _dxBorderBrush;
+		private D2D.SolidColorBrush _dxTextBrush;
+		private D2D.LinearGradientBrush _dxGradientBrush;
+		private D2D.GradientStopCollection _dxGradientStops;
+		private D2D.SolidColorBrush _dxHighlightBrush;
+
+		// Layout constants
+		private const float PanelMargin = 8f;
+		private const float PanelLift = 45f;
+		private const float PanelPadding = 10f;
+		private const float PanelCornerRadius = 4f;
+		private const string PanelFont = "Segoe UI";
+		private const float PanelFontSize = 10f;
+
+		// Log levels
+		private int _logLevelInt = 2; // default Info
+		private string _lastModeLabel = string.Empty;
+
+		// Session iterator
+		private SessionIterator _sessionIterator;
+
+		// Visual toggle (novo)
+		[NinjaScriptProperty]
+		[Display(Name="Enable Visuals (plots/regions/panel)", Order=99, GroupName="Internal Use")]
+		public bool EnableVisuals { get; set; } = true;
+
+		private static Color4 ToColor4(Media.Color c) => new Color4(c.ScR, c.ScG, c.ScB, c.ScA);
+
+		protected override void OnStateChange()
+		{
+			if (State == State.SetDefaults)
+			{
+				Description	= "Hawk VWAP Bands (session VWAP + standard deviation bands) com modos Volatilidade, Fixa (%) e Fibo. Inclui sinais, snapshot feed e logging.";
+				Name		= "HawkVwapBands";
+				Calculate	= Calculate.OnBarClose;
+				IsOverlay	= true;
+				DrawOnPricePanel = true;
+
+				NumDeviations = 5;
+				SD1 = 1.28; SD2 = 2.01; SD3 = 2.51; SD4 = 3.1; SD5 = 4.0;
+
+				UseFiboBands = false;
+				UseFixedBands = false;
+
+				Fixed1Pct = 0.5; Fixed2Pct = 1.0; Fixed3Pct = 1.5; Fixed4Pct = 2.0; Fixed5Pct = 2.5;
+
+				LogLevel = "Info";
+				FeedStaleTimeoutSeconds = 300; // default ampliado
+				EnableVerboseLog = false;
+				TouchMarginTicks = 1;
+				EnableVisuals = true;
+
+				// Plots (company pattern)
+				AddPlot(new Stroke(Brushes.DarkGoldenrod, DashStyleHelper.Dot, 1), PlotStyle.Line, "PlotVWAP");
+
+				AddPlot(new Stroke(Brushes.DimGray, DashStyleHelper.Dot, 1), PlotStyle.Line, "PlotVWAP1U");
+				AddPlot(new Stroke(Brushes.DimGray, DashStyleHelper.Dot, 1), PlotStyle.Line, "PlotVWAP1L");
+
+				AddPlot(new Stroke(Brushes.Gray, DashStyleHelper.Solid, 1), PlotStyle.Line, "PlotVWAP2U");
+				AddPlot(new Stroke(Brushes.Gray, DashStyleHelper.Solid, 1), PlotStyle.Line, "PlotVWAP2L");
+
+				AddPlot(new Stroke(Brushes.Gray, DashStyleHelper.Solid, 1), PlotStyle.Line, "PlotVWAP3U");
+				AddPlot(new Stroke(Brushes.Gray, DashStyleHelper.Solid, 1), PlotStyle.Line, "PlotVWAP3L");
+
+				AddPlot(new Stroke(Brushes.Gray, DashStyleHelper.Solid, 1), PlotStyle.Line, "PlotVWAP4U");
+				AddPlot(new Stroke(Brushes.Gray, DashStyleHelper.Solid, 1), PlotStyle.Line, "PlotVWAP4L");
+
+				AddPlot(new Stroke(Brushes.DarkGoldenrod, DashStyleHelper.Dot, 1), PlotStyle.Line, "PlotVWAP5U");
+				AddPlot(new Stroke(Brushes.DarkGoldenrod, DashStyleHelper.Dot, 1), PlotStyle.Line, "PlotVWAP5L");
+			}
+			else if (State == State.DataLoaded)
+			{
+				signalLong        = new Series<int>(this);
+				signalShort       = new Series<int>(this);
+				touchedBandIndex  = new Series<int>(this);
+				touchedSide       = new Series<int>(this);
+				_logLevelInt      = ParseLogLevel(LogLevel);
+				_lastModeLabel    = string.Empty;
+				_sessionIterator  = new SessionIterator(Bars);
+			}
+		}
+
+		private int ParseLogLevel(string lvl)
+		{
+			if (string.IsNullOrEmpty(lvl)) return 2;
+			switch (lvl.Trim().ToLowerInvariant())
+			{
+				case "off": return 0;
+				case "error": return 1;
+				case "verbose": return 3;
+				default: return 2; // info
+			}
+		}
+
+		private bool ShouldLog(int level) => _logLevelInt >= level;
+
+		protected override void OnBarUpdate()
+		{
+			// atualizar log level se mudou
+			int parsed = ParseLogLevel(LogLevel);
+			if (parsed != _logLevelInt)
+			{
+				_logLevelInt = parsed;
+				if (ShouldLog(2))
+					Print(LogMsg("LogLevelChanged", $"level={LogLevel}({_logLevelInt})"));
+			}
+
+			// exclusividade dos modos
+			if (UseFiboBands && UseFixedBands)
+				UseFixedBands = false;
+
+			// reset signals
+			signalLong[0] = 0;
+			signalShort[0] = 0;
+			touchedBandIndex[0] = 0;
+			touchedSide[0] = 0;
+
+			if (Bars == null || CurrentBar < 0 || TickSize <= 0)
+				return;
+
+			hl3 = (High[0] + Low[0] + Close[0]) / 3.0;
+
+			if (Bars.IsFirstBarOfSession)
+			{
+				iCumVolume        = VOL()[0];
+				iCumTypicalVolume = VOL()[0] * hl3;
+				v2Sum             = VOL()[0] * hl3 * hl3;
+
+				if (ShouldLog(2))
+					Print(LogMsg("SessionReset", $"vol={iCumVolume:0} vwap_reset"));
+			}
+			else
+			{
+				iCumVolume        += VOL()[0];
+				iCumTypicalVolume += VOL()[0] * hl3;
+				v2Sum             += VOL()[0] * hl3 * hl3;
+			}
+
+			if (iCumVolume <= 0)
+			{
+				SetNaNPlots();
+				if (ShouldLog(1))
+					Print(LogMsg("Error", "iCumVolume<=0, skipping bar"));
+				return;
+			}
+
+			curVWAP   = iCumTypicalVolume / iCumVolume;
+			deviation = Math.Sqrt(Math.Max(v2Sum / iCumVolume - curVWAP * curVWAP, 0));
+
+			if (double.IsNaN(curVWAP) || double.IsInfinity(curVWAP))
+			{
+				SetNaNPlots();
+				if (ShouldLog(1))
+					Print(LogMsg("Error", "VWAP NaN/Inf, skipping bar"));
+				return;
+			}
+
+			PlotVWAP[0] = curVWAP;
+
+			ComputeBands();
+
+			switch (NumDeviations)
+			{
+				case 1: PlotDevOne();  break;
+				case 2: PlotDevTwo();  break;
+				case 3: PlotDevThree();break;
+				case 4: PlotDevFour(); break;
+				case 5: PlotDevFive(); break;
+				default: PlotVWAP[0] = curVWAP; break;
+			}
+
+			ComputeSignals();
+
+			if (EnableVisuals)
+			{
+				UpdateInfoText();
+				PublishSnapshot();
+			}
+
+			string modeLabel = GetModeLabel();
+			if (!string.Equals(modeLabel, _lastModeLabel, StringComparison.Ordinal))
+			{
+				_lastModeLabel = modeLabel;
+				if (ShouldLog(2))
+					Print(LogMsg("ModeChanged", $"mode={modeLabel}"));
+			}
+		}
+
+		private void SetNaNPlots()
+		{
+			// 11 plots fixos: 0..10
+			for (int i = 0; i < 11; i++)
+				Values[i][0] = double.NaN;
+
+			signalLong[0] = 0;
+			signalShort[0] = 0;
+			touchedBandIndex[0] = 0;
+			touchedSide[0] = 0;
+		}
+
+		private void ComputeBands()
+		{
+			if (UseFiboBands)
+			{
+				double[] fibo = { 0.786, 1.0, 1.272, 1.618, 2.618 };
+				for (int i = 0; i < 5; i++)
+				{
+					double delta = curVWAP * (fibo[i] / 100.0);
+					upper[i] = curVWAP + delta;
+					lower[i] = curVWAP - delta;
+				}
+				return;
+			}
+
+			if (UseFixedBands)
+			{
+				double[] pct = { Fixed1Pct, Fixed2Pct, Fixed3Pct, Fixed4Pct, Fixed5Pct };
+				for (int i = 0; i < 5; i++)
+				{
+					double delta = curVWAP * (pct[i] / 100.0);
+					upper[i] = curVWAP + delta;
+					lower[i] = curVWAP - delta;
+				}
+			}
+			else // Volatilidade
+			{
+				double[] sd = { SD1, SD2, SD3, SD4, SD5 };
+				for (int i = 0; i < 5; i++)
+				{
+					double delta = sd[i] * deviation;
+					upper[i] = curVWAP + delta;
+					lower[i] = curVWAP - delta;
+				}
+			}
+		}
+
+		private void ComputeSignals()
+		{
+			double margin = TouchMarginTicks * TickSize;
+
+			// Long: checar bandas inferiores -5 -> -1
+			for (int i = 4; i >= 0; i--)
+			{
+				double band = lower[i];
+				if (double.IsNaN(band)) continue;
+				if (Low[0] <= band + margin && Close[0] > band)
+				{
+					signalLong[0] = 1;
+					touchedBandIndex[0] = i + 1;
+					touchedSide[0] = -1;
+					if (ShouldLog(2))
+						Print(LogMsg("SignalLong", $"band={i+1} price={Close[0]:0.00} bandVal={band:0.00}"));
+					return;
+				}
+			}
+
+			// Short: checar bandas superiores +5 -> +1
+			for (int i = 4; i >= 0; i--)
+			{
+				double band = upper[i];
+				if (double.IsNaN(band)) continue;
+				if (High[0] >= band - margin && Close[0] < band)
+				{
+					signalShort[0] = 1;
+					touchedBandIndex[0] = i + 1;
+					touchedSide[0] = 1;
+					if (ShouldLog(2))
+						Print(LogMsg("SignalShort", $"band={i+1} price={Close[0]:0.00} bandVal={band:0.00}"));
+					return;
+				}
+			}
+		}
+
+		//*************************************************************************************
+		// Deviations
+		//*************************************************************************************
+		void PlotDevOne()
+		{
+			PlotVWAP1U[0] = upper[0];
+			PlotVWAP1L[0] = lower[0];
+			if (!EnableVisuals) return;
+			Draw.Region(this, "dev1", CurrentBar, 0, PlotVWAP1U, PlotVWAP1L, null, SD1AreaBrush, SD1AreaOpacity);
+		}
+
+		void PlotDevTwo()
+		{
+			PlotDevOne();
+			PlotVWAP2U[0] = upper[1];
+			PlotVWAP2L[0] = lower[1];
+			if (!EnableVisuals) return;
+			Draw.Region(this, "dev2", CurrentBar, 0, PlotVWAP1U, PlotVWAP2U, null, SD2AreaBrush, SD2AreaOpacity);
+			Draw.Region(this, "dev3", CurrentBar, 0, PlotVWAP1L, PlotVWAP2L, null, SD2AreaBrush, SD2AreaOpacity);
+		}
+
+		void PlotDevThree()
+		{
+			PlotDevTwo();
+			PlotVWAP3U[0] = upper[2];
+			PlotVWAP3L[0] = lower[2];
+			if (!EnableVisuals) return;
+			Draw.Region(this, "dev4", CurrentBar, 0, PlotVWAP2U, PlotVWAP3U, null, SD3AreaBrush, SD3AreaOpacity);
+			Draw.Region(this, "dev5", CurrentBar, 0, PlotVWAP2L, PlotVWAP3L, null, SD3AreaBrush, SD3AreaOpacity);
+		}
+
+		void PlotDevFour()
+		{
+			PlotDevThree();
+			PlotVWAP4U[0] = upper[3];
+			PlotVWAP4L[0] = lower[3];
+			if (!EnableVisuals) return;
+			Draw.Region(this, "dev6", CurrentBar, 0, PlotVWAP3U, PlotVWAP4U, null, SD4AreaBrush, SD4AreaOpacity);
+			Draw.Region(this, "dev7", CurrentBar, 0, PlotVWAP3L, PlotVWAP4L, null, SD4AreaBrush, SD4AreaOpacity);
+		}
+
+		void PlotDevFive()
+		{
+			PlotDevFour();
+			PlotVWAP5U[0] = upper[4];
+			PlotVWAP5L[0] = lower[4];
+			if (!EnableVisuals) return;
+			Draw.Region(this, "dev8", CurrentBar, 0, PlotVWAP4U, PlotVWAP5U, null, SD5AreaBrush, SD5AreaOpacity);
+			Draw.Region(this, "dev9", CurrentBar, 0, PlotVWAP4L, PlotVWAP5L, null, SD5AreaBrush, SD5AreaOpacity);
+		}
+
+		//*************************************************************************************
+		// Hawk Info Panel (SharpDX)
+		//*************************************************************************************
+		private string FPrice(double v) => double.IsNaN(v) ? "-" : v.ToString("0.00");
+		private string FTicks(double v) => double.IsNaN(v) ? "-" : v.ToString("0.0");
+
+		private string GetModeLabel()
+		{
+			if (UseFiboBands) return "FIBO (%)";
+			if (UseFixedBands) return "FIXA (%)";
+			return "VOLATILIDADE";
+		}
+
+		private void UpdateInfoText()
+		{
+			if (!EnableVisuals) { _infoText = string.Empty; return; }
+
+			if (TickSize <= 0 || double.IsNaN(curVWAP) || double.IsNaN(deviation))
+			{
+				_infoText = string.Empty;
+				return;
+			}
+
+			// Valores das bandas (sempre 5)
+			double d1U = PlotVWAP1U[0], d2U = PlotVWAP2U[0], d3U = PlotVWAP3U[0], d4U = PlotVWAP4U[0], d5U = PlotVWAP5U[0];
+			double d1L = PlotVWAP1L[0], d2L = PlotVWAP2L[0], d3L = PlotVWAP3L[0], d4L = PlotVWAP4L[0], d5L = PlotVWAP5L[0];
+
+			double sigmaTicks  = deviation / TickSize;
+			double distVWAP    = Math.Abs(Close[0] - curVWAP) / TickSize;
+
+			double chanPlus  = (d5U - curVWAP) / TickSize;
+			double chanMinus = (curVWAP - d5L) / TickSize;
+			double rangeOuter = (d5U - d5L) / TickSize;
+
+			string contexto;
+			if (Close[0] > curVWAP + TickSize) contexto = "ACIMA";
+			else if (Close[0] < curVWAP - TickSize) contexto = "ABAIXO";
+			else contexto = "NA";
+
+			string obsText = "-";
+			if (signalLong[0] == 1) obsText = "Atenção trader — possível inversão de fluxo (alta)";
+			else if (signalShort[0] == 1) obsText = "Atenção trader — possível inversão de fluxo (baixa)";
+
+			string lineMode = $"Modo: {GetModeLabel()} | Num desvios: {NumDeviations}";
+			string line1 = $"{lineMode} | VWAP: {curVWAP:0.00} | Preço: {Close[0]:0.00} | {contexto} ({distVWAP:0.0}t)";
+			string line2 = $"Desvio -1: {FPrice(d1L)} | -2: {FPrice(d2L)} | -3: {FPrice(d3L)} | -4: {FPrice(d4L)} | -5: {FPrice(d5L)}";
+			string line3 = $"Desvio +1: {FPrice(d1U)} | +2: {FPrice(d2U)} | +3: {FPrice(d3U)} | +4: {FPrice(d4U)} | +5: {FPrice(d5U)}";
+			string line4 = $"Canal +: {FTicks(chanPlus)}t | Canal -: {FTicks(chanMinus)}t | Range (±5): {FTicks(rangeOuter)}t | σ: {FTicks(sigmaTicks)}t";
+			string line5 = $"Obs: {obsText}";
+
+			_infoText = $"{line1}\n{line2}\n{line3}\n{line4}\n{line5}";
+		}
+
+		private void PublishSnapshot()
+		{
+			if (!EnableVisuals) return; // sem feed quando desabilitado
+			DateTime tradingDay = Time[0].Date;
+			if (_sessionIterator != null)
+				tradingDay = _sessionIterator.GetTradingDay(Time[0]);
+
+			var snap = new HawkVwapBandsFeed.Snapshot
+			{
+				UtcTime = DateTime.UtcNow,
+				BarTime = Time[0],
+				SessionTradingDay = tradingDay,
+				InstrumentFullName = Instrument?.FullName ?? Instrument?.MasterInstrument?.Name ?? string.Empty,
+				Mode = GetModeLabel(),
+				Vwap = curVWAP,
+				Upper = upper.ToArray(),
+				Lower = lower.ToArray(),
+				NumDeviations = NumDeviations,
+				TouchMarginTicks = TouchMarginTicks,
+				SignalLong = signalLong[0],
+				SignalShort = signalShort[0],
+				TouchedBandIndex = touchedBandIndex[0],
+				TouchedSide = touchedSide[0],
+				BarsPeriodType = BarsPeriod.BarsPeriodType,
+				BarsPeriodValue = BarsPeriod.Value,
+				FeedStaleTimeoutSeconds = FeedStaleTimeoutSeconds
+			};
+
+			string keyFull   = Instrument?.FullName ?? "";
+			string keyMaster = Instrument?.MasterInstrument?.Name ?? "";
+
+			if (!string.IsNullOrEmpty(keyFull))
+				HawkVwapBandsFeed.Publish(keyFull, snap);
+			if (!string.IsNullOrEmpty(keyMaster))
+				HawkVwapBandsFeed.Publish(keyMaster, snap);
+
+			if (ShouldLog(3))
+				Print($"[FEED-DBG] publish keyFull='{keyFull}' keyMaster='{keyMaster}' utc={snap.UtcTime:O} vwap={snap.Vwap:0.00}");
+		}
+
+		private string LogMsg(string tag, string msg)
+		{
+			return $"[HawkVwapBands] {tag} inst={(Instrument?.FullName ?? "?")} time={Time[0]:yyyy-MM-dd HH:mm:ss} utc={DateTime.UtcNow:HH:mm:ss} vwap={curVWAP:0.00} mode={GetModeLabel()} | {msg}";
+		}
+
+		public override void OnRenderTargetChanged()
+		{
+			DisposeDx();
+
+			if (RenderTarget != null && EnableVisuals)
+			{
+				_dwriteFactory = new DW.Factory();
+				_textFormat = new DW.TextFormat(_dwriteFactory, PanelFont, PanelFontSize)
+				{
+					TextAlignment = DW.TextAlignment.Leading,
+					ParagraphAlignment = DW.ParagraphAlignment.Near
+				};
+
+				_dxBorderBrush   = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0xFF, 0xD4, 0xA0, 0x17)));
+				_dxTextBrush     = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0xE6, 0xCC, 0xCC, 0xCC)));
+				var stops = new[]
+				{
+					new D2D.GradientStop { Color = ToColor4(Media.Color.FromArgb(0xC0, 0x50, 0x50, 0x50)), Position = 0.0f },
+					new D2D.GradientStop { Color = ToColor4(Media.Color.FromArgb(0xB4, 0x28, 0x28, 0x28)), Position = 1.0f }
+				};
+				_dxGradientStops = new D2D.GradientStopCollection(RenderTarget, stops, D2D.Gamma.StandardRgb, D2D.ExtendMode.Clamp);
+				_dxGradientBrush = new D2D.LinearGradientBrush(RenderTarget,
+					new D2D.LinearGradientBrushProperties { StartPoint = new Vector2(0f, 0f), EndPoint = new Vector2(0f, 1f) },
+					_dxGradientStops);
+				_dxHighlightBrush = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)));
+			}
+
+			base.OnRenderTargetChanged();
+		}
+
+		protected override void OnRender(ChartControl chartControl, ChartScale chartScale)
+		{
+			base.OnRender(chartControl, chartScale);
+
+			if (!EnableVisuals)
+				return;
+
+			if (RenderTarget == null || ChartPanel == null || string.IsNullOrEmpty(_infoText) ||
+			    _dwriteFactory == null || _textFormat == null || _dxGradientBrush == null ||
+			    _dxBorderBrush == null || _dxTextBrush == null || _dxHighlightBrush == null)
+				return;
+
+			using (var textLayout = new DW.TextLayout(_dwriteFactory, _infoText, _textFormat, float.MaxValue, float.MaxValue))
+			{
+				float boxW = (float)textLayout.Metrics.Width + 2f * PanelPadding;
+				float boxH = (float)textLayout.Metrics.Height + 2f * PanelPadding;
+
+				float x = (float)Math.Floor(ChartPanel.X + PanelMargin) + 0.5f;
+				float y = (float)Math.Floor(ChartPanel.Y + ChartPanel.H - PanelLift - boxH) + 0.5f;
+
+				var rect = new D2D.RoundedRectangle
+				{
+					Rect = new RectangleF(x, y, boxW, boxH),
+					RadiusX = PanelCornerRadius,
+					RadiusY = PanelCornerRadius
+				};
+
+				_dxGradientBrush.StartPoint = new Vector2(x, y);
+				_dxGradientBrush.EndPoint   = new Vector2(x, y + boxH);
+
+				RenderTarget.FillRoundedRectangle(rect, _dxGradientBrush);
+				RenderTarget.DrawLine(new Vector2(x + PanelCornerRadius, y + 1f), new Vector2(x + boxW - PanelCornerRadius, y + 1f), _dxHighlightBrush, 1.0f);
+				RenderTarget.DrawRoundedRectangle(rect, _dxBorderBrush, 1.4f);
+
+				float textX = x + PanelPadding;
+				float textY = y + PanelPadding;
+				RenderTarget.DrawTextLayout(new Vector2(textX, textY), textLayout, _dxTextBrush, D2D.DrawTextOptions.None);
+			}
+		}
+
+		private void DisposeDx()
+		{
+			try
+			{
+				_dxBorderBrush?.Dispose();
+				_dxTextBrush?.Dispose();
+				_dxGradientBrush?.Dispose();
+				_dxGradientStops?.Dispose();
+				_dxHighlightBrush?.Dispose();
+				_textFormat?.Dispose();
+				_dwriteFactory?.Dispose();
+			}
+			catch { }
+			finally
+			{
+				_dxBorderBrush = null;
+				_dxTextBrush = null;
+				_dxGradientBrush = null;
+				_dxGradientStops = null;
+				_dxHighlightBrush = null;
+				_textFormat = null;
+				_dwriteFactory = null;
+			}
+		}
+
+		#region Properties (plots & signals)
+		[Browsable(false), XmlIgnore] public Series<double> PlotVWAP   { get { return Values[0]; } }
+		[Browsable(false), XmlIgnore] public Series<double> PlotVWAP1U { get { return Values[1]; } }
+		[Browsable(false), XmlIgnore] public Series<double> PlotVWAP1L { get { return Values[2]; } }
+		[Browsable(false), XmlIgnore] public Series<double> PlotVWAP2U { get { return Values[3]; } }
+		[Browsable(false), XmlIgnore] public Series<double> PlotVWAP2L { get { return Values[4]; } }
+		[Browsable(false), XmlIgnore] public Series<double> PlotVWAP3U { get { return Values[5]; } }
+		[Browsable(false), XmlIgnore] public Series<double> PlotVWAP3L { get { return Values[6]; } }
+		[Browsable(false), XmlIgnore] public Series<double> PlotVWAP4U { get { return Values[7]; } }
+		[Browsable(false), XmlIgnore] public Series<double> PlotVWAP4L { get { return Values[8]; } }
+		[Browsable(false), XmlIgnore] public Series<double> PlotVWAP5U { get { return Values[9]; } }
+		[Browsable(false), XmlIgnore] public Series<double> PlotVWAP5L { get { return Values[10]; } }
+
+		[Browsable(false), XmlIgnore] public Series<int> SignalLongSeries { get { return signalLong; } }
+		[Browsable(false), XmlIgnore] public Series<int> SignalShortSeries { get { return signalShort; } }
+		[Browsable(false), XmlIgnore] public Series<int> TouchedBandIndexSeries { get { return touchedBandIndex; } }
+		[Browsable(false), XmlIgnore] public Series<int> TouchedSideSeries { get { return touchedSide; } }
+		#endregion
+	}
+}
+
+#region NinjaScript generated code. Neither change nor remove.
+
+namespace NinjaTrader.NinjaScript.Indicators
+{
+	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
+	{
+		private HawkVwapBands[] cacheHawkVwapBands;
+		public HawkVwapBands HawkVwapBands(int numDeviations, bool useFiboBands, bool useFixedBands, double fixed1Pct, double fixed2Pct, double fixed3Pct, double fixed4Pct, double fixed5Pct, bool enableVerboseLog, string logLevel, int feedStaleTimeoutSeconds, int touchMarginTicks)
+		{
+			return HawkVwapBands(Input, numDeviations, useFiboBands, useFixedBands, fixed1Pct, fixed2Pct, fixed3Pct, fixed4Pct, fixed5Pct, enableVerboseLog, logLevel, feedStaleTimeoutSeconds, touchMarginTicks);
+		}
+
+		public HawkVwapBands HawkVwapBands(ISeries<double> input, int numDeviations, bool useFiboBands, bool useFixedBands, double fixed1Pct, double fixed2Pct, double fixed3Pct, double fixed4Pct, double fixed5Pct, bool enableVerboseLog, string logLevel, int feedStaleTimeoutSeconds, int touchMarginTicks)
+		{
+			if (cacheHawkVwapBands != null)
+				for (int idx = 0; idx < cacheHawkVwapBands.Length; idx++)
+					if (cacheHawkVwapBands[idx] != null && cacheHawkVwapBands[idx].NumDeviations == numDeviations && cacheHawkVwapBands[idx].UseFiboBands == useFiboBands && cacheHawkVwapBands[idx].UseFixedBands == useFixedBands && cacheHawkVwapBands[idx].Fixed1Pct == fixed1Pct && cacheHawkVwapBands[idx].Fixed2Pct == fixed2Pct && cacheHawkVwapBands[idx].Fixed3Pct == fixed3Pct && cacheHawkVwapBands[idx].Fixed4Pct == fixed4Pct && cacheHawkVwapBands[idx].Fixed5Pct == fixed5Pct && cacheHawkVwapBands[idx].EnableVerboseLog == enableVerboseLog && cacheHawkVwapBands[idx].LogLevel == logLevel && cacheHawkVwapBands[idx].FeedStaleTimeoutSeconds == feedStaleTimeoutSeconds && cacheHawkVwapBands[idx].TouchMarginTicks == touchMarginTicks && cacheHawkVwapBands[idx].EqualsInput(input))
+						return cacheHawkVwapBands[idx];
+			return CacheIndicator<HawkVwapBands>(new HawkVwapBands(){ NumDeviations = numDeviations, UseFiboBands = useFiboBands, UseFixedBands = useFixedBands, Fixed1Pct = fixed1Pct, Fixed2Pct = fixed2Pct, Fixed3Pct = fixed3Pct, Fixed4Pct = fixed4Pct, Fixed5Pct = fixed5Pct, EnableVerboseLog = enableVerboseLog, LogLevel = logLevel, FeedStaleTimeoutSeconds = feedStaleTimeoutSeconds, TouchMarginTicks = touchMarginTicks }, input, ref cacheHawkVwapBands);
+		}
+	}
+}
+
+namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
+{
+	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
+	{
+		public Indicators.HawkVwapBands HawkVwapBands(int numDeviations, bool useFiboBands, bool useFixedBands, double fixed1Pct, double fixed2Pct, double fixed3Pct, double fixed4Pct, double fixed5Pct, bool enableVerboseLog, string logLevel, int feedStaleTimeoutSeconds, int touchMarginTicks)
+		{
+			return indicator.HawkVwapBands(Input, numDeviations, useFiboBands, useFixedBands, fixed1Pct, fixed2Pct, fixed3Pct, fixed4Pct, fixed5Pct, enableVerboseLog, logLevel, feedStaleTimeoutSeconds, touchMarginTicks);
+		}
+
+		public Indicators.HawkVwapBands HawkVwapBands(ISeries<double> input , int numDeviations, bool useFiboBands, bool useFixedBands, double fixed1Pct, double fixed2Pct, double fixed3Pct, double fixed4Pct, double fixed5Pct, bool enableVerboseLog, string logLevel, int feedStaleTimeoutSeconds, int touchMarginTicks)
+		{
+			return indicator.HawkVwapBands(input, numDeviations, useFiboBands, useFixedBands, fixed1Pct, fixed2Pct, fixed3Pct, fixed4Pct, fixed5Pct, enableVerboseLog, logLevel, feedStaleTimeoutSeconds, touchMarginTicks);
+		}
+	}
+}
+
+namespace NinjaTrader.NinjaScript.Strategies
+{
+	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
+	{
+		public Indicators.HawkVwapBands HawkVwapBands(int numDeviations, bool useFiboBands, bool useFixedBands, double fixed1Pct, double fixed2Pct, double fixed3Pct, double fixed4Pct, double fixed5Pct, bool enableVerboseLog, string logLevel, int feedStaleTimeoutSeconds, int touchMarginTicks)
+		{
+			return indicator.HawkVwapBands(Input, numDeviations, useFiboBands, useFixedBands, fixed1Pct, fixed2Pct, fixed3Pct, fixed4Pct, fixed5Pct, enableVerboseLog, logLevel, feedStaleTimeoutSeconds, touchMarginTicks);
+		}
+
+		public Indicators.HawkVwapBands HawkVwapBands(ISeries<double> input , int numDeviations, bool useFiboBands, bool useFixedBands, double fixed1Pct, double fixed2Pct, double fixed3Pct, double fixed4Pct, double fixed5Pct, bool enableVerboseLog, string logLevel, int feedStaleTimeoutSeconds, int touchMarginTicks)
+		{
+			return indicator.HawkVwapBands(input, numDeviations, useFiboBands, useFixedBands, fixed1Pct, fixed2Pct, fixed3Pct, fixed4Pct, fixed5Pct, enableVerboseLog, logLevel, feedStaleTimeoutSeconds, touchMarginTicks);
+		}
+	}
+}
+
+#endregion
