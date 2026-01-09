@@ -146,15 +146,16 @@ function getFilteredTrades_(ss, period) {
       if (!(r[0] instanceof Date) || isNaN(r[0].getTime())) continue;
       
       const pnlVal = toNumber_(r[1]);
+      const asset = String(r[3] || "").trim();
       
       // Se não tiver ativo ou PnL não for número, pula (para não sujar gráficos)
-      if (isNaN(pnlVal)) continue;
+      if (isNaN(pnlVal) || !asset) continue;
 
       rows.push({
         date: normalizeDate_(r[0]),
         pnl:  pnlVal,
         contracts: toNumber_(r[2]),
-        asset: String(r[3] || "").trim()
+        asset
       });
     } catch (e) {
       // Linha corrompida ignorada silenciosamente
