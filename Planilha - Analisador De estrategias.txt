@@ -37,8 +37,6 @@ const TRADES_FORMAT_BUFFER = 100;
 
 const RIGHT_COLUMN_ROWS_PROP = "dashflix.rightColumnRows";
 const RIGHT_COLUMN_LIMIT = 50;
-const RIGHT_COLUMN_LIMIT_LABEL_RANGE = "M4:O4";
-const RIGHT_COLUMN_LIMIT_CELL = "P4";
 
 const THEME = {
   bg: "#121212",
@@ -307,30 +305,16 @@ function ensureDashboardLayout_(sh) {
 
   sh.setRowHeight(6, 12);
 
-  // Limite da coluna direita (M4:P4)
-  const limitLabel = sh.getRange(RIGHT_COLUMN_LIMIT_LABEL_RANGE);
-  safeMerge_(limitLabel);
-  limitLabel
-    .setValue("Limite lista lateral")
+  // Cabeçalho histórico de trades (M4:P4)
+  const historyHeader = sh.getRange("M4:P4");
+  safeMerge_(historyHeader);
+  historyHeader
+    .setValue("Histórico de Trades")
     .setBackground(THEME.panel)
     .setFontColor(THEME.textDim)
-    .setHorizontalAlignment("left")
-    .setVerticalAlignment("middle")
-    .setFontSize(10);
-
-  const limitCell = sh.getRange(RIGHT_COLUMN_LIMIT_CELL);
-  limitCell
-    .setBackground(THEME.panel)
-    .setFontColor(THEME.text)
     .setHorizontalAlignment("center")
     .setVerticalAlignment("middle")
-    .setFontSize(10);
-  if (!limitCell.getValue()) limitCell.setValue(RIGHT_COLUMN_LIMIT);
-  const limitRule = SpreadsheetApp.newDataValidation()
-    .requireNumberGreaterThan(0)
-    .setAllowInvalid(false)
-    .build();
-  limitCell.setDataValidation(limitRule);
+    .setFontSize(12);
 
   // Cabeçalhos dos Gráficos
   setupCardHeader_(sh, 7, "Curva de Performance (Cumulative PnL)");
@@ -677,10 +661,6 @@ function renderRightColumn_(sh, trades) {
 }
 
 function getRightColumnLimit_(sh) {
-  if (!sh) return RIGHT_COLUMN_LIMIT;
-  const raw = sh.getRange(RIGHT_COLUMN_LIMIT_CELL).getValue();
-  const parsed = parseInt(raw, 10);
-  if (!isNaN(parsed) && parsed > 0) return parsed;
   return RIGHT_COLUMN_LIMIT;
 }
 
