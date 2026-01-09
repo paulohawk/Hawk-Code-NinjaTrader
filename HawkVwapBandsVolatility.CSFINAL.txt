@@ -1,0 +1,4550 @@
+#region Using declarations
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.ComponentModel.DataAnnotations;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Runtime.Serialization;
+using System.Security.Cryptography;
+using System.Text;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Documents;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Threading;
+using System.Windows.Media.Effects;
+using System.Xml.Serialization;
+using NinjaTrader.Cbi;
+using NinjaTrader.Data;
+using NinjaTrader.Gui.Chart;
+using NinjaTrader.NinjaScript;
+using NinjaTrader.NinjaScript.Indicators;
+// Aliases para evitar conflitos WPF
+using IOPath = System.IO.Path;
+using WpfEllipse = System.Windows.Shapes.Ellipse;
+using WpfPath = System.Windows.Shapes.Path;
+#endregion
+
+// ============================================================================
+// Painel HVB (isolado) + Hub
+// ============================================================================
+namespace NinjaTrader.NinjaScript
+{
+	public enum HVB_EndDayScope { ThisChartOnly, AllNinjaTrader }
+
+	public static class HVB_PanelStateHub
+	{
+		public class PanelSnapshot
+		{
+			public double? EntryPrice { get; set; }
+			public double? StopChart { get; set; }
+			public double? ExitTarget { get; set; }
+			public int? Qty { get; set; }
+			public bool? BEEnabled { get; set; }
+			public bool? ATREnabled { get; set; }
+			public string FinancialStopText { get; set; }
+			public string AtrDisplayText { get; set; }
+			public string PnLDiaText { get; set; }
+			public string PnLMesText { get; set; }
+			public string PnLTotalText { get; set; }
+			public string TakeDollarText { get; set; }
+			public int? MaxGainStreak { get; set; }
+			public int? MaxLossStreak { get; set; }
+			public string EndDayText { get; set; }
+			public bool? MainEnabled { get; set; }
+
+			public string DayTradeStatus { get; set; }
+			public int? DayQuantity { get; set; }
+			public string DayStopDollar { get; set; }
+			public string DayTargetDollar { get; set; }
+			public string DayBreakevenDollar { get; set; }
+			public int? DayMaxGain { get; set; }
+			public int? DayMaxLoss { get; set; }
+
+			public DateTime LastUpdatedUtc { get; set; }
+			public string StrategyName { get; set; }
+			public string StrategyKey { get; set; }
+
+			public double? PendingEntryPrice { get; set; }
+			public double? PendingStopPrice { get; set; }
+			public double? PendingTargetPrice { get; set; }
+			public int? PendingQty { get; set; }
+			public string StatusText { get; set; }
+		}
+
+		private static readonly object _lock = new object();
+		private static readonly Dictionary<string, PanelSnapshot> _byKey = new Dictionary<string, PanelSnapshot>();
+
+		public static void Set(string key, PanelSnapshot snapshot)
+		{
+			if (string.IsNullOrEmpty(key) || snapshot == null) return;
+			if (snapshot.LastUpdatedUtc == default(DateTime))
+				return;
+
+			lock (_lock)
+			{
+				if (_byKey.TryGetValue(key, out var existing))
+				{
+					if (snapshot.LastUpdatedUtc < existing.LastUpdatedUtc)
+						return;
+				}
+				_byKey[key] = snapshot;
+			}
+		}
+
+		public static PanelSnapshot GetLatest(string key)
+		{
+			if (string.IsNullOrEmpty(key)) return null;
+			lock (_lock)
+			{
+				if (_byKey.TryGetValue(key, out var snap)) return snap;
+				return null;
+			}
+		}
+
+		// Cleanup support to avoid accumulation
+		public static void Remove(string key)
+		{
+			if (string.IsNullOrEmpty(key)) return;
+			lock (_lock)
+			{
+				_byKey.Remove(key);
+			}
+		}
+	}
+
+	public class HVB_EmbeddedControl : Grid
+	{
+		private readonly HVB_PanelHelper _parent;
+
+		private double CompactFontSize = 10.0;
+		private double RowSpacing = 1.0;
+
+		private readonly Brush BronzeBrush = new SolidColorBrush(Color.FromRgb(170, 120, 60));
+		private readonly Brush GraphiteBrush = new SolidColorBrush(Color.FromRgb(72, 72, 72));
+		private readonly Brush LightGrayBrush = Brushes.LightGray;
+		private readonly Brush InactiveBulletBrush = new SolidColorBrush(Color.FromRgb(150, 150, 150));
+		private readonly Brush MainOnBrush = new SolidColorBrush(Color.FromRgb(60, 200, 120));
+
+		public string PanelTitle { get; set; } = "Hawk";
+
+		private TextBlock _titleCenter;
+		private WpfEllipse _mainStateBullet;
+		private TextBlock _tbMainToggle;
+
+		private TextBlock _txtEntry;
+		private WpfEllipse _bulletBe;
+		private TextBlock _beStateText;
+
+		private WpfEllipse _bulletQty;
+		private TextBlock _txtQty;
+
+		private WpfEllipse _bulletStopFinancial;
+		private TextBlock _txtStop;
+
+		private WpfEllipse _bulletTakeFinancial;
+		private TextBlock _txtTake;
+
+		private WpfEllipse _bulletAtr;
+		private TextBlock _atrValueText;
+
+		private WpfEllipse _bulletPnlDia;
+		private TextBlock _pnlDiaText;
+
+		private WpfEllipse _bulletPnlMes;
+		private TextBlock _pnlMesText;
+
+		private WpfEllipse _bulletPnlTotal;
+		private TextBlock _pnlTotalText;
+
+		private TextBlock _txtChartStop;
+		private TextBlock _txtExit;
+
+		private WpfEllipse _bulletEndDay;
+		private TextBlock _tbEndDayValue;
+
+		private TextBlock _txtMaxGain;
+		private TextBlock _txtMaxLoss;
+
+		private TextBlock _lblDayResum;
+		private WpfEllipse _bulletDayResum;
+		private TextBlock _drSentence;
+
+		private int _qty = 1;
+		private bool _beEnabled = false;
+		private bool _mainEnabled = false;
+		private double _baseTitleSize = (10.0 + 4) * 0.9;
+
+		private double _lastResponsiveWidth = 0;
+		private DateTime _lastResponsiveUpdate = DateTime.MinValue;
+		private readonly TimeSpan _responsiveInterval = TimeSpan.FromMilliseconds(220);
+		private const double _responsiveMinDelta = 6.0;
+
+		public HVB_EmbeddedControl(HVB_PanelHelper parent)
+		{
+			_parent = parent;
+			BuildUi();
+			SizeChanged += SmartEmbeddedControl_SizeChanged;
+			RefreshTitleRuns();
+		}
+
+		private WpfEllipse CreateBullet(double size = 8) => new WpfEllipse { Width = size, Height = size, Fill = InactiveBulletBrush, Margin = new Thickness(0, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center };
+
+		private void BuildUi()
+		{
+			Background = Brushes.Transparent;
+			Margin = new Thickness(6);
+
+			var main = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(2) };
+
+			var header = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+			header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+			header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+			header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+			var iconHolder = new Grid { Width = 18, Height = 18, Margin = new Thickness(0, 0, 4, 0) };
+			var outer = new WpfEllipse { Width = 18, Height = 18, Stroke = new SolidColorBrush(Color.FromRgb(58, 58, 58)), StrokeThickness = 1.0, Fill = Brushes.Transparent };
+			var radial = new RadialGradientBrush { GradientOrigin = new Point(0.35, 0.25), Center = new Point(0.35, 0.25), RadiusX = 0.8, RadiusY = 0.8 };
+			radial.GradientStops.Add(new GradientStop(Color.FromRgb(170, 120, 60), 0.0));
+			radial.GradientStops.Add(new GradientStop(Color.FromRgb(130, 80, 35), 0.9));
+			var bronzeCircle = new WpfEllipse { Width = 14, Height = 14, Fill = radial, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+			var star = new WpfPath
+			{
+				Fill = Brushes.Black,
+				Data = Geometry.Parse("M7 0 L8.6 4.2 L13 4.2 L9.1 6.5 L10.6 10.7 L7 8.3 L3.4 10.7 L4.9 6.5 L1 4.2 L5.4 4.2 Z"),
+				Width = 9,
+				Height = 9,
+				Stretch = System.Windows.Media.Stretch.Uniform,
+				HorizontalAlignment = HorizontalAlignment.Center,
+				VerticalAlignment = VerticalAlignment.Center
+			};
+			iconHolder.Children.Add(outer); iconHolder.Children.Add(bronzeCircle); iconHolder.Children.Add(star);
+
+			_titleCenter = new TextBlock { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Left, TextWrapping = TextWrapping.Wrap };
+			RefreshTitleRuns();
+
+			var leftHeaderPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
+			leftHeaderPanel.Children.Add(iconHolder);
+			leftHeaderPanel.Children.Add(_titleCenter);
+			header.Children.Add(leftHeaderPanel); Grid.SetColumn(leftHeaderPanel, 0);
+
+			var centerBulletHost = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 4, 0) };
+			_mainStateBullet = CreateBullet(12);
+			_mainStateBullet.Fill = InactiveBulletBrush;
+			centerBulletHost.Children.Add(_mainStateBullet);
+			header.Children.Add(centerBulletHost); Grid.SetColumn(centerBulletHost, 1);
+
+			var rightHeader = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
+			_tbMainToggle = new TextBlock { Text = "Off", Width = 40, TextAlignment = TextAlignment.Center, Cursor = Cursors.Hand, Foreground = Brushes.Gray, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 0, 0) };
+			_tbMainToggle.MouseLeftButtonUp += OnMainToggleMouseUp;
+			rightHeader.Children.Add(_tbMainToggle);
+			header.Children.Add(rightHeader); Grid.SetColumn(rightHeader, 2);
+
+			main.Children.Add(header);
+
+			var threeCol = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+			threeCol.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+			threeCol.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+			threeCol.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+			var valueMargin = new Thickness(0, RowSpacing, 0, 0);
+
+			var entryCol = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Left };
+			entryCol.Children.Add(new TextBlock { Text = "Entry", Foreground = LightGrayBrush, FontSize = CompactFontSize, Margin = new Thickness(0, 0, 0, RowSpacing) });
+			_txtEntry = new TextBlock { Text = "-", Foreground = Brushes.White, FontSize = CompactFontSize, Margin = valueMargin, HorizontalAlignment = HorizontalAlignment.Left };
+			entryCol.Children.Add(_txtEntry);
+			threeCol.Children.Add(entryCol); Grid.SetColumn(entryCol, 0);
+
+			var centerCol = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Center };
+			centerCol.Children.Add(new TextBlock { Text = "Stop", Foreground = LightGrayBrush, FontSize = CompactFontSize, TextAlignment = TextAlignment.Center, Margin = new Thickness(0, 0, 0, RowSpacing) });
+			_txtChartStop = new TextBlock { Text = "-", Foreground = Brushes.White, FontSize = CompactFontSize, Margin = valueMargin, TextAlignment = TextAlignment.Center };
+			centerCol.Children.Add(_txtChartStop);
+			threeCol.Children.Add(centerCol); Grid.SetColumn(centerCol, 1);
+
+			var exitCol = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Right };
+			exitCol.Children.Add(new TextBlock { Text = "Exit", Foreground = LightGrayBrush, FontSize = CompactFontSize, TextAlignment = TextAlignment.Right, Margin = new Thickness(0, 0, 0, RowSpacing) });
+			_txtExit = new TextBlock { Text = "-", Foreground = Brushes.White, FontSize = CompactFontSize, Margin = valueMargin, TextAlignment = TextAlignment.Right };
+			exitCol.Children.Add(_txtExit);
+			threeCol.Children.Add(exitCol); Grid.SetColumn(exitCol, 2);
+
+			main.Children.Add(threeCol);
+
+			var beRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
+			_bulletBe = CreateBullet();
+			var beLabel = new TextBlock { Text = "BE", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center, Cursor = Cursors.Hand, TextTrimming = TextTrimming.None };
+			beRow.Children.Add(_bulletBe);
+			beRow.Children.Add(beLabel);
+			main.Children.Add(beRow);
+
+			_beStateText = new TextBlock { Text = "Off", FontSize = CompactFontSize, Foreground = Brushes.Gray, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 2) };
+			_beStateText.MouseLeftButtonUp += (s, e) => ToggleBE();
+			main.Children.Add(_beStateText);
+
+			var qtyRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
+			_bulletQty = CreateBullet();
+			var qtyLabel = new TextBlock { Text = "Qty", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center, Cursor = Cursors.Hand, TextTrimming = TextTrimming.None };
+			qtyRow.Children.Add(_bulletQty);
+			qtyRow.Children.Add(qtyLabel);
+			main.Children.Add(qtyRow);
+
+			_txtQty = new TextBlock { Text = _qty.ToString(), Width = 36, TextAlignment = TextAlignment.Center, Background = Brushes.Black, Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 6, 0), FontSize = CompactFontSize };
+			var qtyInline = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 2), HorizontalAlignment = HorizontalAlignment.Center };
+			qtyInline.Children.Add(_txtQty);
+			main.Children.Add(qtyInline);
+
+			var stopTakeRow = new Grid { Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 2) };
+			stopTakeRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+			stopTakeRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+			var stopStack = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Left };
+			var stopLabel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
+			_bulletStopFinancial = CreateBullet();
+			var stopTxt = new TextBlock { Text = "Stop ($)", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center };
+			stopLabel.Children.Add(_bulletStopFinancial); stopLabel.Children.Add(stopTxt);
+			stopStack.Children.Add(stopLabel);
+			_txtStop = new TextBlock { Text = "-", FontSize = CompactFontSize, Foreground = Brushes.White, Background = Brushes.Transparent, Margin = new Thickness(0, RowSpacing, 0, 0), Padding = new Thickness(4, 1, 4, 1), HorizontalAlignment = HorizontalAlignment.Left };
+			stopStack.Children.Add(_txtStop);
+			stopTakeRow.Children.Add(stopStack); Grid.SetColumn(stopStack, 0);
+
+			var takeStack = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Right };
+			var takeLabel = new DockPanel { LastChildFill = false, HorizontalAlignment = HorizontalAlignment.Right };
+			_bulletTakeFinancial = CreateBullet();
+			var takeTxt = new TextBlock { Text = "Take ($)", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0) };
+			DockPanel.SetDock(takeTxt, Dock.Left);
+			DockPanel.SetDock(_bulletTakeFinancial, Dock.Right);
+			takeLabel.Children.Add(takeTxt);
+			takeLabel.Children.Add(_bulletTakeFinancial);
+			takeStack.Children.Add(takeLabel);
+			_txtTake = new TextBlock { Text = "-", FontSize = CompactFontSize, Foreground = Brushes.White, Background = Brushes.Transparent, Margin = new Thickness(0, RowSpacing, 0, 0), Padding = new Thickness(4, 1, 4, 1), HorizontalAlignment = HorizontalAlignment.Right, TextAlignment = TextAlignment.Right };
+			takeStack.Children.Add(_txtTake);
+			stopTakeRow.Children.Add(takeStack); Grid.SetColumn(takeStack, 1);
+
+			main.Children.Add(stopTakeRow);
+
+			var atrRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
+			_bulletAtr = CreateBullet();
+			var atrLbl = new TextBlock { Text = "ATR", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.None };
+			atrRow.Children.Add(_bulletAtr);
+			atrRow.Children.Add(atrLbl);
+			main.Children.Add(atrRow);
+
+			_atrValueText = new TextBlock { Text = "-", Foreground = LightGrayBrush, FontSize = CompactFontSize, Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 2), HorizontalAlignment = HorizontalAlignment.Center, TextWrapping = TextWrapping.Wrap };
+			main.Children.Add(_atrValueText);
+
+			var pnlRow = new Grid { Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 2) };
+			pnlRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+			pnlRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+			pnlRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+			var pnlDiaStack = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Left };
+			var pnlDiaLabel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
+			_bulletPnlDia = CreateBullet();
+			var pnlDiaTxt = new TextBlock { Text = "PNL dia", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center };
+			pnlDiaLabel.Children.Add(_bulletPnlDia); pnlDiaLabel.Children.Add(pnlDiaTxt);
+			pnlDiaStack.Children.Add(pnlDiaLabel);
+			_pnlDiaText = new TextBlock { Text = "-", Foreground = LightGrayBrush, FontSize = CompactFontSize, Margin = new Thickness(0, RowSpacing, 0, RowSpacing) };
+			pnlDiaStack.Children.Add(_pnlDiaText);
+			pnlRow.Children.Add(pnlDiaStack); Grid.SetColumn(pnlDiaStack, 0);
+
+			var pnlMesStack = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Center };
+			var pnlMesLabel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
+			_bulletPnlMes = CreateBullet();
+			var pnlMesTxt = new TextBlock { Text = "PNL mês", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center };
+			pnlMesLabel.Children.Add(_bulletPnlMes); pnlMesLabel.Children.Add(pnlMesTxt);
+			pnlMesStack.Children.Add(pnlMesLabel);
+			_pnlMesText = new TextBlock { Text = "-", Foreground = LightGrayBrush, FontSize = CompactFontSize, Margin = new Thickness(0, RowSpacing, 0, RowSpacing), TextAlignment = TextAlignment.Center };
+			pnlMesStack.Children.Add(_pnlMesText);
+			pnlRow.Children.Add(pnlMesStack); Grid.SetColumn(pnlMesStack, 1);
+
+			var pnlTotalStack = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Right };
+			var pnlTotalLabel = new DockPanel { LastChildFill = false, HorizontalAlignment = HorizontalAlignment.Right };
+			_bulletPnlTotal = CreateBullet();
+			var pnlTotalTxt = new TextBlock { Text = "PNL total", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0) };
+			DockPanel.SetDock(pnlTotalTxt, Dock.Left);
+			DockPanel.SetDock(_bulletPnlTotal, Dock.Right);
+			pnlTotalLabel.Children.Add(pnlTotalTxt);
+			pnlTotalLabel.Children.Add(_bulletPnlTotal);
+			pnlTotalStack.Children.Add(pnlTotalLabel);
+			_pnlTotalText = new TextBlock { Text = "-", Foreground = LightGrayBrush, FontSize = CompactFontSize, Margin = new Thickness(0, RowSpacing, 0, RowSpacing), TextAlignment = TextAlignment.Right };
+			pnlTotalStack.Children.Add(_pnlTotalText);
+			pnlRow.Children.Add(pnlTotalStack); Grid.SetColumn(pnlTotalStack, 2);
+
+			main.Children.Add(pnlRow);
+
+			var streakRow = new Grid { Margin = new Thickness(0, RowSpacing, 0, RowSpacing) };
+			streakRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+			streakRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+			streakRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+			_txtMaxGain = new TextBlock { Text = "Max gain: -", Foreground = LightGrayBrush, FontSize = CompactFontSize, TextAlignment = TextAlignment.Right };
+			_txtMaxLoss = new TextBlock { Text = "Max loss: -", Foreground = LightGrayBrush, FontSize = CompactFontSize, TextAlignment = TextAlignment.Right, Margin = new Thickness(0, RowSpacing, 0, 0) };
+
+			streakRow.Children.Add(new TextBlock());
+			streakRow.Children.Add(new TextBlock());
+			var streakStack = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Right };
+			streakStack.Children.Add(_txtMaxGain);
+			streakStack.Children.Add(_txtMaxLoss);
+			streakRow.Children.Add(streakStack); Grid.SetColumn(streakStack, 2);
+
+			main.Children.Add(streakRow);
+
+			var endDayRow = new Grid { Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 1.5) };
+			endDayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+			endDayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+			endDayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+			var endDayLeft = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Left };
+			var endDayLabelWithBullet = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
+			_bulletEndDay = CreateBullet();
+			var endTxt = new TextBlock { Text = "EndDay", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center };
+			endDayLabelWithBullet.Children.Add(_bulletEndDay); endDayLabelWithBullet.Children.Add(endTxt);
+			endDayLeft.Children.Add(endDayLabelWithBullet);
+			_tbEndDayValue = new TextBlock { Text = "-", Foreground = Brushes.Gray, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 6, 0) };
+			endDayLeft.Children.Add(_tbEndDayValue);
+			endDayRow.Children.Add(endDayLeft); Grid.SetColumn(endDayLeft, 0);
+			main.Children.Add(endDayRow);
+
+			var dayTitleRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, RowSpacing) };
+			_bulletDayResum = CreateBullet(8);
+			_lblDayResum = new TextBlock
+			{
+				Text = "DayResum",
+				Foreground = LightGrayBrush,
+				FontSize = CompactFontSize,
+				FontWeight = FontWeights.SemiBold,
+				VerticalAlignment = VerticalAlignment.Center
+			};
+			dayTitleRow.Children.Add(_bulletDayResum);
+			dayTitleRow.Children.Add(_lblDayResum);
+			main.Children.Add(dayTitleRow);
+
+			_drSentence = new TextBlock
+			{
+				Text = "-",
+				Foreground = Brushes.White,
+				FontSize = Math.Max(8.5, CompactFontSize - 1.0),
+				TextWrapping = TextWrapping.Wrap,
+				Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 2)
+			};
+			main.Children.Add(_drSentence);
+
+			var footer = new TextBlock
+			{
+				Text = "-Produto oficial Dashflix-",
+				Foreground = BronzeBrush,
+				FontSize = CompactFontSize - 1,
+				HorizontalAlignment = HorizontalAlignment.Center,
+				Margin = new Thickness(0, 4, 0, 0),
+				TextTrimming = TextTrimming.None
+			};
+			main.Children.Add(footer);
+
+			Children.Add(main);
+
+			SetEndDayLabel(null);
+			UpdateBulletsAfterStateChange();
+		}
+
+		private void SetEndDayLabel(TimeSpan? t, HVB_EndDayScope scope = HVB_EndDayScope.ThisChartOnly)
+		{
+			try
+			{
+				if (_tbEndDayValue == null) return;
+				if (t.HasValue)
+				{
+					_tbEndDayValue.Text = t.Value.ToString(@"hh\:mm");
+					_tbEndDayValue.Foreground = BronzeBrush;
+				}
+				else
+				{
+					_tbEndDayValue.Text = "-";
+					_tbEndDayValue.Foreground = Brushes.Gray;
+				}
+				UpdateBulletsAfterStateChange();
+			}
+			catch { }
+		}
+
+		private void RefreshTitleRuns()
+		{
+			if (_titleCenter == null) return;
+			_titleCenter.Inlines.Clear();
+
+			string title = string.IsNullOrEmpty(PanelTitle) ? "Hawk" : PanelTitle;
+			string goldPart = "Hawk";
+			string grayPart = "";
+
+			if (title.StartsWith("Hawk", StringComparison.OrdinalIgnoreCase))
+			{
+				goldPart = title.Substring(0, Math.Min(4, title.Length));
+				grayPart = title.Length > 4 ? title.Substring(4) : "";
+			}
+			else
+			{
+				var parts = title.Split(new[] { ' ' }, 2, StringSplitOptions.None);
+				goldPart = parts[0];
+				grayPart = parts.Length > 1 ? " " + parts[1] : "";
+			}
+
+			var runGold = new Run(goldPart) { Foreground = BronzeBrush, FontWeight = FontWeights.SemiBold };
+			var runGray = new Run(grayPart) { Foreground = GraphiteBrush, FontWeight = FontWeights.SemiBold };
+
+			_titleCenter.Inlines.Add(runGold);
+			_titleCenter.Inlines.Add(runGray);
+			_titleCenter.FontSize = _baseTitleSize;
+		}
+
+		public void ApplyPanelTitle(string title)
+		{
+			PanelTitle = string.IsNullOrEmpty(title) ? "Hawk" : title;
+			RefreshTitleRuns();
+		}
+
+		public void ApplyResponsiveLayout(double width)
+		{
+			var now = DateTime.UtcNow;
+			if (Math.Abs(width - _lastResponsiveWidth) < _responsiveMinDelta &&
+				(now - _lastResponsiveUpdate) < _responsiveInterval)
+				return;
+
+			_lastResponsiveWidth = width;
+			_lastResponsiveUpdate = now;
+
+			double titleSize = _baseTitleSize;
+			double font = CompactFontSize;
+			double row = RowSpacing;
+			double bullet = 8;
+			double toggleWidth = 40;
+			Thickness mainMargin = new Thickness(6);
+			bool wrapTitle = false;
+
+			if (width < 280)
+			{
+				titleSize = Math.Max(9.0, _baseTitleSize - 1.5);
+				font = Math.Max(9.0, CompactFontSize - 1.0);
+				row = 0.5;
+				bullet = 6;
+				toggleWidth = 32;
+				mainMargin = new Thickness(4);
+				wrapTitle = true;
+			}
+			else if (width < 320)
+			{
+				titleSize = Math.Max(9.5, _baseTitleSize - 1.0);
+				font = Math.Max(9.5, CompactFontSize - 0.5);
+				row = 0.8;
+				bullet = 7;
+				toggleWidth = 36;
+				mainMargin = new Thickness(5);
+				wrapTitle = true;
+			}
+
+			CompactFontSize = font;
+			RowSpacing = row;
+			Margin = mainMargin;
+
+			if (_titleCenter != null)
+			{
+				_titleCenter.FontSize = titleSize;
+				_titleCenter.TextWrapping = wrapTitle ? TextWrapping.Wrap : TextWrapping.NoWrap;
+			}
+
+			if (_tbMainToggle != null)
+			{
+				_tbMainToggle.Width = toggleWidth;
+				_tbMainToggle.Margin = new Thickness(6, 0, 0, 0);
+			}
+
+			void setBullet(WpfEllipse b)
+			{
+				if (b == null) return;
+				b.Width = bullet; b.Height = bullet;
+				b.Margin = new Thickness(0, 0, 4, 0);
+			}
+
+			setBullet(_mainStateBullet);
+			setBullet(_bulletBe);
+			setBullet(_bulletQty);
+			setBullet(_bulletStopFinancial);
+			setBullet(_bulletTakeFinancial);
+			setBullet(_bulletAtr);
+			setBullet(_bulletPnlDia);
+			setBullet(_bulletPnlMes);
+			setBullet(_bulletPnlTotal);
+			setBullet(_bulletEndDay);
+			setBullet(_bulletDayResum);
+
+			void setFont(TextBlock tb, double? f = null) { if (tb != null) tb.FontSize = f ?? font; }
+			setFont(_txtEntry);
+			setFont(_txtChartStop);
+			setFont(_txtExit);
+			setFont(_txtStop);
+			setFont(_txtTake);
+			setFont(_atrValueText);
+			setFont(_pnlDiaText);
+			setFont(_pnlMesText);
+			setFont(_pnlTotalText);
+			setFont(_tbEndDayValue);
+			setFont(_beStateText);
+			setFont(_txtQty);
+			setFont(_txtMaxGain);
+			setFont(_txtMaxLoss);
+			setFont(_drSentence, Math.Max(8.5, font - 1.0));
+			if (_lblDayResum != null) _lblDayResum.FontSize = font;
+		}
+
+		private void SetDayResumBulletAndTitleColor(bool hasTradeOrOpen)
+		{
+			var color = hasTradeOrOpen ? BronzeBrush : LightGrayBrush;
+			if (_bulletDayResum != null) _bulletDayResum.Fill = hasTradeOrOpen ? BronzeBrush : InactiveBulletBrush;
+			if (_lblDayResum != null) _lblDayResum.Foreground = color;
+		}
+
+		public void SetDayResum(
+			string status,
+			int? qty,
+			string stopDollar,
+			string breakevenDollar,
+			string targetDollar,
+			int? maxGain,
+			int? maxLoss
+		)
+		{
+			string sStatus = string.IsNullOrEmpty(status) ? "Waiting (aguardando)" : status;
+			string sQty = qty.HasValue ? qty.Value.ToString() : "-";
+			string sTarget = string.IsNullOrEmpty(targetDollar) ? "-" : targetDollar;
+			string sBE = string.IsNullOrEmpty(breakevenDollar) ? "-" : breakevenDollar;
+			string sStop = string.IsNullOrEmpty(stopDollar) ? "-" : stopDollar;
+			string sMaxGain = maxGain.HasValue ? maxGain.Value.ToString() : "-";
+			string sMaxLoss = maxLoss.HasValue ? maxLoss.Value.ToString() : "-";
+
+			_drSentence.Text =
+				$"Status: {sStatus} | Qty: {sQty} | Target$: {sTarget} | BE$: {sBE} | Stop$: {sStop} | MaxGain: {sMaxGain} | MaxLoss: {sMaxLoss}";
+
+			bool hasTrade = !string.IsNullOrEmpty(status) &&
+							!status.Trim().Equals("Waiting", StringComparison.OrdinalIgnoreCase) &&
+							!status.Trim().StartsWith("Waiting (aguardando)", StringComparison.OrdinalIgnoreCase) &&
+							status.Trim() != "-";
+			SetDayResumBulletAndTitleColor(hasTrade);
+		}
+
+
+		private void OnMainToggleMouseUp(object sender, MouseButtonEventArgs e)
+		{
+			try { ToggleMain(); } catch { }
+		}
+
+		private void OnBeToggleMouseUp(object sender, MouseButtonEventArgs e)
+		{
+			try { ToggleBE(); } catch { }
+		}
+
+		private void ToggleMain()
+		{
+			_mainEnabled = !_mainEnabled;
+			_tbMainToggle.Text = _mainEnabled ? "On" : "Off";
+			_tbMainToggle.Foreground = _mainEnabled ? BronzeBrush : Brushes.Gray;
+			_mainStateBullet.Fill = _mainEnabled ? MainOnBrush : InactiveBulletBrush;
+			_parent.SafePrint($"Main toggled {(_mainEnabled ? "On" : "Off")}");
+			if (!_mainEnabled) ResetAllToDefaults();
+			UpdateBulletsAfterStateChange();
+		}
+
+		private void ResetAllToDefaults()
+		{
+			try
+			{
+				_beEnabled = false;
+				if (_bulletBe != null) _bulletBe.Fill = InactiveBulletBrush;
+				if (_beStateText != null) { _beStateText.Text = "Off"; _beStateText.Foreground = Brushes.Gray; }
+
+				_qty = 1; if (_txtQty != null) _txtQty.Text = "1";
+				if (_txtStop != null) { _txtStop.Text = "-"; _txtStop.Foreground = Brushes.White; }
+				if (_txtTake != null) { _txtTake.Text = "-"; _txtTake.Foreground = Brushes.White; }
+				_atrValueText.Text = "-";
+				_pnlDiaText.Text = "-";
+				_pnlMesText.Text = "-";
+				_pnlTotalText.Text = "-";
+				_txtEntry.Text = "-";
+				_txtChartStop.Text = "-";
+				_txtExit.Text = "-";
+				_txtMaxGain.Text = "Max gain: -";
+				_txtMaxLoss.Text = "Max loss: -";
+
+				SetDayResum(null, null, null, null, null, null, null);
+			}
+			catch { }
+		}
+
+		private void ToggleBE()
+		{
+			_beEnabled = !_beEnabled;
+			if (_bulletBe != null) _bulletBe.Fill = _beEnabled ? BronzeBrush : InactiveBulletBrush;
+			if (_beStateText != null) { _beStateText.Text = _beEnabled ? "On" : "Off"; _beStateText.Foreground = _beEnabled ? BronzeBrush : Brushes.Gray; }
+			_parent.SafePrint($"BE toggled {(_beEnabled ? "On" : "Off")}");
+			UpdateBulletsAfterStateChange();
+		}
+
+		public void UpdateBulletsAfterStateChange()
+		{
+			try
+			{
+				if (_bulletBe != null) _bulletBe.Fill = _beEnabled ? BronzeBrush : InactiveBulletBrush;
+				if (_bulletQty != null) _bulletQty.Fill = (_txtQty != null && int.TryParse(_txtQty.Text, out int q) && q > 0) ? BronzeBrush : InactiveBulletBrush;
+				if (_bulletStopFinancial != null) _bulletStopFinancial.Fill = (_txtStop != null && _txtStop.Text != "-" ? BronzeBrush : InactiveBulletBrush);
+				if (_bulletTakeFinancial != null) _bulletTakeFinancial.Fill = (_txtTake != null && _txtTake.Text != "-" ? BronzeBrush : InactiveBulletBrush);
+				if (_bulletAtr != null) _bulletAtr.Fill = (!string.IsNullOrEmpty(_atrValueText.Text) && _atrValueText.Text != "-" ? BronzeBrush : InactiveBulletBrush);
+				if (_bulletPnlDia != null) _bulletPnlDia.Fill = (_pnlDiaText != null && _pnlDiaText.Text != "-" ? BronzeBrush : InactiveBulletBrush);
+				if (_bulletPnlMes != null) _bulletPnlMes.Fill = (_pnlMesText != null && _pnlMesText.Text != "-" ? BronzeBrush : InactiveBulletBrush);
+				if (_bulletPnlTotal != null) _bulletPnlTotal.Fill = (_pnlTotalText != null && _pnlTotalText.Text != "-" ? BronzeBrush : InactiveBulletBrush);
+				if (_bulletEndDay != null) _bulletEndDay.Fill = (_tbEndDayValue != null && _tbEndDayValue.Text != "-" ? BronzeBrush : InactiveBulletBrush);
+			}
+			catch { }
+		}
+
+		public void SetEntryFromPosition(double avgPrice)
+		{
+			try { _txtEntry.Text = avgPrice.ToString("N2", CultureInfo.CurrentCulture); _txtEntry.Foreground = BronzeBrush; } catch { }
+		}
+
+		public void SetEntryFromPending(double price)
+		{
+			try { _txtEntry.Text = price.ToString("N2", CultureInfo.CurrentCulture); _txtEntry.Foreground = Brushes.White; } catch { }
+		}
+
+		public void ClearEntry()
+		{
+			try { _txtEntry.Text = "-"; _txtEntry.Foreground = Brushes.White; } catch { }
+		}
+
+		public void SetChartStop(double price, bool highlight = true)
+		{
+			try { _txtChartStop.Text = price.ToString("N2", CultureInfo.CurrentCulture); _txtChartStop.Foreground = highlight ? BronzeBrush : Brushes.White; } catch { }
+		}
+
+		public void ClearChartStop()
+		{
+			try { _txtChartStop.Text = "-"; _txtChartStop.Foreground = Brushes.White; } catch { }
+		}
+
+		public void SetExitFromOrder(double price, bool highlight = true)
+		{
+			try { _txtExit.Text = price.ToString("N2", CultureInfo.CurrentCulture); _txtExit.Foreground = highlight ? BronzeBrush : Brushes.White; } catch { }
+		}
+
+		public void ClearExit()
+		{
+			try { _txtExit.Text = "-"; _txtExit.Foreground = Brushes.White; } catch { }
+		}
+
+		public void SetAtrValue(string display)
+		{
+			try { _atrValueText.Text = string.IsNullOrEmpty(display) ? "-" : display; } catch { }
+		}
+
+		public void SetQty(int q, bool highlight = true)
+		{
+			try { _qty = Math.Max(0, q); _txtQty.Text = _qty.ToString(); _txtQty.Foreground = highlight ? BronzeBrush : Brushes.White; UpdateBulletsAfterStateChange(); } catch { }
+		}
+
+		public void SetStopFinancial(string display)
+		{
+			try { _txtStop.Text = string.IsNullOrEmpty(display) ? "-" : display; UpdateBulletsAfterStateChange(); } catch { }
+		}
+
+		public void SetTakeFinancial(string display)
+		{
+			try { _txtTake.Text = string.IsNullOrEmpty(display) ? "-" : display; UpdateBulletsAfterStateChange(); } catch { }
+		}
+
+		public void SetPnLDia(string info)
+		{
+			try
+			{
+				_pnlDiaText.Text = string.IsNullOrEmpty(info) ? "-" : info;
+				ColorPnL(_pnlDiaText, info);
+			}
+			catch { }
+		}
+
+		public void SetPnLMes(string info)
+		{
+			try
+			{
+				_pnlMesText.Text = string.IsNullOrEmpty(info) ? "-" : info;
+				ColorPnL(_pnlMesText, info);
+			}
+			catch { }
+		}
+
+		public void SetPnLTotal(string info)
+		{
+			try
+			{
+				_pnlTotalText.Text = string.IsNullOrEmpty(info) ? "-" : info;
+				ColorPnL(_pnlTotalText, info, rightAlign: true);
+			}
+			catch { }
+		}
+
+		private void ColorPnL(TextBlock tb, string text, bool rightAlign = false)
+		{
+			if (tb == null) return;
+			if (string.IsNullOrEmpty(text) || text.Trim() == "-")
+			{
+				tb.Foreground = LightGrayBrush;
+				return;
+			}
+			if (double.TryParse(text, NumberStyles.Any, CultureInfo.CurrentCulture, out double v) ||
+				double.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out v))
+			{
+				if (v > 0) tb.Foreground = Brushes.LightGreen;
+				else if (v < 0) tb.Foreground = Brushes.OrangeRed;
+				else tb.Foreground = LightGrayBrush;
+			}
+			else
+			{
+				tb.Foreground = LightGrayBrush;
+			}
+			if (rightAlign) tb.TextAlignment = TextAlignment.Right;
+		}
+
+		public void SetStreaks(int? maxGain, int? maxLoss)
+		{
+			try
+			{
+				_txtMaxGain.Text = $"Max gain: {(maxGain.HasValue ? maxGain.Value.ToString() : "-")}";
+				_txtMaxLoss.Text = $"Max loss: {(maxLoss.HasValue ? maxLoss.Value.ToString() : "-")}";
+			}
+			catch { }
+		}
+
+		public void SetEndDayText(string txt)
+		{
+			try
+			{
+				if (string.IsNullOrEmpty(txt))
+				{
+					_tbEndDayValue.Text = "-";
+					_tbEndDayValue.Foreground = Brushes.Gray;
+				}
+				else
+				{
+					_tbEndDayValue.Text = txt;
+					_tbEndDayValue.Foreground = BronzeBrush;
+				}
+				UpdateBulletsAfterStateChange();
+			}
+			catch { }
+		}
+
+		public void ForceSetBEEnabled(bool value)
+		{
+			_beEnabled = value;
+			if (_bulletBe != null) _bulletBe.Fill = value ? BronzeBrush : InactiveBulletBrush;
+			if (_beStateText != null) { _beStateText.Text = value ? "On" : "Off"; _beStateText.Foreground = value ? BronzeBrush : Brushes.Gray; }
+		}
+
+		public void ForceSetATREnabled(bool value)
+		{
+			if (_bulletAtr != null) _bulletAtr.Fill = value ? BronzeBrush : InactiveBulletBrush;
+			if (_atrValueText != null) _atrValueText.Foreground = value ? BronzeBrush : LightGrayBrush;
+		}
+
+		public void ForceSetMainEnabled(bool value)
+		{
+			_mainEnabled = value;
+			if (_tbMainToggle != null)
+			{
+				_tbMainToggle.Text = value ? "On" : "Off";
+				_tbMainToggle.Foreground = value ? BronzeBrush : Brushes.Gray;
+			}
+			if (_mainStateBullet != null)
+				_mainStateBullet.Fill = value ? MainOnBrush : InactiveBulletBrush;
+		}
+
+		private void SmartEmbeddedControl_SizeChanged(object sender, SizeChangedEventArgs e)
+		{
+			try
+			{
+				double w = e.NewSize.Width;
+				ApplyResponsiveLayout(w);
+			}
+			catch { }
+		}
+
+		public void UpdateForChart(ChartControl chartControl)
+		{
+			try
+			{
+				string inst = chartControl?.Instrument?.FullName ?? "unknown";
+				_parent.SafePrint($"Embedded: UpdateForChart instrument={inst}");
+			}
+			catch (Exception ex) { _parent.SafePrint("Embedded UpdateForChart ex: " + ex.Message); }
+		}
+	}
+
+	public class HVB_PanelPersistedState
+	{
+		public string StrategyKey { get; set; }
+		public string StrategyName { get; set; }
+		public string AccountName { get; set; }
+		public string InstrumentName { get; set; }
+		public string PanelPnLMode { get; set; }
+		public DateTime SavedAtUtc { get; set; }
+		public int TradesCountAtSave { get; set; }
+		public int MaxGainStreak { get; set; }
+		public int MaxLossStreak { get; set; }
+		public HVB_PanelStateHub.PanelSnapshot Snapshot { get; set; }
+	}
+
+	public class HVB_PanelHelper
+	{
+		private const int AttachPollMs = 1000;
+		private const double EmbedHeightPx = 370.0;
+
+		private ChartControl chartControl;
+		private NinjaTrader.Gui.Chart.Chart chartWindow;
+		private NinjaTrader.Gui.Chart.ChartTrader chartTrader;
+		private Grid chartTraderGrid;
+		private Border embeddedWrapper;
+		private RowDefinition addedRow;
+		private SelectionChangedEventHandler tabHandler;
+		private DispatcherTimer attachTimer;
+		private DispatcherTimer refreshTimer;
+		private readonly TimeSpan refreshInterval = TimeSpan.FromSeconds(3);
+
+		private bool panelActive = false;
+		private HVB_EmbeddedControl embeddedControl;
+
+		// CHANGED: tag is now stable (derived from CacheKey), not Guid, to avoid orphan panels.
+		private string embeddedTag = "HVB_Panel_UI_UNSET";
+
+		private readonly bool enableDiagnosticLogging;
+		private readonly string logPath;
+
+		private string instrumentName;
+		private string cacheKey;
+
+		public Action<string> LogAction { get; set; }
+
+		// CHANGED: when CacheKey is set, also set deterministic embeddedTag
+		public string CacheKey
+		{
+			get => cacheKey;
+			set
+			{
+				cacheKey = value;
+				embeddedTag = "HVB_Panel_UI_" + Sha1Hex(cacheKey ?? "");
+			}
+		}
+
+		public HVB_PanelHelper(bool enableDiagLog = false)
+		{
+			enableDiagnosticLogging = enableDiagLog;
+			logPath = IOPath.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "NinjaTrader 8", "logs", "hvb_panel_module.log");
+		}
+
+		// CHANGED: internal helper to build stable tag from CacheKey
+		private static string Sha1Hex(string s)
+		{
+			try
+			{
+				if (string.IsNullOrEmpty(s)) return "null";
+				using (var sha = SHA1.Create())
+				{
+					var bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(s));
+					return BitConverter.ToString(bytes).Replace("-", "").ToLowerInvariant();
+				}
+			}
+			catch { return "null"; }
+		}
+
+		public void SafePrint(string message)
+		{
+			try
+			{
+				if (LogAction != null) LogAction($"[HVB_PanelHelper] {message}");
+				else System.Diagnostics.Debug.WriteLine($"[HVB_PanelHelper] {message}");
+
+				if (!enableDiagnosticLogging) return;
+				try
+				{
+					string line = $"[HVB_PanelHelper] {DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} - {message}";
+					Directory.CreateDirectory(IOPath.GetDirectoryName(logPath));
+					System.IO.File.AppendAllText(logPath, line + Environment.NewLine);
+				}
+				catch { }
+			}
+			catch { }
+		}
+
+		public void Init(ChartControl cc)
+		{
+			chartControl = cc;
+			if (chartControl == null)
+			{
+				SafePrint("Init: ChartControl is null; UI not created (headless/backtest).");
+				return;
+			}
+
+			instrumentName = chartControl.Instrument?.FullName ?? "";
+
+			// CHANGED: cleanup any leftovers for this embeddedTag before inserting
+			chartControl.Dispatcher.InvokeAsync(() =>
+			{
+				try { ForceFullCleanup(); } catch { }
+				try { HookChartTraderAndInsert(); } catch { }
+			}, DispatcherPriority.Background);
+
+			StartAttachTimer();
+			StartRefreshTimer();
+			ForceRefreshOnce();
+			SafePrint($"Init: timers started. cacheKey={(cacheKey ?? "null")} embeddedTag={embeddedTag}");
+		}
+
+		public void Dispose()
+		{
+			// CHANGED: dispose/remove UI on Dispatcher to avoid silent failures
+			try
+			{
+				ChartControlDispatcher(() =>
+				{
+					try { StopAttachTimer(); } catch { }
+					try { StopRefreshTimer(); } catch { }
+					try { RemoveEmbedded(); } catch { }
+					try { ForceFullCleanup(); } catch { }
+				});
+			}
+			catch
+			{
+				// fallback best-effort
+				try { StopAttachTimer(); } catch { }
+				try { StopRefreshTimer(); } catch { }
+				try { RemoveEmbedded(); } catch { }
+				try { ForceFullCleanup(); } catch { }
+			}
+		}
+
+		private void StartAttachTimer()
+		{
+			if (attachTimer != null) return;
+			attachTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(AttachPollMs) };
+			attachTimer.Tick += (s, e) =>
+			{
+				try { HookChartTraderAndInsert(); } catch (Exception ex) { SafePrint("attachTimer tick ex: " + ex.Message); }
+			};
+			attachTimer.Start();
+		}
+
+		private void StopAttachTimer()
+		{
+			try { if (attachTimer == null) return; attachTimer.Stop(); attachTimer = null; } catch { }
+		}
+
+		private void HookChartTraderAndInsert()
+		{
+			try
+			{
+				if (chartControl == null) { SafePrint("Hook: ChartControl null"); return; }
+
+				chartWindow = Window.GetWindow(chartControl.Parent) as NinjaTrader.Gui.Chart.Chart;
+				if (chartWindow == null) { SafePrint("Hook: chartWindow null"); return; }
+
+				chartTrader = FindVisualChildren<NinjaTrader.Gui.Chart.ChartTrader>(chartWindow).FirstOrDefault();
+
+				var content = chartTrader?.Content as DependencyObject;
+				if (content != null)
+				{
+					chartTraderGrid = content as Grid;
+					if (chartTraderGrid == null)
+						chartTraderGrid = FindVisualChildren<Grid>(content).FirstOrDefault();
+				}
+
+				RegisterTabHandler();
+
+				if (TabSelected())
+					EnsureEmbeddedVisible();
+				else
+					EnsureEmbeddedHidden();
+			}
+			catch (Exception ex) { SafePrint("HookChartTraderAndInsert ex: " + ex.Message); }
+		}
+
+		private bool TabSelected()
+		{
+			try
+			{
+				if (chartControl == null || chartWindow == null || chartWindow.MainTabControl == null) return false;
+				foreach (TabItem tab in chartWindow.MainTabControl.Items)
+					if ((tab.Content as NinjaTrader.Gui.Chart.ChartTab)?.ChartControl == chartControl && tab == chartWindow.MainTabControl.SelectedItem)
+						return true;
+			}
+			catch { }
+			return false;
+		}
+
+		private void RegisterTabHandler()
+		{
+			try
+			{
+				if (chartWindow?.MainTabControl != null && tabHandler == null)
+				{
+					tabHandler = (s, e) =>
+					{
+						try
+						{
+							if (TabSelected()) { EnsureEmbeddedVisible(); }
+							else { EnsureEmbeddedHidden(); }
+						}
+						catch (Exception ex) { SafePrint("TabHandler ex: " + ex.Message); }
+					};
+					chartWindow.MainTabControl.SelectionChanged += tabHandler;
+				}
+			}
+			catch (Exception ex) { SafePrint("RegisterTabHandler ex: " + ex.Message); }
+		}
+
+		private void EnsureEmbeddedVisible()
+		{
+			try
+			{
+				if (embeddedWrapper == null || embeddedControl == null)
+				{
+					InsertEmbedded();
+				}
+				else
+				{
+					embeddedWrapper.Visibility = Visibility.Visible;
+					panelActive = true;
+					RepositionEmbedded();
+					embeddedControl.UpdateBulletsAfterStateChange();
+				}
+			}
+			catch (Exception ex) { SafePrint("EnsureEmbeddedVisible ex: " + ex.Message); }
+		}
+
+		private void EnsureEmbeddedHidden()
+		{
+			try
+			{
+				if (embeddedWrapper != null)
+				{
+					embeddedWrapper.Visibility = Visibility.Collapsed;
+					panelActive = false;
+				}
+			}
+			catch (Exception ex) { SafePrint("EnsureEmbeddedHidden ex: " + ex.Message); }
+		}
+
+		private void InsertEmbedded()
+		{
+			try
+			{
+				// CHANGED: remove leftovers (same embeddedTag) before inserting
+				try { ForceFullCleanup(); } catch { }
+
+				embeddedControl = new HVB_EmbeddedControl(this);
+
+				var outer = new Border
+				{
+					BorderThickness = new Thickness(1),
+					BorderBrush = new SolidColorBrush(Color.FromArgb(220, 90, 65, 35)),
+					CornerRadius = new CornerRadius(3),
+					SnapsToDevicePixels = true,
+					VerticalAlignment = VerticalAlignment.Top,
+					MaxHeight = EmbedHeightPx + 8,
+					Margin = new Thickness(0, 0, 0, 4),
+					Background = new LinearGradientBrush(
+						new GradientStopCollection {
+							new GradientStop(Color.FromRgb(14,14,14), 0.0),
+							new GradientStop(Color.FromRgb(24,24,26), 0.35),
+							new GradientStop(Color.FromRgb(12,12,14), 1.0)
+						},
+						new Point(0,0),
+						new Point(1,1))
+				};
+
+				outer.Effect = new DropShadowEffect
+				{
+					Color = Color.FromArgb(180, 0, 0, 0),
+					BlurRadius = 14,
+					ShadowDepth = 2,
+					Opacity = 0.55,
+					Direction = 270
+				};
+
+				var inner = new Border
+				{
+					Background = new LinearGradientBrush(
+						new GradientStopCollection {
+							new GradientStop(Color.FromArgb(220, 22,22,24), 0.0),
+							new GradientStop(Color.FromArgb(220, 28,28,30), 0.45),
+							new GradientStop(Color.FromArgb(220, 18,18,20), 1.0)
+						},
+						new Point(0,0),
+						new Point(0,1)),
+					BorderBrush = new SolidColorBrush(Color.FromArgb(180, 170, 120, 60)),
+					BorderThickness = new Thickness(1),
+					CornerRadius = new CornerRadius(2),
+					SnapsToDevicePixels = true,
+					Margin = new Thickness(3)
+				};
+
+				inner.Child = embeddedControl;
+				outer.Child = inner;
+
+				// CHANGED: deterministic tag (not Guid)
+				try { outer.Tag = embeddedTag; inner.Tag = embeddedTag; embeddedControl.Tag = embeddedTag; } catch { }
+
+				embeddedWrapper = outer;
+
+				bool addedToChartPanel = false;
+				try
+				{
+					FrameworkElement chartParent = chartControl as FrameworkElement;
+					Panel panelHost = null;
+
+					if (chartParent != null && chartParent.Parent is Panel p) panelHost = p;
+					else
+					{
+						DependencyObject node = chartControl as DependencyObject;
+						while (node != null && panelHost == null)
+						{
+							node = VisualTreeHelper.GetParent(node);
+							if (node is Panel foundPanel) panelHost = foundPanel;
+						}
+					}
+
+					if (panelHost != null)
+					{
+						panelHost.Children.Add(embeddedWrapper);
+						Panel.SetZIndex(embeddedWrapper, 9999);
+						addedToChartPanel = true;
+					}
+				}
+				catch { addedToChartPanel = false; }
+
+				if (!addedToChartPanel)
+				{
+					int idx = (chartTraderGrid != null) ? chartTraderGrid.RowDefinitions.Count : 0;
+					if (chartTraderGrid != null)
+					{
+						addedRow = new RowDefinition { Height = GridLength.Auto };
+						chartTraderGrid.RowDefinitions.Add(addedRow);
+						Grid.SetRow(embeddedWrapper, idx);
+						chartTraderGrid.Children.Add(embeddedWrapper);
+					}
+					else
+					{
+						var parent = chartControl.Parent as Panel;
+						if (parent != null)
+						{
+							parent.Children.Add(embeddedWrapper);
+							try { embeddedWrapper.Tag = embeddedTag; } catch { }
+						}
+					}
+				}
+
+				panelActive = true;
+				embeddedWrapper.Visibility = Visibility.Visible;
+
+				HookResizeHandlersForEmbedded();
+				RepositionEmbedded();
+
+				RegisterTabHandler();
+				UpdateEmbeddedForSelectedTab();
+				try { if (attachTimer != null) { attachTimer.Stop(); attachTimer = null; SafePrint("Stopped attach timer after attach."); } } catch { }
+
+				ForceRefreshOnce();
+			}
+			catch (Exception ex) { SafePrint("InsertEmbedded ex: " + ex.Message); }
+		}
+
+		private void RemoveEmbedded()
+		{
+			try
+			{
+				UnhookResizeHandlersForEmbedded();
+
+				if (chartWindow?.MainTabControl != null && tabHandler != null)
+				{
+					try { chartWindow.MainTabControl.SelectionChanged -= tabHandler; } catch { }					tabHandler = null;
+				}
+			}
+			catch { }
+
+			// CHANGED: do a stronger cleanup with the deterministic tag
+			try { ForceFullCleanup(); } catch { }
+
+			embeddedWrapper = null;
+			addedRow = null;
+			panelActive = false;
+			SafePrint("RemoveEmbedded: removed embedded UI and frame (cleanup attempted).");
+		}
+
+		private void tryRemoveTaggedFromParents()
+		{
+			try
+			{
+				Panel parentPanel = null;
+				DependencyObject node = chartControl as DependencyObject;
+				while (node != null && parentPanel == null)
+				{
+					node = VisualTreeHelper.GetParent(node);
+					if (node is Panel p) parentPanel = p;
+				}
+
+				if (parentPanel != null)
+				{
+					var toRemove = new List<UIElement>();
+					foreach (UIElement child in parentPanel.Children)
+					{
+						try
+						{
+							if (child is FrameworkElement fe)
+							{
+								var tag = fe.Tag as string;
+								if (!string.IsNullOrEmpty(tag) && tag == embeddedTag) toRemove.Add(child);
+								else if (!string.IsNullOrEmpty(fe.Name) && fe.Name.StartsWith("HawkPanel")) toRemove.Add(child);
+							}
+						}
+						catch { }
+					}
+					foreach (var c in toRemove)
+					{
+						try { parentPanel.Children.Remove(c); } catch { }
+					}
+				}
+			}
+			catch { }
+		}
+
+		private void tryRemoveTaggedFromChartControl()
+		{
+			try
+			{
+				if (chartControl == null) return;
+
+				var visuals = FindVisualChildren<FrameworkElement>(chartControl as DependencyObject).Where(fe =>
+				{
+					try
+					{
+						var tag = fe.Tag as string;
+						if (!string.IsNullOrEmpty(tag) && tag == embeddedTag) return true;
+						if (!string.IsNullOrEmpty(fe.Name) && fe.Name.StartsWith("HawkPanel")) return true;
+					}
+					catch { }
+					return false;
+				}).ToList();
+
+				foreach (var v in visuals)
+				{
+					try
+					{
+						var parent = VisualTreeHelper.GetParent(v);
+						if (parent is Panel pp) pp.Children.Remove(v);
+						else if (parent is ContentControl cc && ReferenceEquals(cc.Content, v)) cc.Content = null;
+						else if (parent is Decorator dec && ReferenceEquals(dec.Child, v)) dec.Child = null;
+					}
+					catch { }
+				}
+			}
+			catch { }
+		}
+
+		private void ForceFullCleanup()
+		{
+			try
+			{
+				Action<DependencyObject> sweep = (root) =>
+				{
+					try { RemoveTaggedAndNamedVisuals(root, embeddedTag); } catch { }
+				};
+
+				try { if (chartControl != null) sweep(chartControl as DependencyObject); } catch { }
+				try { if (chartWindow != null) sweep(chartWindow as DependencyObject); } catch { }
+				try { if (chartTrader != null) sweep(chartTrader as DependencyObject); } catch { }
+			}
+			catch { }
+		}
+
+		private void RemoveTaggedAndNamedVisuals(DependencyObject root, string tagToRemove)
+		{
+			try
+			{
+				if (root == null) return;
+				var stack = new Stack<DependencyObject>();
+				stack.Push(root);
+
+				while (stack.Count > 0)
+				{
+					var node = stack.Pop();
+					int count = VisualTreeHelper.GetChildrenCount(node);
+					for (int i = 0; i < count; i++)
+					{
+						var child = VisualTreeHelper.GetChild(node, i);
+						bool match = false;
+						if (child is FrameworkElement fe)
+						{
+							try
+							{
+								var t = fe.Tag as string;
+								if (!string.IsNullOrEmpty(t) && t == tagToRemove) match = true;
+								if (!match && !string.IsNullOrEmpty(fe.Name) && fe.Name.StartsWith("HawkPanel")) match = true;
+							}
+							catch { }
+
+							if (match)
+							{
+								var parent = VisualTreeHelper.GetParent(fe);
+								if (parent is Panel pp)
+								{
+									try { pp.Children.Remove(fe); } catch { }
+								}
+								else if (parent is ContentControl cc && ReferenceEquals(cc.Content, fe))
+								{
+									try { cc.Content = null; } catch { }
+								}
+								else if (parent is Decorator dec && ReferenceEquals(dec.Child, fe))
+								{
+									try { dec.Child = null; } catch { }
+								}
+								continue;
+							}
+						}
+						stack.Push(child);
+					}
+				}
+			}
+			catch { }
+		}
+
+		private void UpdateEmbeddedForSelectedTab()
+		{
+			try
+			{
+				if (chartWindow == null || embeddedControl == null) return;
+				var selected = chartWindow.MainTabControl?.SelectedItem as TabItem;
+				if (selected == null) return;
+				var chartTab = selected.Content as NinjaTrader.Gui.Chart.ChartTab;
+				if (chartTab == null) return;
+				var cc = chartTab.ChartControl;
+				if (cc == null) return;
+
+				embeddedControl.UpdateForChart(cc);
+				embeddedControl.UpdateBulletsAfterStateChange();
+				RepositionEmbedded();
+			}
+			catch (Exception ex) { SafePrint("UpdateEmbeddedForSelectedTab ex: " + ex.Message); }
+		}
+
+		public void ApplySnapshot(HVB_PanelStateHub.PanelSnapshot snap)
+		{
+			try
+			{
+				if (snap == null || embeddedControl == null) return;
+				ChartControlDispatcher(() =>
+				{
+					ApplySnapshotToUi(snap);
+				});
+			}
+			catch (Exception ex) { SafePrint("ApplySnapshot ex: " + ex.Message); }
+		}
+
+		private void ApplySnapshotToUi(HVB_PanelStateHub.PanelSnapshot snap)
+		{
+			try
+			{
+				string titleFromSnap = SanitizeStrategyName(!string.IsNullOrEmpty(snap.StrategyName) ? snap.StrategyName : (instrumentName ?? "Hawk"));
+				embeddedControl.ApplyPanelTitle($"Hawk - {titleFromSnap}");
+
+				if (snap.EntryPrice.HasValue)
+					embeddedControl.SetEntryFromPosition(snap.EntryPrice.Value);
+				else if (snap.PendingEntryPrice.HasValue)
+					embeddedControl.SetEntryFromPending(snap.PendingEntryPrice.Value);
+				else
+					embeddedControl.ClearEntry();
+
+				if (snap.StopChart.HasValue)
+					embeddedControl.SetChartStop(snap.StopChart.Value, highlight: snap.EntryPrice.HasValue);
+				else if (snap.PendingStopPrice.HasValue)
+					embeddedControl.SetChartStop(snap.PendingStopPrice.Value, highlight: false);
+				else
+					embeddedControl.ClearChartStop();
+
+				if (snap.ExitTarget.HasValue)
+					embeddedControl.SetExitFromOrder(snap.ExitTarget.Value, highlight: snap.EntryPrice.HasValue);
+				else
+					embeddedControl.ClearExit();
+
+				if (snap.Qty.HasValue && snap.Qty.Value > 0)
+					embeddedControl.SetQty(snap.Qty.Value, highlight: snap.EntryPrice.HasValue);
+				else if (snap.PendingQty.HasValue && snap.PendingQty.Value > 0)
+					embeddedControl.SetQty(snap.PendingQty.Value, highlight: false);
+				else
+					embeddedControl.SetQty(0, highlight: false);
+
+				embeddedControl.SetStopFinancial(string.IsNullOrEmpty(snap.FinancialStopText) ? "-" : snap.FinancialStopText);
+				embeddedControl.SetTakeFinancial(string.IsNullOrEmpty(snap.TakeDollarText) ? "-" : snap.TakeDollarText);
+
+				string atrDisplay = snap.AtrDisplayText;
+				embeddedControl.SetAtrValue(string.IsNullOrEmpty(atrDisplay) ? "-" : atrDisplay);
+
+				embeddedControl.SetPnLDia(string.IsNullOrEmpty(snap.PnLDiaText) ? "-" : snap.PnLDiaText);
+				embeddedControl.SetPnLMes(string.IsNullOrEmpty(snap.PnLMesText) ? "-" : snap.PnLMesText);
+				embeddedControl.SetPnLTotal(string.IsNullOrEmpty(snap.PnLTotalText) ? "-" : snap.PnLTotalText);
+
+				int? maxGain = snap.DayMaxGain ?? snap.MaxGainStreak;
+				int? maxLoss = snap.DayMaxLoss ?? snap.MaxLossStreak;
+
+				if (!string.IsNullOrEmpty(snap.EndDayText))
+					embeddedControl.SetEndDayText(snap.EndDayText);
+				else
+					embeddedControl.SetEndDayText("-");
+
+				embeddedControl.SetDayResum(
+					snap.DayTradeStatus ?? snap.StatusText,
+					snap.DayQuantity ?? snap.Qty ?? snap.PendingQty,
+					snap.DayStopDollar ?? snap.FinancialStopText,
+					snap.DayBreakevenDollar ?? (snap.BEEnabled == true ? "ON" : "-"),
+					snap.DayTargetDollar ?? snap.TakeDollarText,
+					maxGain,
+					maxLoss
+				);
+
+				embeddedControl.SetStreaks(maxGain, maxLoss);
+
+				embeddedControl.ForceSetBEEnabled(snap.BEEnabled ?? false);
+				embeddedControl.ForceSetATREnabled(snap.ATREnabled ?? false);
+				embeddedControl.ForceSetMainEnabled(snap.MainEnabled ?? false);
+
+				embeddedControl.UpdateBulletsAfterStateChange();
+			}
+			catch (Exception ex) { SafePrint("ApplySnapshotToUi ex: " + ex.Message); }
+		}
+
+		private string SanitizeStrategyName(string raw)
+		{
+			if (string.IsNullOrEmpty(raw)) return "Hawk";
+			var trimmed = raw.Trim();
+			if (trimmed.StartsWith("Hawk", StringComparison.OrdinalIgnoreCase))
+			{
+				trimmed = trimmed.Substring(4).TrimStart('-', ' ');
+				if (string.IsNullOrEmpty(trimmed)) trimmed = "Hawk";
+			}
+			return trimmed;
+		}
+
+		private void StartRefreshTimer()
+		{
+			if (refreshTimer != null) return;
+			refreshTimer = new DispatcherTimer { Interval = refreshInterval };
+			refreshTimer.Tick += (s, e) =>
+			{
+				try
+				{
+					var snap = HVB_PanelStateHub.GetLatest(cacheKey);
+					if (snap != null && embeddedControl != null)
+					{
+						ChartControlDispatcher(() =>
+						{
+							ApplySnapshotToUi(snap);
+						});
+					}
+				}
+				catch (Exception ex) { SafePrint("refreshTimer tick ex: " + ex.Message); }
+			};
+			refreshTimer.Start();
+		}
+
+		private void StopRefreshTimer()
+		{
+			try { if (refreshTimer == null) return; refreshTimer.Stop(); refreshTimer = null; } catch { }
+		}
+
+		private void ForceRefreshOnce()
+		{
+			try
+			{
+				var snap = HVB_PanelStateHub.GetLatest(cacheKey);
+				if (snap != null && embeddedControl != null)
+				{
+					ChartControlDispatcher(() => ApplySnapshotToUi(snap));
+				}
+			}
+			catch (Exception ex) { SafePrint("ForceRefreshOnce ex: " + ex.Message); }
+		}
+
+		private void RepositionEmbedded()
+		{
+			try
+			{
+				if (embeddedWrapper == null || chartControl == null) return;
+
+				Panel parentPanel = embeddedWrapper.Parent as Panel;
+				if (parentPanel == null)
+				{
+					DependencyObject node = chartControl as DependencyObject;
+					while (node != null && parentPanel == null)
+					{
+						node = VisualTreeHelper.GetParent(node);
+						if (node is Panel found) parentPanel = found;
+					}
+				}
+
+				if (parentPanel == null) return;
+
+				Point chartTopLeft;
+				try { chartTopLeft = chartControl.TransformToVisual(parentPanel).Transform(new Point(0, 0)); }
+				catch { chartTopLeft = new Point(0, 0); }
+
+				double left = chartTopLeft.X + 8.0;
+				double top = chartTopLeft.Y + 20.0;
+
+				embeddedWrapper.HorizontalAlignment = HorizontalAlignment.Left;
+				embeddedWrapper.VerticalAlignment = VerticalAlignment.Top;
+				embeddedWrapper.Margin = new Thickness(left, top, 0, 0);
+
+				double fallbackWidth = 260.0;
+				try
+				{
+					if (chartControl.ChartPanels != null && chartControl.ChartPanels.Count > 0)
+					{
+						var cp = chartControl.ChartPanels[0];
+						if (cp != null && cp.W > 0)
+							fallbackWidth = Math.Min(cp.W * 0.26, 280.0);
+					}
+					else if (parentPanel.ActualWidth > 0)
+						fallbackWidth = Math.Min(parentPanel.ActualWidth * 0.26, 280.0);
+				}
+				catch { fallbackWidth = 260.0; }
+
+				double finalWidth = Math.Min(Math.Max(190.0, fallbackWidth), 280.0);
+
+				try { embeddedWrapper.Width = finalWidth; } catch { }
+				try { embeddedWrapper.MaxHeight = EmbedHeightPx; } catch { }
+				try { Panel.SetZIndex(embeddedWrapper, 9999); } catch { }
+
+				try { embeddedControl?.ApplyResponsiveLayout(finalWidth); } catch { }
+			}
+			catch (Exception ex)
+			{
+				SafePrint("RepositionEmbedded ex: " + ex.Message);
+			}
+		}
+
+		private void HookResizeHandlersForEmbedded()
+		{
+			try
+			{
+				try { if (chartControl != null) chartControl.SizeChanged -= ChartControl_SizeChanged; } catch { }
+				try { if (chartControl != null) chartControl.SizeChanged += ChartControl_SizeChanged; } catch { }
+			}
+			catch { }
+		}
+
+		private void UnhookResizeHandlersForEmbedded()
+		{
+			try
+			{
+				try { if (chartControl != null) chartControl.SizeChanged -= ChartControl_SizeChanged; } catch { }
+			}
+			catch { }
+		}
+
+		private void ChartControl_SizeChanged(object sender, SizeChangedEventArgs e)
+		{
+			try
+			{
+				ChartControlDispatcher(() => RepositionEmbedded());
+			}
+			catch { }
+		}
+
+		private static IEnumerable<T> FindVisualChildren<T>(DependencyObject depObj) where T : DependencyObject
+		{
+			if (depObj == null) yield break;
+			for (int i = 0; i < VisualTreeHelper.GetChildrenCount(depObj); i++)
+			{
+				var child = VisualTreeHelper.GetChild(depObj, i);
+				if (child is T t) yield return t;
+				foreach (var c in FindVisualChildren<T>(child)) yield return c;
+			}
+		}
+
+		private void ChartControlDispatcher(Action a)
+		{
+			try
+			{
+				if (chartControl?.Dispatcher != null)
+				{
+					chartControl.Dispatcher.BeginInvoke(a);
+				}
+				else
+				{
+					a();
+				}
+			}
+			catch { }
+		}
+	}
+}
+// UPDATED: 2026-01-08 - Part 2A (must remain open for Part 3 append)
+// ============================================================================
+// Strategy: HawkVwapBandsVolatility  (Part 2A - UPDATED / ready to receive 2B)
+// Fix goals:
+//  - Part 2A MUST NOT close the class/namespace (2B continues inside same class)
+//  - Keep AggressiveGridMode ONLY as NinjaScriptProperty (2A)
+//  - Keep _bandFilledBuy/_bandFilledSell ONLY as private fields (2A)
+//  - Avoid duplicate member with 2B: remove local IsDeadOrder from 2A
+//  - Keep OppBandExit maintenance improvements, relying on IsDeadOrder from 2B later
+// ============================================================================
+
+namespace NinjaTrader.NinjaScript.Strategies
+{
+	public enum PanelPnLMode { RealtimeOnly, ChartHistorical }
+
+	public class HawkVwapBandsVolatility : Strategy
+	{
+		#region Inputs (public)
+		[NinjaScriptProperty, Display(Name = "Start Time BRT (HH:mm[:ss])", GroupName = "Horas", Order = 1)]
+		public string StartTimeBrt { get; set; } = "10:00:00";
+		[NinjaScriptProperty, Display(Name = "Stop New Trades Time BRT (HH:mm[:ss])", GroupName = "Horas", Order = 2)]
+		public string StopNewTradesTimeBrt { get; set; } = "16:30:00";
+		[NinjaScriptProperty, Display(Name = "Flatten Time BRT (HH:mm[:ss])", GroupName = "Horas", Order = 3)]
+		public string FlattenTimeBrt { get; set; } = "17:00:00";
+		[NinjaScriptProperty, Display(Name = "User BRT Offset Minutes", GroupName = "Horas", Order = 4)]
+		public int UserBrtOffsetMinutes { get; set; } = 0;
+
+		[NinjaScriptProperty, Display(Name = "Ignore Trading Window in Strategy Analyzer", GroupName = "Horas", Order = 99)]
+		public bool IgnoreWindowInAnalyzer { get; set; } = true;
+
+		[NinjaScriptProperty, Range(1, 5)]
+		[Display(Name = "Number of deviations", GroupName = "Bandas", Order = 10)]
+		public int NumDeviations { get; set; } = 5;
+
+		[NinjaScriptProperty, Display(Name = "Use Fibo Bands", GroupName = "Bandas", Order = 11)]
+		public bool UseFiboBands { get; set; } = false;
+
+		[NinjaScriptProperty, Display(Name = "Use Fixed Bands (%)", GroupName = "Bandas", Order = 12)]
+		public bool UseFixedBands { get; set; } = false;
+
+		[NinjaScriptProperty, Display(Name = "Fixed 1 (%)", GroupName = "Bandas", Order = 13)]
+		public double Fixed1Pct { get; set; } = 0.5;
+		[NinjaScriptProperty, Display(Name = "Fixed 2 (%)", GroupName = "Bandas", Order = 14)]
+		public double Fixed2Pct { get; set; } = 1.0;
+		[NinjaScriptProperty, Display(Name = "Fixed 3 (%)", GroupName = "Bandas", Order = 15)]
+		public double Fixed3Pct { get; set; } = 1.5;
+		[NinjaScriptProperty, Display(Name = "Fixed 4 (%)", GroupName = "Bandas", Order = 16)]
+		public double Fixed4Pct { get; set; } = 2.0;
+		[NinjaScriptProperty, Display(Name = "Fixed 5 (%)", GroupName = "Bandas", Order = 17)]
+		public double Fixed5Pct { get; set; } = 2.5;
+
+		[NinjaScriptProperty, Range(0, 10)]
+		[Display(Name = "Touch Margin (ticks)", GroupName = "Bandas", Order = 18)]
+		public int TouchMarginTicks { get; set; } = 1;
+
+		[NinjaScriptProperty, Display(Name = "Enable Grid 1", GroupName = "Grids", Order = 1)] public bool EnableGrid1 { get; set; } = true;
+		[NinjaScriptProperty, Display(Name = "Enable Grid 2", GroupName = "Grids", Order = 2)] public bool EnableGrid2 { get; set; } = true;
+		[NinjaScriptProperty, Display(Name = "Enable Grid 3", GroupName = "Grids", Order = 3)] public bool EnableGrid3 { get; set; } = false;
+		[NinjaScriptProperty, Display(Name = "Enable Grid 4", GroupName = "Grids", Order = 4)] public bool EnableGrid4 { get; set; } = false;
+		[NinjaScriptProperty, Display(Name = "Enable Grid 5", GroupName = "Grids", Order = 5)] public bool EnableGrid5 { get; set; } = false;
+		[NinjaScriptProperty, Display(Name = "Entry Offset (ticks)", GroupName = "Grids", Order = 6)] public int EntryOffsetTicks { get; set; } = 10;
+		[NinjaScriptProperty, Display(Name = "Quantity per Grid Order", GroupName = "Grids", Order = 7)] public int QuantityPerGridOrder { get; set; } = 1;
+
+		[NinjaScriptProperty, Display(Name = "Reprice every N bars", GroupName = "Grids", Order = 8)]
+		public int RepriceEveryNBars { get; set; } = 1;
+
+		[NinjaScriptProperty, Display(Name = "Disable reprice when flat", GroupName = "Grids", Order = 9)]
+		public bool DisableRepriceWhenFlat { get; set; } = false;
+
+		[NinjaScriptProperty, Range(1, 50)]
+		[Display(Name = "Reprice Threshold (ticks)", GroupName = "Grids", Order = 10)]
+		public int RepriceThresholdTicks { get; set; } = 5;
+
+		// Option A: AggressiveGridMode exists ONLY here (property).
+		// Default=false => each band fills at most once per cycle.
+		// true => legacy behavior (allow repeats).
+		[NinjaScriptProperty, Display(Name = "Aggressive Grid Mode (allow repeat fills per band)", GroupName = "Grids", Order = 11)]
+		public bool AggressiveGridMode { get; set; } = false;
+
+		[NinjaScriptProperty, Display(Name = "Meta máxima do DIA (USD)", GroupName = "Limites", Order = 1)] public double DailyProfitLimitUsd { get; set; } = 200;
+		[NinjaScriptProperty, Display(Name = "Perda máxima do DIA (USD)", GroupName = "Limites", Order = 2)] public double DailyLossLimitUsd { get; set; } = 300;
+
+		[NinjaScriptProperty, Display(Name = "Disable Daily Limits in Strategy Analyzer", GroupName = "Limites", Order = 99)]
+		public bool DisableDailyLimitsInStrategyAnalyzer { get; set; } = true;
+
+		[NinjaScriptProperty, Display(Name = "Saída na VWAP central (modo exclusivo)", GroupName = "Saída", Order = 1)]
+		public bool ExitAtVwapEnabled { get; set; } = true;
+
+		[NinjaScriptProperty, Display(Name = "Saída na Banda Oposta (modo exclusivo)", GroupName = "Saída", Order = 2)]
+		public bool ExitAtOppositeBandEnabled { get; set; } = false;
+
+		[NinjaScriptProperty, Range(1, 5)]
+		[Display(Name = "Opposite Band Exit Deviation", GroupName = "Saída", Order = 3)]
+		public int OppBandExitDeviation { get; set; } = 1;
+
+		[NinjaScriptProperty, Display(Name = "Alvo por TRADE/CICLO (USD)", GroupName = "Saída", Order = 4)]
+		public double TradeProfitTargetUsd { get; set; } = 200;
+
+		[NinjaScriptProperty, Display(Name = "Stop por TRADE/CICLO (USD)", GroupName = "Saída", Order = 5)]
+		public double TradeStopLossUsd { get; set; } = 200;
+
+		[NinjaScriptProperty, Display(Name = "Enable Financial Stop (USD->preço)", GroupName = "Stops", Order = 3)]
+		public bool EnableFinancialStop { get; set; } = false;
+
+		[NinjaScriptProperty, Display(Name = "Financial Stop (USD)", GroupName = "Stops", Order = 4)]
+		public double FinancialStopUsd { get; set; } = 500;
+
+		[NinjaScriptProperty, Display(Name = "Log Level (Off/Error/Info/Verbose)", GroupName = "Debug", Order = 1)]
+		public string LogLevel { get; set; } = "Info";
+
+		[NinjaScriptProperty, Display(Name = "Panel Title", GroupName = "Painel", Order = 1)]
+		public string PanelTitle { get; set; } = "HawkVwapBandsVolatility";
+		[NinjaScriptProperty, Display(Name = "InstanceTag (opcional)", GroupName = "Painel", Order = 2)]
+		public string InstanceTag { get; set; } = "";
+		[NinjaScriptProperty, Display(Name = "Enable Panel Diagnostics", GroupName = "Painel", Order = 3)]
+		public bool EnablePanelDiagnostics { get; set; } = false;
+		[NinjaScriptProperty, Display(Name = "Panel Publish Interval (s)", GroupName = "Painel", Order = 4)]
+		public int PanelPublishIntervalSeconds { get; set; } = 1;
+
+		[NinjaScriptProperty, Display(Name = "Panel PnL Mode", GroupName = "Painel", Order = 5)]
+		public PanelPnLMode PanelPnlMode { get; set; } = PanelPnLMode.RealtimeOnly;
+
+		[NinjaScriptProperty, Display(Name = "Limite de operações diárias (0 = ilimitado)", GroupName = "Trade Limits", Order = 1)]
+		public int MaxTradesPerDay { get; set; } = 0;
+
+		[NinjaScriptProperty, Display(Name = "Ativar sentido de posição", GroupName = "Trade Limits", Order = 2)]
+		public bool EnableTradeDirectionLimits { get; set; } = false;
+
+		[NinjaScriptProperty, Display(Name = "Máx operações BUY por dia (0 = ilimitado)", GroupName = "Trade Limits", Order = 3)]
+		public int MaxBuysPerDay { get; set; } = 0;
+
+		[NinjaScriptProperty, Display(Name = "Máx operações SELL por dia (0 = ilimitado)", GroupName = "Trade Limits", Order = 4)]
+		public int MaxSellsPerDay { get; set; } = 0;
+
+		[Browsable(false), XmlIgnore]
+		[NinjaScriptProperty, Display(Name = "Enable Stop Loss", GroupName = "Stops", Order = 1)]
+		public bool EnableStopLoss { get; set; } = false;
+
+		[Browsable(false), XmlIgnore]
+		[NinjaScriptProperty, Display(Name = "Stop Loss (ticks)", GroupName = "Stops", Order = 2)]
+		public int StopLossTicks { get; set; } = 20;
+		#endregion
+
+		#region Internals
+		private enum Regime { None, Buy, Sell }
+		private enum ExitMode { Vwap, OppositeBand, Financial }
+
+		private Regime currentRegime = Regime.None;
+		private Regime lastRegime = Regime.None;
+
+		private Order[] gridLong = new Order[5];
+		private Order[] gridShort = new Order[5];
+		private Order[] gridLongReplace = new Order[5];
+		private Order[] gridShortReplace = new Order[5];
+		private Order exitVwapOrder = null;
+		private Order exitVwapOrderReplace = null;
+		private Order oppositeBandExitOrder = null;
+		private Order oppositeBandExitOrderReplace = null;
+		private Order stopLossOrder = null;
+		private Order financialTargetOrder = null;
+		private Order financialTargetOrderReplace = null;
+
+		private DateTime lastCalendarDayBrt = DateTime.MinValue;
+		private bool isLockedForDay = false;
+		private double realizedPnlDay = 0;
+
+		private int startHHmmss, stopHHmmss, flattenHHmmss;
+		private TimeSpan flattenSpan = new TimeSpan(17, 0, 0);
+		private int logLevelInt = 2;
+
+		private HVB_PanelHelper panelHelper;
+		private DateTime lastPanelPub = DateTime.MinValue;
+		private string cacheKey = "";
+		private string chartToken = "HEADLESS";
+		private bool terminatedHandled = false;
+
+		private string lastEvent = "Init";
+		private string dayStatus = "Waiting";
+		private string dayStopDollars = "-";
+		private string dayTargetDollars = "-";
+		private string dayBreakevenDollars = "-";
+
+		private double lastSnapVwap = double.NaN;
+		private double[] lastSnapUpper = new double[5];
+		private double[] lastSnapLower = new double[5];
+
+		private DateTime lastAutoCloseDate = DateTime.MinValue;
+
+		private readonly double[] upper = new double[5];
+		private readonly double[] lower = new double[5];
+
+		private Indicators.HawkVwapBands hvb;
+
+		private DateTime _lastHbUtc = DateTime.MinValue;
+
+		private int _lastPnlCalcCount = -1;
+		private DateTime _lastPnlCalcUtc = DateTime.MinValue;
+		private string _cachedPnlDay = "-";
+		private string _cachedPnlMonth = "-";
+		private string _cachedPnlTotal = "-";
+
+		private int _currentStreak = 0;
+		private int _maxGainStreak = 0;
+		private int _maxLossStreak = 0;
+		private int _lastStreakTradesCount = 0;
+
+		private double _unrealizedPnlManual = 0;
+		private double _totalPnlDay = 0;
+		private double _monthPnl = 0;
+		private double _overallPnl = 0;
+
+		private string _lockReason = "";
+		private DateTime _lockedAtUtc = DateTime.MinValue;
+
+		private int tradesClosedTodayTotal = 0;
+		private int tradesClosedTodayBuy = 0;
+		private int tradesClosedTodaySell = 0;
+		private DateTime tradeCountersBrtDate = DateTime.MinValue;
+		private bool cycleOpen = false;
+		private Regime cycleDirection = Regime.None;
+
+		private Order flattenOrder = null;
+		private bool flattenInProgress = false;
+		private int flattenAttemptCount = 0;
+		private int flattenStartBar = -1;
+		private readonly int flattenRetryBars = 2;
+		private readonly int maxFlattenAttempts = 3;
+		private string flattenReason = "";
+		private bool flattenAllowFallback = false;
+		private System.Timers.Timer _flattenTimer = null;
+
+		private bool isAnalyzerMode = false;
+		private bool panelInitialized = false;
+
+		private ExitMode? lastExitMode = null;
+
+		private int[] _lastGridRepriceBarLong = new int[5];
+		private int[] _lastGridRepriceBarShort = new int[5];
+
+		private bool _panelCacheLoaded = false;
+		private DateTime _lastPanelCacheSaveUtc = DateTime.MinValue;
+		private readonly TimeSpan _panelCacheSaveThrottle = TimeSpan.FromSeconds(5);
+		private bool _panelCacheSaveRequested = false;
+		private int _lastSavedHistoricalTradesCount = -1;
+
+		private double _rtRealizedTotal = 0;
+		private double _rtRealizedMonth = 0;
+		private double _rtRealizedDay = 0;
+		private int _rtLastProcessedTradeCount = 0;
+		private DateTime _rtBrtDay = DateTime.MinValue;
+		private int _rtBrtYearMonth = 0;
+
+		// NEW: once-per-band-per-cycle guards (default behavior)
+		private bool[] _bandFilledBuy = new bool[5];
+		private bool[] _bandFilledSell = new bool[5];
+		#endregion
+
+		#region Lifecycle
+		protected override void OnStateChange()
+		{
+			try
+			{
+				if (State == State.SetDefaults)
+				{
+					Name = "HawkVwapBandsVolatility";
+					Description = "Hawk VWAP Bands Grid Strategy (regime por VWAP, grids 1..5, exit na VWAP, limites diários, painel HVB).";
+					Calculate = Calculate.OnBarClose;
+
+					try { EntriesPerDirection = 5; } catch { }
+					try { EntryHandling = EntryHandling.UniqueEntries; } catch { }
+					try { StopTargetHandling = StopTargetHandling.PerEntryExecution; } catch { }
+
+					for (int i = 0; i < 5; i++)
+					{
+						_lastGridRepriceBarLong[i] = -1;
+						_lastGridRepriceBarShort[i] = -1;
+						gridLongReplace[i] = null;
+						gridShortReplace[i] = null;
+						_bandFilledBuy[i] = false;
+						_bandFilledSell[i] = false;
+					}
+
+					DisableExitOnSessionCloseSafely();
+					try { IsExitOnSessionCloseStrategy = false; } catch { }
+					LogMsg("Config", "ExitOnSessionClose disabled (SetDefaults)", 2);
+				}
+				else if (State == State.Configure)
+				{
+					logLevelInt = ParseLogLevel(LogLevel);
+					startHHmmss = ParseHms(StartTimeBrt);
+					stopHHmmss = ParseHms(StopNewTradesTimeBrt);
+					flattenHHmmss = ParseHms(FlattenTimeBrt);
+					TimeSpan ts;
+					if (TimeSpan.TryParse(FlattenTimeBrt, out ts)) flattenSpan = ts;
+
+					if (UseFiboBands && UseFixedBands)
+					{
+						UseFixedBands = false;
+						LogMsg("ConfigFix", "UseFiboBands and UseFixedBands were both true; forcing UseFixedBands=false.", 2);
+					}
+
+					if (ExitAtOppositeBandEnabled && ExitAtVwapEnabled)
+					{
+						ExitAtVwapEnabled = false;
+						LogMsg("ConfigFix", "OppBand enabled; forcing ExitAtVwapEnabled=false (exclusive mode).", 2);
+					}
+
+					AddDataSeries(BarsPeriodType.Minute, 1);
+				}
+				else if (State == State.DataLoaded)
+				{
+					hvb = HawkVwapBands(
+						Input,
+						NumDeviations,
+						UseFiboBands,
+						UseFixedBands,
+						Fixed1Pct, Fixed2Pct, Fixed3Pct, Fixed4Pct, Fixed5Pct,
+						false,
+						"Off",
+						600,
+						TouchMarginTicks,
+						false
+					);
+
+					chartToken = (ChartControl != null) ? RuntimeHelpers.GetHashCode(ChartControl).ToString("X") : "HEADLESS";
+					cacheKey = "";
+					isAnalyzerMode = (ChartControl == null);
+				}
+				else if (State == State.Realtime)
+				{
+					if (string.IsNullOrWhiteSpace(cacheKey))
+						cacheKey = GetCacheKey();
+
+					bool cacheLoadedNow = false;
+					if (!_panelCacheLoaded)
+						cacheLoadedNow = TryLoadPanelCache();
+				if (PanelPnlMode == PanelPnLMode.RealtimeOnly)
+					ClearRealtimePanelStats(resetProcessedCount: true);
+					if (!cacheLoadedNow)
+					{
+						_rtRealizedTotal = 0;
+						_rtRealizedMonth = 0;
+						_rtRealizedDay = 0;
+					}
+
+					_rtLastProcessedTradeCount = SystemPerformance.AllTrades.Count;
+					if (PanelPnlMode == PanelPnLMode.RealtimeOnly)
+						ClearRealtimePanelStats(resetProcessedCount: false);
+
+					if (PanelPnlMode == PanelPnLMode.RealtimeOnly)
+						ClearRealtimePanelStats(resetProcessedCount: false);
+					if (PanelPnlMode == PanelPnLMode.RealtimeOnly)
+					{
+						DateTime brtNow = ConvertToBrasilia(DateTime.UtcNow).AddMinutes(UserBrtOffsetMinutes);
+						DateTime brtDay = brtNow.Date;
+						int brtYm = brtDay.Year * 100 + brtDay.Month;
+						_rtBrtDay = brtDay;
+						_rtBrtYearMonth = brtYm;
+					}
+					else
+					{
+						_rtBrtDay = DateTime.MinValue;
+						_rtBrtYearMonth = 0;
+					}
+
+					for (int i = 0; i < 5; i++)
+					{
+						gridLong[i] = null;
+						gridShort[i] = null;
+						gridLongReplace[i] = null;
+						gridShortReplace[i] = null;
+						_lastGridRepriceBarLong[i] = -1;
+						_lastGridRepriceBarShort[i] = -1;
+						_bandFilledBuy[i] = false;
+						_bandFilledSell[i] = false;
+					}
+					exitVwapOrder = null;
+					exitVwapOrderReplace = null;
+					oppositeBandExitOrder = null;
+					oppositeBandExitOrderReplace = null;
+					financialTargetOrder = null;
+					financialTargetOrderReplace = null;
+					stopLossOrder = null;
+					flattenOrder = null;
+					flattenInProgress = false;
+
+					EnsurePanelInitializedOnce();
+					StartFlattenTimerIfNeeded();
+					PublishPanelSnapshot("StateRealtime");
+				}
+				else if (State == State.Terminated)
+				{
+					if (terminatedHandled) return;
+					terminatedHandled = true;
+					PublishPanelOffSnapshot("Terminated");
+					try { HVB_PanelStateHub.Remove(cacheKey); } catch { }
+					try { StopFlattenTimer(); } catch { }
+					try { panelHelper?.Dispose(); panelHelper = null; } catch { }
+				}
+			}
+			catch (Exception ex)
+			{
+				Print($"[HawkVwapBandsVolatility] OnStateChange exception: {ex}");
+			}
+		}
+		#endregion
+
+		#region Helpers: init/panel safe
+		private void EnsurePanelInitializedOnce()
+		{
+			if (panelInitialized) return;
+			if (isAnalyzerMode) return;
+			if (ChartControl == null) return;
+
+			if (string.IsNullOrWhiteSpace(cacheKey))
+				cacheKey = GetCacheKey();
+
+			if (!_panelCacheLoaded)
+				TryLoadPanelCache();
+
+			if (panelHelper == null)
+			{
+				panelHelper = new HVB_PanelHelper(EnablePanelDiagnostics)
+				{
+					LogAction = msg => Print(msg),
+					CacheKey = cacheKey
+				};
+				panelHelper.Init(ChartControl);
+			}
+
+			panelInitialized = true;
+		}
+		#endregion
+
+		#region Helpers: time/log/parse
+		private void DisableExitOnSessionCloseSafely()
+		{
+			try { dynamic self = this; self.ExitOnSessionClose = false; } catch { }
+			try { dynamic self = this; self.ExitOnSessionCloseSeconds = 0; } catch { }
+		}
+
+		private int ParseLogLevel(string lvl)
+		{
+			if (string.IsNullOrEmpty(lvl)) return 2;
+			switch (lvl.Trim().ToLowerInvariant())
+			{
+				case "off": return 0;
+				case "error": return 1;
+				case "verbose": return 3;
+				default: return 2;
+			}
+		}
+		private bool ShouldLog(int level) => logLevelInt >= level;
+		private void LogMsg(string tag, string msg, int level = 2)
+		{
+			if (!ShouldLog(level)) return;
+			try { Print($"[HawkVwapBandsVolatility] {tag} | {Time[0]:yyyy-MM-dd HH:mm:ss} | {msg}"); }
+			catch { Print($"[HawkVwapBandsVolatility] {tag} | (no time) | {msg}"); }
+			lastEvent = tag;
+		}
+
+		private int ParseHms(string s)
+		{
+			if (string.IsNullOrWhiteSpace(s)) return 0;
+			var parts = s.Split(':');
+			int h = 0, m = 0, sec = 0;
+			try { h = int.Parse(parts[0]); m = parts.Length > 1 ? int.Parse(parts[1]) : 0; sec = parts.Length > 2 ? int.Parse(parts[2]) : 0; } catch { }
+			return h * 10000 + m * 100 + sec;
+		}
+
+		private DateTime ConvertToBrasilia(DateTime dt)
+		{
+			try
+			{
+				TimeZoneInfo brt = null;
+				string[] possibleIds = new string[] { "E. South America Standard Time", "America/Sao_Paulo", "SA Eastern Standard Time" };
+				foreach (var id in possibleIds)
+				{
+					try { brt = TimeZoneInfo.FindSystemTimeZoneById(id); if (brt != null) break; } catch { }
+				}
+
+				if (brt == null) return dt.ToLocalTime();
+
+				if (dt.Kind == DateTimeKind.Utc) return TimeZoneInfo.ConvertTimeFromUtc(dt, brt);
+				if (dt.Kind == DateTimeKind.Local)
+				{
+					DateTime utc = dt.ToUniversalTime();
+					return TimeZoneInfo.ConvertTimeFromUtc(utc, brt);
+				}
+				else
+				{
+					DateTime local = DateTime.SpecifyKind(dt, DateTimeKind.Local);
+					DateTime utc = local.ToUniversalTime();
+					return TimeZoneInfo.ConvertTimeFromUtc(utc, brt);
+				}
+			}
+			catch { return dt; }
+		}
+
+		private int ToBrtHHmmss(DateTime t)
+		{
+			var brt = ConvertToBrasilia(t).AddMinutes(UserBrtOffsetMinutes);
+			return ToTime(brt);
+		}
+
+		private bool InTradingWindow(int nowBrt) => nowBrt >= startHHmmss && nowBrt < stopHHmmss;
+		private bool IsFlattenWindow(int nowBrt) => nowBrt >= flattenHHmmss;
+
+		private string GetCacheKey()
+		{
+			string inst = "Unknown";
+			string acc = "NoAccount";
+			string strat = "Strategy";
+			string discriminator = !string.IsNullOrWhiteSpace(InstanceTag) ? InstanceTag.Trim() : $"chart={chartToken}";
+			try { inst = Instrument?.FullName ?? "Unknown"; } catch { }
+			try { acc = Account?.Name ?? "NoAccount"; } catch { }
+			try { strat = string.IsNullOrWhiteSpace(Name) ? "Strategy" : Name; } catch { }
+			return $"{inst}::{acc}::{strat}::{discriminator}";
+		}
+
+		private double ParseDoubleFlexible(string text)
+		{
+			if (string.IsNullOrWhiteSpace(text)) return 0;
+			if (double.TryParse(text, NumberStyles.Any, CultureInfo.CurrentCulture, out double v1)) return v1;
+			if (double.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out double v2)) return v2;
+			return 0;
+		}
+
+		private bool IsNonPersistentAccount()
+		{
+			try
+			{
+				var n = (Account?.Name ?? "").ToUpperInvariant();
+				return n.Contains("SIM101") || n.Contains("PLAYBACK");
+			}
+			catch { return true; }
+		}
+
+		private bool ShouldPersistPanelCache() => !IsNonPersistentAccount();
+
+		private string Sha1Hex(string s)
+		{
+			if (string.IsNullOrEmpty(s)) return "null";
+			using (var sha = SHA1.Create())
+			{
+				var bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(s));
+				return BitConverter.ToString(bytes).Replace("-", "").ToLowerInvariant();
+			}
+		}
+
+		private string GetPanelCacheDirectory()
+		{
+			string doc = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+			return IOPath.Combine(doc, "NinjaTrader 8", "templates", "Hawk", "HVBPanelCache");
+		}
+
+		private string GetPanelCachePath()
+		{
+			if (string.IsNullOrWhiteSpace(cacheKey)) return null;
+			string dir = GetPanelCacheDirectory();
+			string file = $"hvb_panel_{Sha1Hex(cacheKey)}.xml";
+			return IOPath.Combine(dir, file);
+		}
+
+		private bool TryLoadPanelCache()
+		{
+			_panelCacheLoaded = true;
+
+			if (!ShouldPersistPanelCache()) return false;
+			string path = GetPanelCachePath();
+			if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return false;
+
+			try
+			{
+				using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+				{
+					var ser = new XmlSerializer(typeof(HVB_PanelPersistedState));
+					var state = ser.Deserialize(fs) as HVB_PanelPersistedState;
+					if (state == null || state.Snapshot == null) return false;
+
+					_cachedPnlDay = state.Snapshot.PnLDiaText ?? _cachedPnlDay;
+					_cachedPnlMonth = state.Snapshot.PnLMesText ?? _cachedPnlMonth;
+					_cachedPnlTotal = state.Snapshot.PnLTotalText ?? _cachedPnlTotal;
+					_maxGainStreak = state.MaxGainStreak;
+					_maxLossStreak = state.MaxLossStreak;
+
+					if (Enum.TryParse(state.PanelPnLMode, out PanelPnLMode savedMode))
+						PanelPnlMode = savedMode;
+
+					_lastSavedHistoricalTradesCount = state.TradesCountAtSave;
+
+					if (PanelPnlMode == PanelPnLMode.RealtimeOnly)
+					{
+						_rtRealizedTotal = ParseDoubleFlexible(_cachedPnlTotal);
+						_rtRealizedMonth = ParseDoubleFlexible(_cachedPnlMonth);
+						_rtRealizedDay = ParseDoubleFlexible(_cachedPnlDay);
+						_rtLastProcessedTradeCount = SystemPerformance.AllTrades.Count;
+					if (PanelPnlMode == PanelPnLMode.RealtimeOnly)
+						ClearRealtimePanelStats(resetProcessedCount: false);
+					}
+
+					HVB_PanelStateHub.Set(cacheKey, state.Snapshot);
+					try { panelHelper?.ApplySnapshot(state.Snapshot); } catch { }
+					LogMsg("PanelCacheLoad", $"Loaded panel cache from {path}", 2);
+					return true;
+				}
+			}
+			catch (Exception ex)
+			{
+				LogMsg("PanelCacheLoadErr", ex.Message, 1);
+				return false;
+			}
+		}
+
+		private void TrySavePanelCache(HVB_PanelStateHub.PanelSnapshot snap, int tradesCount)
+		{
+			if (snap == null) return;
+			if (!ShouldPersistPanelCache()) return;
+
+			var now = DateTime.UtcNow;
+			if ((now - _lastPanelCacheSaveUtc) < _panelCacheSaveThrottle)
+				return;
+
+			string path = GetPanelCachePath();
+			if (string.IsNullOrWhiteSpace(path)) return;
+
+			try
+			{
+				string dir = IOPath.GetDirectoryName(path);
+				if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+
+				var state = new HVB_PanelPersistedState
+				{
+					StrategyKey = cacheKey,
+					StrategyName = snap.StrategyName,
+					AccountName = Account?.Name ?? "",
+					InstrumentName = Instrument?.FullName ?? "",
+					PanelPnLMode = PanelPnlMode.ToString(),
+					SavedAtUtc = now,
+					TradesCountAtSave = tradesCount,
+					MaxGainStreak = _maxGainStreak,
+					MaxLossStreak = _maxLossStreak,
+					Snapshot = snap
+				};
+
+				var ser = new XmlSerializer(typeof(HVB_PanelPersistedState));
+				using (var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None))
+				{
+					ser.Serialize(fs, state);
+				}
+
+				_lastPanelCacheSaveUtc = now;
+				LogMsg("PanelCacheSave", $"Saved panel cache to {path}", 2);
+			}
+			catch (Exception ex)
+			{
+				LogMsg("PanelCacheSaveErr", ex.Message, 1);
+			}
+		}
+		#endregion
+
+		#region Exit mode helpers
+		private ExitMode GetExitMode()
+		{
+			if (ExitAtOppositeBandEnabled) return ExitMode.OppositeBand;
+			if (ExitAtVwapEnabled) return ExitMode.Vwap;
+			return ExitMode.Financial;
+		}
+
+		// === Added by paper: keep regime direction locked during an open cycle/position ===
+		private Regime GetEffectiveRegime(double vwap)
+		{
+			// If there is an open position, do NOT invert direction (Long -> Buy, Short -> Sell)
+			if (Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
+				return (Position.MarketPosition == MarketPosition.Long) ? Regime.Buy : Regime.Sell;
+
+			// If the cycle is marked open, also keep direction (helps when Position is not yet updated)
+			if (cycleOpen && cycleDirection != Regime.None)
+				return cycleDirection;
+
+			// Flat: regime comes from price vs VWAP
+			return (Close[0] < vwap) ? Regime.Buy : Regime.Sell;
+		}
+		#endregion
+
+		#region Panel snapshot helpers
+		private HVB_PanelStateHub.PanelSnapshot BuildSnapshot(bool offSnapshot, string statusOverride = null)
+		{
+			if (string.IsNullOrWhiteSpace(cacheKey))
+				return null;
+
+			if (!offSnapshot && _cachedPnlTotal == "-" && PanelPnlMode == PanelPnLMode.ChartHistorical)
+			{
+				var nowLocal = ConvertToBrasilia(Time[0]).AddMinutes(UserBrtOffsetMinutes);
+				RecalcPnLIfNeeded(nowLocal);
+			}
+
+			var snap = new HVB_PanelStateHub.PanelSnapshot();
+			snap.LastUpdatedUtc = (State == State.Historical) ? Time[0].ToUniversalTime() : DateTime.UtcNow;
+			snap.StrategyName = PanelTitle;
+			snap.StrategyKey = cacheKey;
+
+			string status = statusOverride ?? dayStatus;
+			var mode = GetExitMode();
+			snap.DayTradeStatus = status;
+			snap.StatusText = $"{lastEvent} | Mode={mode} | PanelPnL={PanelPnlMode} | Persist={(ShouldPersistPanelCache() ? "On" : "Off")}";
+
+			snap.PnLDiaText = _cachedPnlDay;
+			snap.PnLMesText = _cachedPnlMonth;
+			snap.PnLTotalText = _cachedPnlTotal;
+
+			snap.DayStopDollar = dayStopDollars;
+			snap.DayTargetDollar = dayTargetDollars;
+			snap.DayBreakevenDollar = dayBreakevenDollars;
+
+			snap.EndDayText = FlattenTimeBrt;
+
+			snap.MainEnabled = (status == "Trading" || status == "StopNewTrades") && !isLockedForDay;
+
+			if (offSnapshot)
+			{
+				snap.EntryPrice = null;
+				snap.StopChart = null;
+				snap.ExitTarget = null;
+				snap.Qty = null;
+				snap.PendingEntryPrice = null;
+				snap.PendingQty = null;
+				snap.PendingStopPrice = null;
+				snap.PendingTargetPrice = null;
+				snap.FinancialStopText = snap.DayStopDollar;
+				snap.TakeDollarText = snap.DayTargetDollar;
+				return snap;
+			}
+
+			if (stopLossOrder != null && stopLossOrder.StopPrice > 0 &&
+			    (stopLossOrder.OrderState == OrderState.Working || stopLossOrder.OrderState == OrderState.Accepted || stopLossOrder.OrderState == OrderState.Submitted || stopLossOrder.OrderState == OrderState.CancelPending || stopLossOrder.OrderState == OrderState.CancelSubmitted))
+			{
+				if (Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
+					snap.StopChart = stopLossOrder.StopPrice;
+				else
+					snap.PendingStopPrice = stopLossOrder.StopPrice;
+			}
+
+			if (Position != null && Position.MarketPosition != MarketPosition.Flat)
+			{
+				snap.EntryPrice = Position.AveragePrice;
+				snap.Qty = Math.Abs(Position.Quantity);
+
+				if (mode == ExitMode.Vwap)
+					snap.ExitTarget = double.IsNaN(lastSnapVwap) ? (double?)null : lastSnapVwap;
+				else if (mode == ExitMode.OppositeBand)
+				{
+					int idx = Math.Max(1, Math.Min(5, OppBandExitDeviation)) - 1;
+					snap.ExitTarget = Position.MarketPosition == MarketPosition.Long ? upper[idx] : lower[idx];
+				}
+				else
+					snap.ExitTarget = null;
+			}
+			else
+			{
+				double? pendingPrice = null;
+				int? pendingQty = null;
+				if (currentRegime == Regime.Buy && gridLong[0] != null)
+				{
+					pendingPrice = gridLong[0].LimitPrice;
+					pendingQty = gridLong[0].Quantity;
+				}
+				if (currentRegime == Regime.Sell && gridShort[0] != null)
+				{
+					pendingPrice = gridShort[0].LimitPrice;
+					pendingQty = gridShort[0].Quantity;
+				}
+				snap.PendingEntryPrice = pendingPrice;
+				snap.PendingQty = pendingQty;
+			}
+
+			snap.FinancialStopText = dayStopDollars;
+			snap.TakeDollarText = dayTargetDollars;
+			snap.MaxGainStreak = _maxGainStreak;
+			snap.MaxLossStreak = _maxLossStreak;
+
+			return snap;
+		}
+
+		private void PublishPanelSnapshot(string context = "")
+		{
+			if (string.IsNullOrWhiteSpace(cacheKey))
+				return;
+
+			var snap = BuildSnapshot(false, dayStatus);
+			if (snap == null) return;
+			HVB_PanelStateHub.Set(cacheKey, snap);
+			if (panelHelper != null)
+			{
+				var now = DateTime.UtcNow;
+				if ((now - lastPanelPub).TotalSeconds >= Math.Max(1, PanelPublishIntervalSeconds))
+				{
+					lastPanelPub = now;
+					panelHelper.ApplySnapshot(snap);
+				}
+			}
+
+			int tradesCount = PanelPnlMode == PanelPnLMode.ChartHistorical ? SystemPerformance.AllTrades.Count : _rtLastProcessedTradeCount;
+			if (_panelCacheSaveRequested && ShouldPersistPanelCache())
+			{
+				TrySavePanelCache(snap, tradesCount);
+				_panelCacheSaveRequested = false;
+			}
+		}
+
+		private void PublishPanelOffSnapshot(string context = "")
+		{
+			if (string.IsNullOrWhiteSpace(cacheKey))
+				return;
+
+			var snap = BuildSnapshot(true, "Waiting");
+			if (snap == null) return;
+			HVB_PanelStateHub.Set(cacheKey, snap);
+			try { panelHelper?.ApplySnapshot(snap); } catch { }
+		}
+		#endregion
+
+		#region PnL + streak recalc
+		private void RecalcPnLIfNeeded(DateTime nowLocalBrt)
+		{
+			try
+			{
+				var all = SystemPerformance.AllTrades;
+				int count = all.Count;
+				bool throttle = (DateTime.UtcNow - _lastPnlCalcUtc).TotalSeconds < Math.Max(1, PanelPublishIntervalSeconds);
+				if (count == _lastPnlCalcCount && throttle)
+					return;
+
+				double total = all.TradesPerformance.Currency.CumProfit;
+				double day = 0;
+				double month = 0;
+				DateTime today = nowLocalBrt.Date;
+
+				for (int i = 0; i < count; i++)
+				{
+					var tr = all[i];
+					if (tr?.Exit == null) continue;
+					DateTime exitBrt = ConvertToBrasilia(tr.Exit.Time).AddMinutes(UserBrtOffsetMinutes);
+					DateTime exitDay = exitBrt.Date;
+					if (exitDay == today) day += tr.ProfitCurrency;
+					if (exitDay.Year == today.Year && exitDay.Month == today.Month) month += tr.ProfitCurrency;
+				}
+
+				_overallPnl = total;
+				_monthPnl = month;
+				realizedPnlDay = day;
+				_lastPnlCalcCount = count;
+				_lastPnlCalcUtc = DateTime.UtcNow;
+
+				_cachedPnlMonth = _monthPnl.ToString("0.00");
+				_cachedPnlTotal = _overallPnl.ToString("0.00");
+			}
+			catch (Exception ex)
+			{
+				LogMsg("PnLCalcError", "RecalcPnLIfNeeded ex: " + ex.Message, 1);
+			}
+		}
+
+		private void UpdateUnrealizedAndTotalPnL()
+		{
+			try
+			{
+				double pointValue = Instrument?.MasterInstrument?.PointValue ?? 1.0;
+				int qty = Math.Abs(Position?.Quantity ?? 0);
+
+				if (Position != null && Position.MarketPosition == MarketPosition.Long && qty > 0)
+					_unrealizedPnlManual = (Close[0] - Position.AveragePrice) * pointValue * qty;
+				else if (Position != null && Position.MarketPosition == MarketPosition.Short && qty > 0)
+					_unrealizedPnlManual = (Position.AveragePrice - Close[0]) * pointValue * qty;
+				else
+					_unrealizedPnlManual = 0;
+
+				_totalPnlDay = realizedPnlDay + _unrealizedPnlManual;
+
+				_cachedPnlDay = _totalPnlDay.ToString("0.00");
+			}
+			catch
+			{
+				_unrealizedPnlManual = 0;
+				_totalPnlDay = realizedPnlDay;
+			}
+		}
+
+		private void UpdateStreaksIfClosedTradesChanged()
+		{
+			try
+			{
+				var all = SystemPerformance.AllTrades;
+				int count = all.Count;
+				if (count <= _lastStreakTradesCount) return;
+
+				var tr = all[count - 1];
+				if (tr == null) { _lastStreakTradesCount = count; return; }
+
+				double p = tr.ProfitCurrency;
+				if (p > 0)
+				{
+					_currentStreak = _currentStreak > 0 ? _currentStreak + 1 : 1;
+					_maxGainStreak = Math.Max(_maxGainStreak, _currentStreak);
+				}
+				else if (p < 0)
+				{
+					_currentStreak = _currentStreak < 0 ? _currentStreak - 1 : -1;
+					_maxLossStreak = Math.Max(_maxLossStreak, -_currentStreak);
+				}
+				else
+				{
+					_currentStreak = 0;
+				}
+
+				_lastStreakTradesCount = count;
+			}
+			catch (Exception ex)
+			{
+				LogMsg("StreakCalcError", "UpdateStreaks ex: " + ex.Message, 1);
+			}
+		}
+		#endregion
+
+		#region Order mapping helpers
+		private void MapOrderReference(Order order)
+		{
+			if (order == null || string.IsNullOrEmpty(order.Name)) return;
+			string name = order.Name;
+
+			for (int i = 0; i < 5; i++)
+			{
+				string buyTag = $"Grid{i + 1}_Buy";
+				string sellTag = $"Grid{i + 1}_Sell";
+				string buyReplaceTag = $"Grid{i + 1}_Buy_R";
+				string sellReplaceTag = $"Grid{i + 1}_Sell_R";
+
+				if (name.IndexOf(buyReplaceTag, StringComparison.OrdinalIgnoreCase) >= 0)
+				{
+					gridLongReplace[i] = order;
+					return;
+				}
+				if (name.IndexOf(sellReplaceTag, StringComparison.OrdinalIgnoreCase) >= 0)
+				{
+					gridShortReplace[i] = order;
+					return;
+				}
+
+				if (name.IndexOf(buyTag, StringComparison.OrdinalIgnoreCase) >= 0)
+				{
+					gridLong[i] = order;
+					return;
+				}
+				if (name.IndexOf(sellTag, StringComparison.OrdinalIgnoreCase) >= 0)
+				{
+					gridShort[i] = order;
+					return;
+				}
+			}
+
+			if (name.StartsWith("VWAPExitL_R", StringComparison.OrdinalIgnoreCase) ||
+			    name.StartsWith("VWAPExitS_R", StringComparison.OrdinalIgnoreCase))
+			{
+				exitVwapOrderReplace = order;
+				return;
+			}
+			if (name.StartsWith("VWAPExitL", StringComparison.OrdinalIgnoreCase) ||
+			    name.StartsWith("VWAPExitS", StringComparison.OrdinalIgnoreCase))
+			{
+				exitVwapOrder = order;
+				return;
+			}
+
+			if (name.StartsWith("OppBandExitL_R", StringComparison.OrdinalIgnoreCase) ||
+			    name.StartsWith("OppBandExitS_R", StringComparison.OrdinalIgnoreCase))
+			{
+				oppositeBandExitOrderReplace = order;
+				return;
+			}
+			if (name.StartsWith("OppBandExitL", StringComparison.OrdinalIgnoreCase) ||
+			    name.StartsWith("OppBandExitS", StringComparison.OrdinalIgnoreCase))
+			{
+				oppositeBandExitOrder = order;
+				return;
+			}
+
+			if (name.StartsWith("FinTargetL_R", StringComparison.OrdinalIgnoreCase) ||
+			    name.StartsWith("FinTargetS_R", StringComparison.OrdinalIgnoreCase))
+			{
+				financialTargetOrderReplace = order;
+				return;
+			}
+			if (name.StartsWith("FinTargetL", StringComparison.OrdinalIgnoreCase) ||
+			    name.StartsWith("FinTargetS", StringComparison.OrdinalIgnoreCase))
+			{
+				financialTargetOrder = order;
+				return;
+			}
+
+			if (name.StartsWith("FinStopL", StringComparison.OrdinalIgnoreCase) ||
+				name.StartsWith("FinStopS", StringComparison.OrdinalIgnoreCase))
+			{
+				stopLossOrder = order;
+				return;
+			}
+
+			if (name.StartsWith("StopL", StringComparison.OrdinalIgnoreCase) ||
+				name.StartsWith("StopS", StringComparison.OrdinalIgnoreCase) ||
+				name.IndexOf("Stop", StringComparison.OrdinalIgnoreCase) >= 0)
+			{
+				stopLossOrder = order;
+				return;
+			}
+
+			if (name.StartsWith("FlattenMkt", StringComparison.OrdinalIgnoreCase))
+			{
+				flattenOrder = order;
+				return;
+			}
+		}
+
+		private void ClearOrderReference(Order order)
+		{
+			if (order == null || string.IsNullOrEmpty(order.Name)) return;
+			string name = order.Name;
+
+			for (int i = 0; i < 5; i++)
+			{
+				string buyTag = $"Grid{i + 1}_Buy";
+				string sellTag = $"Grid{i + 1}_Sell";
+				string buyReplaceTag = $"Grid{i + 1}_Buy_R";
+				string sellReplaceTag = $"Grid{i + 1}_Sell_R";
+
+				if (name.IndexOf(buyReplaceTag, StringComparison.OrdinalIgnoreCase) >= 0 && gridLongReplace[i] == order)
+				{
+					gridLongReplace[i] = null;
+					return;
+				}
+				if (name.IndexOf(sellReplaceTag, StringComparison.OrdinalIgnoreCase) >= 0 && gridShortReplace[i] == order)
+				{
+					gridShortReplace[i] = null;
+					return;
+				}
+
+				if (name.IndexOf(buyTag, StringComparison.OrdinalIgnoreCase) >= 0 && gridLong[i] == order)
+				{
+					gridLong[i] = null;
+					return;
+				}
+				if (name.IndexOf(sellTag, StringComparison.OrdinalIgnoreCase) >= 0 && gridShort[i] == order)
+				{
+					gridShort[i] = null;
+					return;
+				}
+			}
+
+			if ((name.StartsWith("VWAPExitL_R", StringComparison.OrdinalIgnoreCase) ||
+			    name.StartsWith("VWAPExitS_R", StringComparison.OrdinalIgnoreCase)) &&
+			    exitVwapOrderReplace == order)
+			{
+				exitVwapOrderReplace = null;
+				return;
+			}
+
+			if ((name.StartsWith("VWAPExitL", StringComparison.OrdinalIgnoreCase) ||
+			    name.StartsWith("VWAPExitS", StringComparison.OrdinalIgnoreCase)) &&
+			    exitVwapOrder == order)
+			{
+				exitVwapOrder = null;
+				return;
+			}
+
+			if ((name.StartsWith("OppBandExitL_R", StringComparison.OrdinalIgnoreCase) ||
+			    name.StartsWith("OppBandExitS_R", StringComparison.OrdinalIgnoreCase)) &&
+			    oppositeBandExitOrderReplace == order)
+			{
+				oppositeBandExitOrderReplace = null;
+				return;
+			}
+
+			if ((name.StartsWith("OppBandExitL", StringComparison.OrdinalIgnoreCase) ||
+			    name.StartsWith("OppBandExitS", StringComparison.OrdinalIgnoreCase)) &&
+			    oppositeBandExitOrder == order)
+			{
+				oppositeBandExitOrder = null;
+				return;
+			}
+
+			if ((name.StartsWith("FinTargetL_R", StringComparison.OrdinalIgnoreCase) ||
+			    name.StartsWith("FinTargetS_R", StringComparison.OrdinalIgnoreCase)) &&
+			    financialTargetOrderReplace == order)
+			{
+				financialTargetOrderReplace = null;
+				return;
+			}
+
+			if ((name.StartsWith("FinTargetL", StringComparison.OrdinalIgnoreCase) ||
+			    name.StartsWith("FinTargetS", StringComparison.OrdinalIgnoreCase)) &&
+			    financialTargetOrder == order)
+			{
+				financialTargetOrder = null;
+				return;
+			}
+
+			if ((name.StartsWith("FinStopL", StringComparison.OrdinalIgnoreCase) ||
+				name.StartsWith("FinStopS", StringComparison.OrdinalIgnoreCase)) &&
+				stopLossOrder == order)
+			{
+				stopLossOrder = null;
+				return;
+			}
+
+			if ((name.StartsWith("StopL", StringComparison.OrdinalIgnoreCase) ||
+				name.StartsWith("StopS", StringComparison.OrdinalIgnoreCase) ||
+				name.IndexOf("Stop", StringComparison.OrdinalIgnoreCase) >= 0) &&
+				stopLossOrder == order)
+			{
+				stopLossOrder = null;
+				return;
+			}
+
+			if (name.StartsWith("FlattenMkt", StringComparison.OrdinalIgnoreCase) &&
+				flattenOrder == order)
+			{
+				flattenOrder = null;
+				return;
+			}
+		}
+		#endregion
+
+		#region Flatten timer helpers
+		private void StartFlattenTimerIfNeeded()
+		{
+			if (State != State.Realtime) return;
+			if (isAnalyzerMode) return;
+			if (_flattenTimer != null) return;
+
+			_flattenTimer = new System.Timers.Timer(1000);
+			_flattenTimer.AutoReset = true;
+			_flattenTimer.Elapsed += (s, e) =>
+			{
+				try
+				{
+					if (flattenInProgress && State == State.Realtime)
+					{
+						TriggerCustomEvent(_ => CheckFlattenProgress(), null);
+					}
+				}
+				catch { }
+			};
+			_flattenTimer.Start();
+		}
+
+		private void StopFlattenTimer()
+		{
+			try
+			{
+				if (_flattenTimer != null)
+				{
+					_flattenTimer.Stop();
+					_flattenTimer.Dispose();
+					_flattenTimer = null;
+				}
+			}
+			catch { }
+		}
+		#endregion
+
+		#region Exit helpers (VWAP / Opposite band / Financial)
+		private void CancelOppositeBandExit()
+		{
+			try
+			{
+				if (oppositeBandExitOrder != null && !IsCancelling(oppositeBandExitOrder))
+					CancelOrder(oppositeBandExitOrder);
+				if (oppositeBandExitOrderReplace != null && !IsCancelling(oppositeBandExitOrderReplace))
+					CancelOrder(oppositeBandExitOrderReplace);
+			}
+			catch { }
+
+			// IMPORTANT:
+			// IsDeadOrder(Order) is defined in Part 2B (single definition). Part 2A must not define it.
+			// These calls will compile once Part 2B is appended.
+			if (IsDeadOrder(oppositeBandExitOrder)) oppositeBandExitOrder = null;
+			if (IsDeadOrder(oppositeBandExitOrderReplace)) oppositeBandExitOrderReplace = null;
+		}
+
+		private void MaintainOppositeBandExitOrder()
+		{
+			if (isLockedForDay || flattenInProgress)
+			{
+				CancelOppositeBandExit();
+				return;
+			}
+
+			if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
+			{
+				CancelOppositeBandExit();
+				return;
+			}
+
+			int idxBand = Math.Max(1, Math.Min(5, OppBandExitDeviation)) - 1;
+			double ts = Instrument.MasterInstrument.TickSize;
+			double repricingThreshold = ts * 0.5;
+
+			double target = double.NaN;
+			if (Position.MarketPosition == MarketPosition.Long)
+				target = upper[idxBand];
+			else if (Position.MarketPosition == MarketPosition.Short)
+				target = lower[idxBand];
+
+			if (double.IsNaN(target) || target <= 0)
+			{
+				CancelOppositeBandExit();
+				return;
+			}
+
+			target = Instrument.MasterInstrument.RoundToTickSize(target);
+
+			int qty = Math.Abs(Position.Quantity);
+
+			var ord = oppositeBandExitOrder;
+			var rep = oppositeBandExitOrderReplace;
+
+			// heal rep==ord deadlock
+			if (ord != null && rep != null && ReferenceEquals(ord, rep))
+			{
+				oppositeBandExitOrderReplace = null;
+				rep = null;
+				LogMsg("OppBandExitHeal", $"rep==ord cleared name={ord.Name} lim={ord.LimitPrice:0.00}", 2);
+			}
+
+			// promote replace->main if main is dead/missing
+			if (rep != null && IsActiveOrSubmitted(rep) && (ord == null || IsDeadOrder(ord)))
+			{
+				oppositeBandExitOrder = rep;
+				oppositeBandExitOrderReplace = null;
+				ord = oppositeBandExitOrder;
+				rep = null;
+				LogMsg("OppBandExitHeal", $"promoted replace->main name={ord?.Name} lim={ord?.LimitPrice:0.00}", 2);
+			}
+
+			string ordInfo = ord == null ? "null" : $"{ord.Name} {ord.OrderState} lim={ord.LimitPrice:0.00} qty={ord.Quantity}";
+			string repInfo = rep == null ? "null" : $"{rep.Name} {rep.OrderState} lim={rep.LimitPrice:0.00} qty={rep.Quantity}";
+			double diff = (ord != null && ord.LimitPrice > 0) ? Math.Abs(ord.LimitPrice - target) : double.NaN;
+			double diffTicks = (!double.IsNaN(diff) && ts > 0) ? diff / ts : double.NaN;
+
+			LogMsg("OppBandExitCheck",
+				$"pos={Position.MarketPosition} qty={qty} idx={idxBand + 1} target={target:0.00} thr={repricingThreshold:0.0000} diffTicks={diffTicks:0.00} ord={ordInfo} rep={repInfo}",
+				2);
+
+			// only block if replace is active AND main is active
+			if (rep != null && IsActiveOrSubmitted(rep) && ord != null && IsActiveOrSubmitted(ord))
+				return;
+
+			// If main is cancelling, don't submit a new replace
+			if (ord != null && IsCancelling(ord))
+			{
+				LogMsg("OppBandSkipReprice", $"reason=main_cancelling state={ord.OrderState}", 3);
+				return;
+			}
+
+			// If we have an active main, submit replace when needed
+			if (ord != null && IsActiveOrSubmitted(ord))
+			{
+				if (Math.Abs(ord.LimitPrice - target) > repricingThreshold ||
+				    ord.Quantity != qty)
+				{
+					if (Position.MarketPosition == MarketPosition.Long)
+						oppositeBandExitOrderReplace = ExitLongLimit(0, true, qty, target, "OppBandExitL_R", null);
+					else
+						oppositeBandExitOrderReplace = ExitShortLimit(0, true, qty, target, "OppBandExitS_R", null);
+
+					LogMsg("OppBandExitReplaceSubmit", $"pos={Position.MarketPosition} old={ord.LimitPrice:0.00} new={target:0.00}", 2);
+				}
+				return;
+			}
+
+			// No active main => place new
+			if (Position.MarketPosition == MarketPosition.Long)
+			{
+				oppositeBandExitOrder = ExitLongLimit(0, true, qty, target, "OppBandExitL", null);
+				LogMsg("OppBandExitPlaced", $"L target={target:0.00}", 2);
+			}
+			else if (Position.MarketPosition == MarketPosition.Short)
+			{
+				oppositeBandExitOrder = ExitShortLimit(0, true, qty, target, "OppBandExitS", null);
+				LogMsg("OppBandExitPlaced", $"S target={target:0.00}", 2);
+			}
+		}
+
+		private void CheckFinancialExitPerTrade()
+		{
+			if (isLockedForDay) return;
+			if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0) return;
+
+			double pointValue = Instrument?.MasterInstrument?.PointValue ?? 1.0;
+			int qty = Math.Abs(Position.Quantity);
+			double avg = Position.AveragePrice;
+			double pnl = 0;
+
+			if (Position.MarketPosition == MarketPosition.Long)
+				pnl = (Close[0] - avg) * pointValue * qty;
+			else if (Position.MarketPosition == MarketPosition.Short)
+				pnl = (avg - Close[0]) * pointValue * qty;
+
+			bool hasTarget = TradeProfitTargetUsd > 0;
+			bool hasStop = TradeStopLossUsd > 0;
+
+			if (hasTarget && pnl >= TradeProfitTargetUsd)
+			{
+				LogMsg("TradeCycleTargetHit", $"pnl={pnl:0.00} target={TradeProfitTargetUsd:0.00}", 2);
+				RequestFlatten("TradeProfitTarget", allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
+				return;
+			}
+			if (hasStop && pnl <= -TradeStopLossUsd)
+			{
+				LogMsg("TradeCycleStopHit", $"pnl={pnl:0.00} stop={-TradeStopLossUsd:0.00}", 2);
+				RequestFlatten("TradeStopLoss", allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
+				return;
+			}
+		}
+		#endregion
+
+		// IMPORTANT:
+		// Part 2A ends here, but we DO NOT close the class or namespace.
+		// Part 2B must be appended right after this point, and it will close them at the end.
+#region Financial target maintenance (USD -> preço, Limit)
+		private void CancelFinancialTarget()
+		{
+			try { if (financialTargetOrder != null && !IsCancelling(financialTargetOrder)) CancelOrder(financialTargetOrder); } catch { }
+			try { if (financialTargetOrderReplace != null && !IsCancelling(financialTargetOrderReplace)) CancelOrder(financialTargetOrderReplace); } catch { }
+		}
+
+		private void MaintainFinancialTargetLimit()
+		{
+			if (isLockedForDay || flattenInProgress)
+			{
+				CancelFinancialTarget();
+				return;
+			}
+
+			if (GetExitMode() != ExitMode.Financial)
+			{
+				CancelFinancialTarget();
+				return;
+			}
+
+			if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
+			{
+				CancelFinancialTarget();
+				return;
+			}
+
+			if (TradeProfitTargetUsd <= 0)
+			{
+				CancelFinancialTarget();
+				return;
+			}
+
+			double pointValue = Instrument?.MasterInstrument?.PointValue ?? 1.0;
+			int qty = Math.Abs(Position.Quantity);
+			double profitPerContract = TradeProfitTargetUsd / qty;
+			double points = profitPerContract / pointValue;
+			double target = double.NaN;
+
+			if (Position.MarketPosition == MarketPosition.Long)
+				target = Position.AveragePrice + points;
+			else if (Position.MarketPosition == MarketPosition.Short)
+				target = Position.AveragePrice - points;
+
+			if (double.IsNaN(target) || target <= 0)
+			{
+				CancelFinancialTarget();
+				return;
+			}
+
+			target = Instrument.MasterInstrument.RoundToTickSize(target);
+
+			double ts = Instrument.MasterInstrument.TickSize;
+			double repricingThreshold = ts * 0.5;
+			bool needReprice = true;
+
+			if (financialTargetOrderReplace != null && IsActiveOrSubmitted(financialTargetOrderReplace))
+				needReprice = false;
+
+			if (financialTargetOrder != null &&
+			    (financialTargetOrder.OrderState == OrderState.Working || financialTargetOrder.OrderState == OrderState.Accepted || financialTargetOrder.OrderState == OrderState.Submitted || financialTargetOrder.OrderState == OrderState.CancelPending || financialTargetOrder.OrderState == OrderState.CancelSubmitted))
+			{
+				if (Math.Abs(financialTargetOrder.LimitPrice - target) <= repricingThreshold &&
+				    financialTargetOrder.Quantity == qty)
+					needReprice = false;
+			}
+
+			if (!needReprice) return;
+
+			if (Position.MarketPosition == MarketPosition.Long)
+				financialTargetOrderReplace = ExitLongLimit(0, true, qty, target, "FinTargetL_R", null);
+			else if (Position.MarketPosition == MarketPosition.Short)
+				financialTargetOrderReplace = ExitShortLimit(0, true, qty, target, "FinTargetS_R", null);
+
+			LogMsg("FinTargetUpdated", $"side={Position.MarketPosition} qty={qty} avg={Position.AveragePrice:0.00} tgt={target:0.00} usd={TradeProfitTargetUsd:0.00}", 2);
+		}
+		#endregion
+
+		#region Financial stop maintenance (USD -> preço)
+		private void MaintainFinancialStopLoss()
+		{
+			if (isLockedForDay || flattenInProgress)
+			{
+				CancelStopLoss();
+				return;
+			}
+
+			if (!EnableFinancialStop || FinancialStopUsd <= 0)
+			{
+				return;
+			}
+
+			if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
+			{
+				CancelStopLoss();
+				return;
+			}
+
+			double pointValue = Instrument?.MasterInstrument?.PointValue ?? 1.0;
+			int qty = Math.Abs(Position.Quantity);
+			double riskPerContract = FinancialStopUsd / qty;
+			double points = riskPerContract / pointValue;
+			double stopPrice = double.NaN;
+
+			if (Position.MarketPosition == MarketPosition.Long)
+				stopPrice = Position.AveragePrice - points;
+			else if (Position.MarketPosition == MarketPosition.Short)
+				stopPrice = Position.AveragePrice + points;
+
+			if (double.IsNaN(stopPrice) || stopPrice <= 0)
+			{
+				CancelStopLoss();
+				return;
+			}
+
+			stopPrice = Instrument.MasterInstrument.RoundToTickSize(stopPrice);
+
+			double ts = Instrument.MasterInstrument.TickSize;
+			double repricingThreshold = ts * 0.5;
+			bool needReprice = true;
+
+			if (stopLossOrder != null &&
+			    (stopLossOrder.OrderState == OrderState.Working || stopLossOrder.OrderState == OrderState.Accepted || stopLossOrder.OrderState == OrderState.Submitted || stopLossOrder.OrderState == OrderState.CancelPending || stopLossOrder.OrderState == OrderState.CancelSubmitted))
+			{
+				if (Math.Abs(stopLossOrder.StopPrice - stopPrice) <= repricingThreshold &&
+				    stopLossOrder.Quantity == qty)
+					needReprice = false;
+			}
+
+			if (!needReprice) return;
+
+			try
+			{
+				if (stopLossOrder != null && !IsCancelling(stopLossOrder)) CancelOrder(stopLossOrder);
+			}
+			catch { }
+
+			if (Position.MarketPosition == MarketPosition.Long)
+				stopLossOrder = ExitLongStopMarket(0, true, qty, stopPrice, "FinStopL", null);
+			else if (Position.MarketPosition == MarketPosition.Short)
+				stopLossOrder = ExitShortStopMarket(0, true, qty, stopPrice, "FinStopS", null);
+
+			LogMsg("FinStopUpdated", $"side={Position.MarketPosition} qty={qty} avg={Position.AveragePrice:0.00} stop={stopPrice:0.00} usd={FinancialStopUsd:0.00}", 2);
+		}
+		#endregion
+
+		#region Grid logic
+		// NOTE (Option A):
+		// AggressiveGridMode is a NinjaScriptProperty in Part 2A.
+		// _bandFilledBuy/_bandFilledSell are private fields in Part 2A.
+		// Therefore, Part 2B MUST NOT re-declare them.
+
+		private void ResetBandFillGuards()
+		{
+			for (int i = 0; i < 5; i++)
+			{
+				_bandFilledBuy[i] = false;
+				_bandFilledSell[i] = false;
+			}
+		}
+
+		private bool IsBandBlockedForNewOrder(int idx, Regime side)
+		{
+			if (AggressiveGridMode) return false;
+			if (idx < 0 || idx >= 5) return false;
+
+			if (side == Regime.Buy) return _bandFilledBuy[idx];
+			if (side == Regime.Sell) return _bandFilledSell[idx];
+			return false;
+		}
+
+		private void MarkBandFilledFromOrderName(string orderName)
+		{
+			if (string.IsNullOrEmpty(orderName)) return;
+
+			int idx = -1;
+			for (int i = 0; i < 5; i++)
+			{
+				if (orderName.IndexOf($"Grid{i + 1}_", StringComparison.OrdinalIgnoreCase) >= 0)
+				{
+					idx = i; break;
+				}
+			}
+			if (idx < 0 || idx > 4) return;
+
+			bool isBuy = orderName.IndexOf("_Buy", StringComparison.OrdinalIgnoreCase) >= 0;
+			bool isSell = orderName.IndexOf("_Sell", StringComparison.OrdinalIgnoreCase) >= 0;
+
+			if (isBuy)
+			{
+				_bandFilledBuy[idx] = true;
+				LogMsg("BandFillGuard", $"BUY Grid{idx + 1} marked filled; AggressiveGridMode={AggressiveGridMode}", 2);
+			}
+			else if (isSell)
+			{
+				_bandFilledSell[idx] = true;
+				LogMsg("BandFillGuard", $"SELL Grid{idx + 1} marked filled; AggressiveGridMode={AggressiveGridMode}", 2);
+			}
+		}
+
+		private void RepriceOrPlaceGrid(double[] u, double[] l)
+		{
+			int bands = Math.Max(1, Math.Min(5, NumDeviations));
+			double ts = Instrument.MasterInstrument.TickSize;
+			double repricingThreshold = Math.Max(2 * ts, RepriceThresholdTicks * ts);
+			bool[] enabled = new[] { EnableGrid1, EnableGrid2, EnableGrid3, EnableGrid4, EnableGrid5 };
+
+			int startIdx = (Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0) ? 1 : 0;
+
+			for (int i = startIdx; i < 5; i++)
+			{
+				if (i >= bands || !enabled[i] || isLockedForDay)
+				{
+					CancelGridIndex(i, "band_disabled");
+					continue;
+				}
+
+				// Default behavior: do not re-arm same band after it filled once in this cycle.
+				if (IsBandBlockedForNewOrder(i, currentRegime))
+				{
+					CancelGridIndex(i, "band_filled_guard");
+					continue;
+				}
+
+				double up = u[i];
+				double lo = l[i];
+				if (double.IsNaN(up) || double.IsNaN(lo))
+				{
+					CancelGridIndex(i, "nan_band");
+					continue;
+				}
+
+				double price = double.NaN;
+				if (currentRegime == Regime.Sell)
+					price = up - EntryOffsetTicks * ts;
+				else if (currentRegime == Regime.Buy)
+					price = lo + EntryOffsetTicks * ts;
+
+				if (double.IsNaN(price) || price <= 0)
+				{
+					CancelGridIndex(i, "invalid_price");
+					continue;
+				}
+
+				// ===== DIAG: Grid2 only (idx=1) when pos is not flat =====
+				if (i == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
+				{
+					var ordL = gridLong[i];
+					var repL = gridLongReplace[i];
+					var ordS = gridShort[i];
+					var repS = gridShortReplace[i];
+
+					string ordInfo = ordL != null ? $"L:{ordL.Name} {ordL.OrderState} lim={ordL.LimitPrice:0.00}" :
+									   ordS != null ? $"S:{ordS.Name} {ordS.OrderState} lim={ordS.LimitPrice:0.00}" : "none";
+					string repInfo = repL != null ? $"L_R:{repL.Name} {repL.OrderState} lim={repL.LimitPrice:0.00}" :
+									   repS != null ? $"S_R:{repS.Name} {repS.OrderState} lim={repS.LimitPrice:0.00}" : "none";
+
+					LogMsg("Grid2Diag_Pre",
+						$"pos={Position.MarketPosition} qty={Position.Quantity} regime={currentRegime} bands={bands} enabled={enabled[i]} " +
+						$"lo={lo:0.00} up={up:0.00} calc={price:0.00} thr={repricingThreshold:0.0000} tick={ts:0.0000} " +
+						$"ord={ordInfo} rep={repInfo}",
+						3);
+				}
+				// ===== end DIAG =====
+
+				if (currentRegime == Regime.Sell)
+					PlaceOrRepriceShort(i, price, QuantityPerGridOrder, repricingThreshold);
+				else
+					PlaceOrRepriceLong(i, price, QuantityPerGridOrder, repricingThreshold);
+			}
+		}
+
+		private bool IsActiveOrSubmitted(Order ord) =>
+			ord != null && (ord.OrderState == OrderState.Working || ord.OrderState == OrderState.Accepted || ord.OrderState == OrderState.Submitted);
+
+		private bool IsCancelling(Order ord) =>
+			ord != null && (ord.OrderState == OrderState.CancelPending || ord.OrderState == OrderState.CancelSubmitted);
+
+		// SINGLE definition of IsDeadOrder in Part 2B (removed from 2A to avoid duplicates)
+		private bool IsDeadOrder(Order ord) =>
+			ord == null || ord.OrderState == OrderState.Cancelled || ord.OrderState == OrderState.Rejected;
+
+		private void PlaceOrRepriceLong(int idx, double price, int qty, double repricingThreshold)
+		{
+			// Extra guard at placement layer (covers cases where calls happen outside RepriceOrPlaceGrid)
+			if (IsBandBlockedForNewOrder(idx, Regime.Buy))
+			{
+				CancelGridIndex(idx, "band_filled_guard");
+				return;
+			}
+
+			var ord = gridLong[idx];
+			var rep = gridLongReplace[idx];
+
+			// FIX: if replace reference points to the same order as main, clear replace ref to avoid permanent deadlock.
+			if (ord != null && rep != null && ReferenceEquals(ord, rep))
+			{
+				gridLongReplace[idx] = null;
+				rep = null;
+				LogMsg("GridReplaceHeal", $"Grid{idx + 1} BUY detected rep==ord; cleared replace ref name={ord.Name} lim={ord.LimitPrice:0.00}", 2);
+			}
+
+			// ===== DIAG: Grid2 only =====
+			if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
+			{
+				string ordS = ord == null ? "null" : $"{ord.Name} {ord.OrderState} lim={ord.LimitPrice:0.00}";
+				string repS = rep == null ? "null" : $"{rep.Name} {rep.OrderState} lim={rep.LimitPrice:0.00}";
+				double diff = ord != null ? Math.Abs(ord.LimitPrice - price) : double.NaN;
+				double diffTicks = (!double.IsNaN(diff) && Instrument?.MasterInstrument?.TickSize > 0) ? diff / Instrument.MasterInstrument.TickSize : double.NaN;
+
+				LogMsg("Grid2Diag_Long_Entry",
+					$"calc={price:0.00} thr={repricingThreshold:0.0000} diff={diff:0.0000} diffTicks={diffTicks:0.00} ord={ordS} rep={repS} lastBar={_lastGridRepriceBarLong[idx]} curBar={CurrentBar}",
+					3);
+			}
+			// ===== end DIAG =====
+
+			// Auto-heal: if we have a replacement working but the main order is missing/dead, promote it.
+			if (rep != null && IsActiveOrSubmitted(rep) && (ord == null || IsDeadOrder(ord)))
+			{
+				gridLong[idx] = rep;
+				gridLongReplace[idx] = null;
+				ord = gridLong[idx];
+				rep = null;
+				LogMsg("GridReplaceHeal", $"Grid{idx + 1} BUY promoted replace->main name={ord?.Name} lim={ord?.LimitPrice:0.00}", 2);
+			}
+
+			// Only block if we truly have a replacement pending AND the main is still active (handshake in progress)
+			if (rep != null && IsActiveOrSubmitted(rep) && ord != null && IsActiveOrSubmitted(ord))
+			{
+				if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
+					LogMsg("Grid2Diag_Long_Return", "reason=rep_active_and_main_active", 3);
+				return;
+			}
+
+			if (ord != null && IsCancelling(ord))
+			{
+				if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
+					LogMsg("Grid2Diag_Long_Return", $"reason=main_cancelling state={ord.OrderState}", 3);
+
+				LogMsg("GridSkipRecreate", $"Grid{idx + 1} BUY reason=cancel_in_progress state={ord.OrderState}", 3);
+				return;
+			}
+
+			if (ord != null && IsActiveOrSubmitted(ord))
+			{
+				if (DisableRepriceWhenFlat && (Position == null || Position.MarketPosition == MarketPosition.Flat))
+				{
+					if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
+						LogMsg("Grid2Diag_Long_Return", "reason=DisableRepriceWhenFlat (unexpected while pos!=flat)", 3);
+					return;
+				}
+
+				if (Math.Abs(ord.LimitPrice - price) < repricingThreshold)
+				{
+					if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
+						LogMsg("Grid2Diag_Long_Return", $"reason=below_threshold diff={Math.Abs(ord.LimitPrice - price):0.0000} thr={repricingThreshold:0.0000}", 3);
+					return;
+				}
+
+				int minBars = Math.Max(1, RepriceEveryNBars);
+				if (_lastGridRepriceBarLong[idx] >= 0 && (CurrentBar - _lastGridRepriceBarLong[idx]) < minBars)
+				{
+					if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
+						LogMsg("Grid2Diag_Long_Return", $"reason=throttle barsSinceLast={CurrentBar - _lastGridRepriceBarLong[idx]} < {minBars}", 3);
+
+					LogMsg("GridRepriceThrottle", $"Grid{idx + 1} BUY skip; barsSinceLast={CurrentBar - _lastGridRepriceBarLong[idx]} < {RepriceEveryNBars}", 3);
+					return;
+				}
+
+				var o = EnterLongLimit(0, true, qty, price, $"Grid{idx + 1}_Buy_R");
+				if (o == null)
+				{
+					LogMsg("GridReplaceFailed", $"Grid{idx + 1} BUY replacement returned null qty={qty} price={price:0.00}", 1);
+					return;
+				}
+				gridLongReplace[idx] = o;
+				_lastGridRepriceBarLong[idx] = CurrentBar;
+
+				if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
+					LogMsg("Grid2Diag_Long_Action", $"action=submit_replace old={ord.LimitPrice:0.00} new={price:0.00}", 2);
+
+				LogMsg("GridReplaceSubmit", $"Grid{idx + 1} BUY old={ord.LimitPrice:0.00} new={price:0.00}", 3);
+				return;
+			}
+
+			var newOrd = EnterLongLimit(0, true, qty, price, $"Grid{idx + 1}_Buy");
+			if (newOrd == null)
+			{
+				LogMsg("GridOrderNull", $"Grid{idx + 1} BUY returned null qty={qty} price={price:0.00}", 1);
+				return;
+			}
+			gridLong[idx] = newOrd;
+
+			if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
+				LogMsg("Grid2Diag_Long_Action", $"action=create_new name={newOrd.Name} lim={price:0.00}", 2);
+
+			LogMsg("GridSubmit", $"Grid{idx + 1} BUY name={newOrd.Name} qty={qty} lim={price:0.00}", 2);
+		}
+
+		private void PlaceOrRepriceShort(int idx, double price, int qty, double repricingThreshold)
+		{
+			// Extra guard at placement layer
+			if (IsBandBlockedForNewOrder(idx, Regime.Sell))
+			{
+				CancelGridIndex(idx, "band_filled_guard");
+				return;
+			}
+
+			var ord = gridShort[idx];
+			var rep = gridShortReplace[idx];
+
+			// FIX: if replace reference points to the same order as main, clear replace ref to avoid permanent deadlock.
+			if (ord != null && rep != null && ReferenceEquals(ord, rep))
+			{
+				gridShortReplace[idx] = null;
+				rep = null;
+				LogMsg("GridReplaceHeal", $"Grid{idx + 1} SELL detected rep==ord; cleared replace ref name={ord.Name} lim={ord.LimitPrice:0.00}", 2);
+			}
+
+			// ===== DIAG: Grid2 only =====
+			if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
+			{
+				string ordS = ord == null ? "null" : $"{ord.Name} {ord.OrderState} lim={ord.LimitPrice:0.00}";
+				string repS = rep == null ? "null" : $"{rep.Name} {rep.OrderState} lim={rep.LimitPrice:0.00}";
+				double diff = ord != null ? Math.Abs(ord.LimitPrice - price) : double.NaN;
+				double diffTicks = (!double.IsNaN(diff) && Instrument?.MasterInstrument?.TickSize > 0) ? diff / Instrument.MasterInstrument.TickSize : double.NaN;
+
+				LogMsg("Grid2Diag_Short_Entry",
+					$"calc={price:0.00} thr={repricingThreshold:0.0000} diff={diff:0.0000} diffTicks={diffTicks:0.00} ord={ordS} rep={repS} lastBar={_lastGridRepriceBarShort[idx]} curBar={CurrentBar}",
+					3);
+			}
+			// ===== end DIAG =====
+
+			// Auto-heal: if we have a replacement working but the main order is missing/dead, promote it.
+			if (rep != null && IsActiveOrSubmitted(rep) && (ord == null || IsDeadOrder(ord)))
+			{
+				gridShort[idx] = rep;
+				gridShortReplace[idx] = null;
+				ord = gridShort[idx];
+				rep = null;
+				LogMsg("GridReplaceHeal", $"Grid{idx + 1} SELL promoted replace->main name={ord?.Name} lim={ord?.LimitPrice:0.00}", 2);
+			}
+
+			// Only block if we truly have a replacement pending AND the main is still active (handshake in progress)
+			if (rep != null && IsActiveOrSubmitted(rep) && ord != null && IsActiveOrSubmitted(ord))
+			{
+				if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
+					LogMsg("Grid2Diag_Short_Return", "reason=rep_active_and_main_active", 3);
+				return;
+			}
+
+			if (ord != null && IsCancelling(ord))
+			{
+				if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
+					LogMsg("Grid2Diag_Short_Return", $"reason=main_cancelling state={ord.OrderState}", 3);
+
+				LogMsg("GridSkipRecreate", $"Grid{idx + 1} SELL reason=cancel_in_progress state={ord.OrderState}", 3);
+				return;
+			}
+
+			if (ord != null && IsActiveOrSubmitted(ord))
+			{
+				if (DisableRepriceWhenFlat && (Position == null || Position.MarketPosition == MarketPosition.Flat))
+				{
+					if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
+						LogMsg("Grid2Diag_Short_Return", "reason=DisableRepriceWhenFlat (unexpected while pos!=flat)", 3);
+					return;
+				}
+
+				if (Math.Abs(ord.LimitPrice - price) < repricingThreshold)
+				{
+					if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
+						LogMsg("Grid2Diag_Short_Return", $"reason=below_threshold diff={Math.Abs(ord.LimitPrice - price):0.0000} thr={repricingThreshold:0.0000}", 3);
+					return;
+				}
+
+				int minBars = Math.Max(1, RepriceEveryNBars);
+				if (_lastGridRepriceBarShort[idx] >= 0 && (CurrentBar - _lastGridRepriceBarShort[idx]) < minBars)
+				{
+					if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
+						LogMsg("Grid2Diag_Short_Return", $"reason=throttle barsSinceLast={CurrentBar - _lastGridRepriceBarShort[idx]} < {minBars}", 3);
+
+					LogMsg("GridRepriceThrottle", $"Grid{idx + 1} SELL skip; barsSinceLast={CurrentBar - _lastGridRepriceBarShort[idx]} < {RepriceEveryNBars}", 3);
+					return;
+				}
+
+				var o = EnterShortLimit(0, true, qty, price, $"Grid{idx + 1}_Sell_R");
+				if (o == null)
+				{
+					LogMsg("GridReplaceFailed", $"Grid{idx + 1} SELL replacement returned null qty={qty} price={price:0.00}", 1);
+					return;
+				}
+				gridShortReplace[idx] = o;
+				_lastGridRepriceBarShort[idx] = CurrentBar;
+
+				if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
+					LogMsg("Grid2Diag_Short_Action", $"action=submit_replace old={ord.LimitPrice:0.00} new={price:0.00}", 2);
+
+				LogMsg("GridReplaceSubmit", $"Grid{idx + 1} SELL old={ord.LimitPrice:0.00} new={price:0.00}", 3);
+				return;
+			}
+
+			var newOrd = EnterShortLimit(0, true, qty, price, $"Grid{idx + 1}_Sell");
+			if (newOrd == null)
+			{
+				LogMsg("GridOrderNull", $"Grid{idx + 1} SELL returned null qty={qty} price={price:0.00}", 1);
+				return;
+			}
+			gridShort[idx] = newOrd;
+
+			if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
+				LogMsg("Grid2Diag_Short_Action", $"action=create_new name={newOrd.Name} lim={price:0.00}", 2);
+
+			LogMsg("GridSubmit", $"Grid{idx + 1} SELL name={newOrd.Name} qty={qty} lim={price:0.00}", 2);
+		}
+
+		private void CancelGridIndex(int idx, string reason = "cancel")
+		{
+			try
+			{
+				if (gridLong[idx] != null) CancelOrder(gridLong[idx]);
+				if (gridShort[idx] != null) CancelOrder(gridShort[idx]);
+				if (gridLongReplace[idx] != null) CancelOrder(gridLongReplace[idx]);
+				if (gridShortReplace[idx] != null) CancelOrder(gridShortReplace[idx]);
+				_lastGridRepriceBarLong[idx] = -1;
+				_lastGridRepriceBarShort[idx] = -1;
+				gridLongReplace[idx] = null;
+				gridShortReplace[idx] = null;
+				LogMsg("GridCancel", $"Grid{idx + 1} reason={reason}", 3);
+			}
+			catch { }
+			gridLong[idx] = null;
+			gridShort[idx] = null;
+		}
+
+		private void CancelAllGrid(string reason = "cancel_all")
+		{
+			for (int i = 0; i < 5; i++) CancelGridIndex(i, reason);
+		}
+
+		private void CancelSideGrid(Regime side, string reason = "cancel_side")
+		{
+			for (int i = 0; i < 5; i++)
+			{
+				if (side == Regime.Buy)
+				{
+					try { if (gridLong[i] != null) CancelOrder(gridLong[i]); } catch { }
+					try { if (gridLongReplace[i] != null) CancelOrder(gridLongReplace[i]); } catch { }
+					gridLong[i] = null;
+					gridLongReplace[i] = null;
+					_lastGridRepriceBarLong[i] = -1;
+				}
+				else if (side == Regime.Sell)
+				{
+					try { if (gridShort[i] != null) CancelOrder(gridShort[i]); } catch { }
+					try { if (gridShortReplace[i] != null) CancelOrder(gridShortReplace[i]); } catch { }
+					gridShort[i] = null;
+					gridShortReplace[i] = null;
+					_lastGridRepriceBarShort[i] = -1;
+				}
+			}
+			LogMsg("GridCancelSide", $"side={side} reason={reason}", 2);
+		}
+		#endregion
+
+		#region VWAP exit
+		private void MaintainVwapExitOrder(double vwap)
+		{
+			if (isLockedForDay || flattenInProgress) { CancelExitVwap(); return; }
+
+			int qty = Math.Abs(Position.Quantity);
+			if (qty <= 0) { CancelExitVwap(); return; }
+
+			double ts = Instrument.MasterInstrument.TickSize;
+			double repricingThreshold = ts * 0.5;
+
+			if (exitVwapOrderReplace != null && IsActiveOrSubmitted(exitVwapOrderReplace))
+			{
+				return;
+			}
+
+			if (exitVwapOrder != null && (exitVwapOrder.OrderState == OrderState.CancelPending || exitVwapOrder.OrderState == OrderState.CancelSubmitted))
+			{
+				LogMsg("VWAPExitSkipReprice", $"state={exitVwapOrder.OrderState} reason=cancel_in_progress", 3);
+				return;
+			}
+
+			if (Position.MarketPosition == MarketPosition.Long)
+			{
+				if (exitVwapOrder != null && IsActiveOrSubmitted(exitVwapOrder))
+				{
+					if (Math.Abs(exitVwapOrder.LimitPrice - vwap) > repricingThreshold ||
+					    exitVwapOrder.Quantity != qty)
+					{
+						exitVwapOrderReplace = ExitLongLimit(0, true, qty, vwap, "VWAPExitL_R", null);
+						LogMsg("VWAPExitReplaceSubmit", $"old={exitVwapOrder.LimitPrice:0.00} new={vwap:0.00}", 2);
+					}
+					return;
+				}
+
+				exitVwapOrder = ExitLongLimit(0, true, qty, vwap, "VWAPExitL", null);
+			}
+			else if (Position.MarketPosition == MarketPosition.Short)
+			{
+				if (exitVwapOrder != null && IsActiveOrSubmitted(exitVwapOrder))
+				{
+					if (Math.Abs(exitVwapOrder.LimitPrice - vwap) > repricingThreshold ||
+					    exitVwapOrder.Quantity != qty)
+					{
+						exitVwapOrderReplace = ExitShortLimit(0, true, qty, vwap, "VWAPExitS_R", null);
+						LogMsg("VWAPExitReplaceSubmit", $"old={exitVwapOrder.LimitPrice:0.00} new={vwap:0.00}", 2);
+					}
+					return;
+				}
+
+				exitVwapOrder = ExitShortLimit(0, true, qty, vwap, "VWAPExitS", null);
+			}
+		}
+
+		private void CancelExitVwap()
+		{
+			try { if (exitVwapOrder != null && !IsCancelling(exitVwapOrder)) CancelOrder(exitVwapOrder); } catch { }
+			try { if (exitVwapOrderReplace != null && !IsCancelling(exitVwapOrderReplace)) CancelOrder(exitVwapOrderReplace); } catch { }
+		}
+
+		private void ForceFlatten(string reason)
+		{
+			RequestFlatten(reason, allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
+		}
+		#endregion
+
+		#region Flatten robusto (2 camadas)
+		// Guard rails to avoid duplicate/rapid-fire flatten submits (which can trigger strategy disablement
+		// under certain RealtimeErrorHandling modes when an exit is submitted while the position is already closing).
+		private int _lastFlattenSubmitBar = -1;
+		private DateTime _lastFlattenSubmitUtc = DateTime.MinValue;
+		private void RequestFlatten(string reason, bool allowAccountFallback)
+		{
+			if (flattenInProgress)
+			{
+				LogMsg("FlattenAlreadyInProgress", $"reason={reason} currentReason={flattenReason} attempt={flattenAttemptCount}", 2);
+				return;
+			}
+
+			flattenReason = reason;
+			flattenAllowFallback = allowAccountFallback;
+
+			CancelExitVwap();
+			CancelOppositeBandExit();
+			CancelFinancialTarget();
+			CancelStopLoss();
+			CancelAllGrid("force_flatten");
+
+			if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
+			{
+				LogMsg("Flatten", $"{reason} (already flat)", 2);
+				flattenInProgress = false;
+				flattenOrder = null;
+				return;
+			}
+
+			flattenAttemptCount = 0;
+			flattenStartBar = CurrentBar;
+			flattenInProgress = true;
+
+			SubmitFlattenOrder(reason);
+		}
+
+		private void SubmitFlattenOrder(string reason)
+		{
+			int qty = Math.Abs(Position?.Quantity ?? 0);
+			if (qty <= 0)
+			{
+				LogMsg("Flatten", $"{reason} qty=0 (skip submit)", 2);
+				flattenInProgress = false;
+				flattenOrder = null;
+				return;
+			}
+
+			// If we already have a live flatten order working/accepted/submitted, do not re-submit.
+			if (flattenOrder != null && IsActiveOrSubmitted(flattenOrder))
+			{
+				LogMsg("FlattenSkip", $"reason={reason} skip=order_live name={flattenOrder.Name} state={flattenOrder.OrderState}", 3);
+				return;
+			}
+
+			// Prevent double-submission on the same bar (e.g., multi-series timing or post-fill lag).
+			if (_lastFlattenSubmitBar == CurrentBar)
+			{
+				LogMsg("FlattenSkip", $"reason={reason} skip=same_bar curBar={CurrentBar}", 2);
+				return;
+			}
+
+			flattenAttemptCount++;
+			flattenStartBar = CurrentBar;
+			_lastFlattenSubmitBar = CurrentBar;
+			_lastFlattenSubmitUtc = DateTime.UtcNow;
+
+			// Use explicit-qty market exit to guarantee the command is sent even when entries use named signals.
+			// Avoid Account.Flatten() here because it can trigger strategy disablement in some brokerage/connection contexts.
+			try
+			{
+				// Managed approach: market exits do not expose an 'isLiveUntilCancelled' overload.
+				// Use the 4-arg overload: (barsInProgressIndex, quantity, signalName, fromEntrySignal).
+				if (Position.MarketPosition == MarketPosition.Long)
+					flattenOrder = ExitLong(0, qty, "FlattenMktL", string.Empty);
+				else if (Position.MarketPosition == MarketPosition.Short)
+					flattenOrder = ExitShort(0, qty, "FlattenMktS", string.Empty);
+				else
+					flattenOrder = null;
+			}
+			catch (Exception ex)
+			{
+				flattenOrder = null;
+				LogMsg("FlattenSubmitErr", $"reason={reason} ex={ex.Message}", 1);
+			}
+
+			if (flattenOrder == null)
+				LogMsg("FlattenSubmitNull", $"reason={reason} pos={Position.MarketPosition} qty={qty} attempt={flattenAttemptCount}", 1);
+
+			LogMsg("FlattenRequest", $"reason={reason} pos={Position.MarketPosition} qty={qty} attempt={flattenAttemptCount} allowFallback={flattenAllowFallback}", 2);
+		}
+
+		private void CheckFlattenProgress()
+		{
+			if (!flattenInProgress) return;
+
+			// If the flatten order is still live, wait. This prevents rapid re-submits that can
+			// trigger strategy disablement via Realtime error handling.
+			if (flattenOrder != null && IsActiveOrSubmitted(flattenOrder))
+				return;
+
+			if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
+			{
+				LogMsg("FlattenSuccess", $"reason={flattenReason} attempts={flattenAttemptCount}", 2);
+				flattenInProgress = false;
+				flattenOrder = null;
+				return;
+			}
+
+			int barsElapsed = CurrentBar - flattenStartBar;
+			int minBarsWait = Math.Max(1, flattenRetryBars);
+			if (barsElapsed < minBarsWait) return;
+
+			// Keep retrying market-exit submits until the position is flat.
+			// We cap the "attempt" counter for logging, but we do not disable the strategy and we avoid Account.Flatten().
+			if (flattenAttemptCount < maxFlattenAttempts)
+			{
+				SubmitFlattenOrder(flattenReason);
+				return;
+			}
+
+			// After max attempts, continue re-submitting at the same cadence, but do not increase attempts further.
+			LogMsg("FlattenRetryAfterMax", $"reason={flattenReason} attempts={flattenAttemptCount} (continuing retries; no Account.Flatten)", 1);
+
+			// Do not increment attempt count anymore; submit directly using the same submit helper but with a temporary decrement.
+			int savedAttempts = flattenAttemptCount;
+			try
+			{
+				flattenAttemptCount = maxFlattenAttempts - 1;
+				SubmitFlattenOrder(flattenReason);
+			}
+			finally
+			{
+				flattenAttemptCount = savedAttempts;
+			}
+		}
+		#endregion
+
+		#region Stop maintenance (ticks + financial priority)
+		private void MaintainStopLoss()
+		{
+			if (isLockedForDay || flattenInProgress)
+			{
+				CancelStopLoss();
+				return;
+			}
+
+			if (EnableFinancialStop && FinancialStopUsd > 0)
+			{
+				MaintainFinancialStopLoss();
+				return;
+			}
+
+			CancelStopLoss();
+			return;
+		}
+
+		private void CancelStopLoss()
+		{
+			try { if (stopLossOrder != null && !IsCancelling(stopLossOrder)) CancelOrder(stopLossOrder); } catch { }
+		}
+		#endregion
+
+		#region PreClose (start flatten a few minutes before FlattenTime)
+		private DateTime _lastPreCloseDate = DateTime.MinValue;
+
+		private bool TryPreCloseIfScheduled(DateTime barTime, int minutesBeforeFlatten)
+		{
+			if (isLockedForDay) return false;
+
+			DateTime calDay = ConvertToBrasilia(barTime).AddMinutes(UserBrtOffsetMinutes).Date;
+
+			if (_lastPreCloseDate.Date == calDay.Date)
+				return false;
+
+			TimeSpan brNow = ConvertToBrasilia(barTime).AddMinutes(UserBrtOffsetMinutes).TimeOfDay;
+
+			TimeSpan preCloseTime = flattenSpan - TimeSpan.FromMinutes(Math.Max(1, minutesBeforeFlatten));
+			if (preCloseTime < TimeSpan.Zero) preCloseTime = TimeSpan.Zero;
+
+			if (brNow < preCloseTime)
+				return false;
+
+			_lastPreCloseDate = calDay.Date;
+
+			LogMsg("PreClose", $"Starting flatten early at {brNow} (preClose={preCloseTime}, FlattenTime={flattenSpan})", 2);
+
+			// Do NOT lock day yet; lock only at AutoClose.
+			RequestFlatten("PreClose", allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
+
+			PublishPanelSnapshot("PreClose");
+			return true;
+		}
+		#endregion
+
+		#region AutoClose (flatten + lock 1x por dia calendário BRT)
+		private bool TryAutoCloseIfScheduled(DateTime barTime)
+		{
+			DateTime calDay = ConvertToBrasilia(barTime).AddMinutes(UserBrtOffsetMinutes).Date;
+
+			if (lastAutoCloseDate.Date == calDay.Date)
+				return false;
+
+			TimeSpan brNow = ConvertToBrasilia(barTime).AddMinutes(UserBrtOffsetMinutes).TimeOfDay;
+
+			if (brNow < flattenSpan)
+				return false;
+
+			lastAutoCloseDate = calDay.Date;
+
+			LogMsg("AutoClose", $"Horário atingido (FlattenTime={flattenSpan}); cancel + FLATTEN MKT + lock até 00:00 BRT", 2);
+
+			RequestFlatten("AutoClose", allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
+			LockDay("AutoClose", barTime.ToUniversalTime());
+
+			PublishPanelSnapshot("AutoClose");
+			return true;
+		}
+		#endregion
+
+		#region Lock helper
+		private void LockDay(string reason, DateTime? utcOverride = null)
+		{
+			if (isLockedForDay) return;
+			isLockedForDay = true;
+			dayStatus = "Locked";
+			_lockReason = reason;
+
+			DateTime fallbackUtc = (Time != null && CurrentBar >= 0) ? Time[0].ToUniversalTime() : DateTime.UtcNow;
+			_lockedAtUtc = utcOverride ?? fallbackUtc;
+
+			LogMsg("DayLock", $"LOCKED reason={reason} utc={_lockedAtUtc:O} brt={ConvertToBrasilia(Time[0]).AddMinutes(UserBrtOffsetMinutes):yyyy-MM-dd HH:mm:ss}", 2);
+		}
+		#endregion
+
+		#region Trade limits helpers (por ciclo fechado)
+		private void ResetTradeCounters(DateTime calDay)
+		{
+			tradesClosedTodayTotal = 0;
+			tradesClosedTodayBuy = 0;
+			tradesClosedTodaySell = 0;
+			tradeCountersBrtDate = calDay.Date;
+
+			if (Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
+			{
+				cycleOpen = true;
+				cycleDirection = Position.MarketPosition == MarketPosition.Long ? Regime.Buy : Regime.Sell;
+			}
+			else
+			{
+				cycleOpen = false;
+				cycleDirection = Regime.None;
+			}
+
+			for (int i = 0; i < 5; i++)
+			{
+				_lastGridRepriceBarLong[i] = -1;
+				_lastGridRepriceBarShort[i] = -1;
+				gridLongReplace[i] = null;
+				gridShortReplace[i] = null;
+			}
+
+			_panelCacheSaveRequested = true;
+		}
+
+		private bool CanStartNewCycle(Regime side)
+		{
+			if (side == Regime.None) return false;
+
+			if (MaxTradesPerDay > 0 && tradesClosedTodayTotal >= MaxTradesPerDay)
+				return false;
+
+			if (EnableTradeDirectionLimits)
+			{
+				if (side == Regime.Buy && MaxBuysPerDay > 0 && tradesClosedTodayBuy >= MaxBuysPerDay)
+					return false;
+				if (side == Regime.Sell && MaxSellsPerDay > 0 && tradesClosedTodaySell >= MaxSellsPerDay)
+					return false;
+			}
+			return true;
+		}
+
+		private void TrackCycleCounters(DateTime execTime)
+		{
+			var nowPos = Position?.MarketPosition ?? MarketPosition.Flat;
+			int qty = Math.Abs(Position?.Quantity ?? 0);
+			Regime side = nowPos == MarketPosition.Long ? Regime.Buy : nowPos == MarketPosition.Short ? Regime.Sell : Regime.None;
+
+			DateTime execDay = ConvertToBrasilia(execTime).AddMinutes(UserBrtOffsetMinutes).Date;
+			if (execDay != tradeCountersBrtDate.Date)
+				ResetTradeCounters(execDay);
+
+			if (!cycleOpen && nowPos != MarketPosition.Flat && qty > 0)
+			{
+				cycleOpen = true;
+				cycleDirection = side;
+			}
+
+			if (cycleOpen && nowPos == MarketPosition.Flat)
+			{
+				tradesClosedTodayTotal++;
+				if (cycleDirection == Regime.Buy) tradesClosedTodayBuy++;
+				else if (cycleDirection == Regime.Sell) tradesClosedTodaySell++;
+
+				LogMsg("TradeCycleClosed", $"total={tradesClosedTodayTotal} buy={tradesClosedTodayBuy} sell={tradesClosedTodaySell}", 2);
+
+				try { CancelAllGrid("cycle_closed"); } catch { }
+				try { CancelExitVwap(); } catch { }
+				try { CancelOppositeBandExit(); } catch { }
+				try { CancelFinancialTarget(); } catch { }
+				try { CancelStopLoss(); } catch { }
+				LogMsg("CycleCleanup", "Cancelled all grids/exits after cycle close (flat)", 2);
+
+				// Reset per-band fill guards for next cycle
+				try { ResetBandFillGuards(); } catch { }
+
+				cycleOpen = false;
+				cycleDirection = Regime.None;
+			}
+		}
+		#endregion
+
+		#region Realtime ledger helpers
+
+		// Realtime panel must NEVER inherit cached/historical PnL. It starts blank and only
+		// accumulates executions that happen while this strategy instance is running in realtime
+		// on an eligible account (non-Playback and not Sim101).
+		private void ClearRealtimePanelStats(bool resetProcessedCount)
+		{
+			_rtRealizedTotal = 0;
+			_rtRealizedMonth = 0;
+			_rtRealizedDay = 0;
+			_rtBrtDay = DateTime.MinValue;
+			_rtBrtYearMonth = 0;
+
+			realizedPnlDay = 0;
+			_cachedPnlDay = "-";
+			_cachedPnlMonth = "-";
+			_cachedPnlTotal = "-";
+			_maxGainStreak = 0;
+			_maxLossStreak = 0;
+
+			if (resetProcessedCount)
+			{
+				try { _rtLastProcessedTradeCount = SystemPerformance?.AllTrades?.Count ?? 0; } catch { _rtLastProcessedTradeCount = 0; }
+			}
+		}
+
+		private bool IsEligibleRealtimeAccount()
+		{
+			// Realtime-only mode: only count executions that happened in REALTIME on non-sim/non-replay accounts.
+			if (PanelPnlMode != PanelPnLMode.RealtimeOnly)
+				return true;
+
+			if (State != State.Realtime)
+				return false;
+
+			if (Account == null)
+				return false;
+
+			try
+			{
+				string an = Account.Name ?? string.Empty;
+
+				// Default NT sim account
+				if (an.Equals("Sim101", StringComparison.OrdinalIgnoreCase))
+					return false;
+
+				// Playback/replay accounts (defensive match)
+				if (an.IndexOf("Playback", StringComparison.OrdinalIgnoreCase) >= 0)
+					return false;
+
+				if (an.IndexOf("Replay", StringComparison.OrdinalIgnoreCase) >= 0)
+					return false;
+			}
+			catch
+			{
+				return false;
+			}
+
+			return true;
+		}
+		private void ProcessNewRealtimeTrades()
+		{
+			if (PanelPnlMode != PanelPnLMode.RealtimeOnly) return;
+
+			// In realtime-only mode we show ONLY executions from eligible realtime accounts.
+			if (!IsEligibleRealtimeAccount()) { ClearRealtimePanelStats(resetProcessedCount: true); return; }
+			var all = SystemPerformance.AllTrades;
+			int count = all.Count;
+			if (count <= _rtLastProcessedTradeCount) return;
+
+			for (int idx = _rtLastProcessedTradeCount; idx < count; idx++)
+			{
+				var tr = all[idx];
+				if (tr?.Exit == null) continue;
+
+				var exitBrt = ConvertToBrasilia(tr.Exit.Time).AddMinutes(UserBrtOffsetMinutes);
+				var exitDay = exitBrt.Date;
+				int exitYm = exitDay.Year * 100 + exitDay.Month;
+
+				if (_rtBrtDay == DateTime.MinValue || _rtBrtDay.Date != exitDay)
+				{
+					_rtRealizedDay = 0;
+					_rtBrtDay = exitDay;
+				}
+				if (_rtBrtYearMonth == 0 || _rtBrtYearMonth != exitYm)
+				{
+					_rtRealizedMonth = 0;
+					_rtBrtYearMonth = exitYm;
+				}
+
+				_rtRealizedTotal += tr.ProfitCurrency;
+				_rtRealizedMonth += tr.ProfitCurrency;
+				_rtRealizedDay += tr.ProfitCurrency;
+			}
+
+			_rtLastProcessedTradeCount = count;
+
+			_cachedPnlMonth = _rtRealizedMonth.ToString("0.00");
+			_cachedPnlTotal = _rtRealizedTotal.ToString("0.00");
+
+			realizedPnlDay = _rtRealizedDay;
+			_cachedPnlDay = realizedPnlDay.ToString("0.00");
+
+			_panelCacheSaveRequested = true;
+		}
+		#endregion
+
+		#region Core OnBarUpdate
+		protected override void OnBarUpdate()
+		{
+			try
+			{
+				EnsurePanelInitializedOnce();
+
+				if (BarsInProgress == 1)
+				{
+					DateTime tClock = Times[1][0];
+					var nowBrtDtClock = ConvertToBrasilia(tClock).AddMinutes(UserBrtOffsetMinutes);
+					DateTime calDayClock = nowBrtDtClock.Date;
+					ApplyDailyResetIfNeeded(calDayClock);
+
+					// NEW: PreClose at FlattenTime - 5 min (e.g., 16:55)
+					TryPreCloseIfScheduled(tClock, minutesBeforeFlatten: 5);
+
+					TryAutoCloseIfScheduled(tClock);
+
+					if ((DateTime.UtcNow - _lastHbUtc).TotalSeconds >= 10)
+					{
+						_lastHbUtc = DateTime.UtcNow;
+						LogMsg("HB-Clock", $"bar={CurrentBar} time={tClock:O} bip=1", 3);
+					}
+					PublishPanelSnapshot("Clock");
+					return;
+				}
+
+				if (BarsInProgress != 0) return;
+
+				if ((DateTime.UtcNow - _lastHbUtc).TotalSeconds >= 10)
+				{
+					_lastHbUtc = DateTime.UtcNow;
+					LogMsg("HB", $"bar={CurrentBar} time={Time[0]:O} pos={Position.MarketPosition} qty={Position.Quantity}", 3);
+				}
+
+				if (CurrentBar < 1)
+				{
+					dayStatus = "Warmup";
+					LogMsg("Skip", "Warmup: CurrentBar < 1", 3);
+					PublishPanelSnapshot("Warmup");
+					return;
+				}
+
+				// PreClose/AutoClose should be driven by the clock series (BarsInProgress==1).
+				// If no clock series exists, fall back to the primary series.
+				if (BarsArray == null || BarsArray.Length < 2)
+				{
+					TryPreCloseIfScheduled(Time[0], minutesBeforeFlatten: 5);
+					TryAutoCloseIfScheduled(Time[0]);
+				}
+
+				var nowBrtDt = ConvertToBrasilia(Time[0]).AddMinutes(UserBrtOffsetMinutes);
+				int nowBrtInt = ToBrtHHmmss(Time[0]);
+				DateTime calDay = nowBrtDt.Date;
+				bool isAnalyzer = (ChartControl == null);
+
+				ApplyDailyResetIfNeeded(calDay);
+
+				// ---- rest of your original OnBarUpdate follows unchanged ----
+				if (hvb == null)
+				{
+					dayStatus = "Waiting";
+					LogMsg("Skip", "Waiting: hvb is null", 2);
+					CancelAllGrid("hvb_null");
+					CancelStopLoss();
+					CancelExitVwap();
+					CancelOppositeBandExit();
+					CancelFinancialTarget();
+					PublishPanelSnapshot("Waiting-hvbNull");
+					return;
+				}
+
+				double vwap = hvb.PlotVWAP[0];
+				if (double.IsNaN(vwap) || vwap <= 0)
+				{
+					dayStatus = "NoVwapYet";
+					LogMsg("Skip", $"NoVwapYet: vwap={vwap}", 3);
+					CancelAllGrid("no_vwap");
+					CancelStopLoss();
+					CancelExitVwap();
+					CancelOppositeBandExit();
+					CancelFinancialTarget();
+					PublishPanelSnapshot("NoVwapYet");
+					return;
+				}
+
+				upper[0] = hvb.PlotVWAP1U[0]; lower[0] = hvb.PlotVWAP1L[0];
+				upper[1] = hvb.PlotVWAP2U[0]; lower[1] = hvb.PlotVWAP2L[0];
+				upper[2] = hvb.PlotVWAP3U[0]; lower[2] = hvb.PlotVWAP3L[0];
+				upper[3] = hvb.PlotVWAP4U[0]; lower[3] = hvb.PlotVWAP4L[0];
+				upper[4] = hvb.PlotVWAP5U[0]; lower[4] = hvb.PlotVWAP5L[0];
+
+				lastSnapVwap = vwap;
+				Array.Copy(upper, lastSnapUpper, 5);
+				Array.Copy(lower, lastSnapLower, 5);
+
+				if (PanelPnlMode == PanelPnLMode.ChartHistorical)
+				{
+					RecalcPnLIfNeeded(nowBrtDt);
+					int count = SystemPerformance.AllTrades.Count;
+					if (count != _lastSavedHistoricalTradesCount)
+					{
+						_lastSavedHistoricalTradesCount = count;
+						_panelCacheSaveRequested = true;
+					}
+				}
+				else
+				{
+					realizedPnlDay = _rtRealizedDay;
+					_cachedPnlMonth = _rtRealizedMonth.ToString("0.00");
+					_cachedPnlTotal = _rtRealizedTotal.ToString("0.00");
+				}
+
+				UpdateUnrealizedAndTotalPnL();
+				UpdateStreaksIfClosedTradesChanged();
+
+				dayStopDollars = $"-{DailyLossLimitUsd:0}";
+				dayTargetDollars = $"+{DailyProfitLimitUsd:0}";
+				dayBreakevenDollars = "-";
+
+				bool skipLimits = (State == State.Historical && DisableDailyLimitsInStrategyAnalyzer);
+				if (!isLockedForDay && !skipLimits)
+				{
+					if (_totalPnlDay >= DailyProfitLimitUsd)
+					{
+						LogMsg("DailyLimitHitProfit", $"TotalPnL={_totalPnlDay:0.00} (R={realizedPnlDay:0.00} U={_unrealizedPnlManual:0.00}) >= {DailyProfitLimitUsd:0.00}", 2);
+						RequestFlatten("DailyProfitLimit", allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
+						LockDay("DailyProfitLimit");
+						PublishPanelSnapshot("DailyLimit");
+						return;
+					}
+					else if (_totalPnlDay <= -DailyLossLimitUsd)
+					{
+						LogMsg("DailyLimitHitLoss", $"TotalPnL={_totalPnlDay:0.00} (R={realizedPnlDay:0.00} U={_unrealizedPnlManual:0.00}) <= -{DailyLossLimitUsd:0.00}", 2);
+						RequestFlatten("DailyLossLimit", allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
+						LockDay("DailyLossLimit");
+						PublishPanelSnapshot("DailyLimit");
+						return;
+					}
+				}
+
+				bool inWindow = InTradingWindow(nowBrtInt) && !isLockedForDay;
+				if (isAnalyzer && IgnoreWindowInAnalyzer)
+					inWindow = !isLockedForDay;
+
+				if (!isLockedForDay)
+					dayStatus = inWindow ? "Trading" : (nowBrtInt < startHHmmss ? "BeforeStart" : "StopNewTrades");
+				else
+					dayStatus = "Locked";
+
+				int touched = hvb.TouchedBandIndexSeries[0];
+
+				Regime newRegime = GetEffectiveRegime(vwap);
+				bool canFlip = (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0) && !cycleOpen;
+
+				if (canFlip && newRegime != currentRegime)
+				{
+					lastRegime = currentRegime;
+					currentRegime = newRegime;
+
+					CancelAllGrid("regime_flip_price_vs_vwap");
+					LogMsg("RegimeChanged",
+						$"Regime={currentRegime} byPrice close={Close[0]:0.00} vwap={vwap:0.00} touched={touched}",
+						2);
+				}
+				else
+				{
+					currentRegime = newRegime;
+				}
+
+				LogMsg("DBG",
+				  $"time={Time[0]:O} brt={nowBrtDt:HH:mm:ss} nowBrt={nowBrtInt} inWindow={inWindow} " +
+				  $"locked={isLockedForDay} lockReason={_lockReason} pos={Position.MarketPosition} qty={Position.Quantity} " +
+				  $"close={Close[0]:0.00} regime={currentRegime} vwap={vwap:0.00} " +
+				  $"pnlT={_totalPnlDay:0.00} pnlR={realizedPnlDay:0.00} pnlU={_unrealizedPnlManual:0.00} pnlM={_monthPnl:0.00} pnlAll={_overallPnl:0.00} " +
+				  $"tradesClosed={tradesClosedTodayTotal} buyClosed={tradesClosedTodayBuy} sellClosed={tradesClosedTodaySell}",
+				  3);
+
+				var mode = GetExitMode();
+				if (lastExitMode == null || lastExitMode != mode)
+				{
+					LogMsg("ExitModeChanged", $"from={(lastExitMode.HasValue ? lastExitMode.ToString() : "None")} to={mode}", 3);
+					lastExitMode = mode;
+				}
+
+				if (mode == ExitMode.Vwap && !isLockedForDay && Position.MarketPosition != MarketPosition.Flat)
+				{
+					MaintainVwapExitOrder(vwap);
+					CancelOppositeBandExit();
+					CancelFinancialTarget();
+				}
+				else if (mode == ExitMode.OppositeBand && !isLockedForDay && Position.MarketPosition != MarketPosition.Flat)
+				{
+					CancelExitVwap();
+					MaintainOppositeBandExitOrder();
+					CancelFinancialTarget();
+				}
+				else
+				{
+					CancelExitVwap();
+					CancelOppositeBandExit();
+					if (!isLockedForDay)
+						CheckFinancialExitPerTrade();
+					MaintainFinancialTargetLimit();
+				}
+
+				MaintainStopLoss();
+
+				bool cycleAlreadyOpen = cycleOpen || (Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0);
+				bool canStartCycle = cycleAlreadyOpen || CanStartNewCycle(currentRegime);
+
+				if (inWindow && currentRegime != Regime.None && !isLockedForDay && canStartCycle)
+				{
+					RepriceOrPlaceGrid(upper, lower);
+				}
+				else
+				{
+					if (!canStartCycle && currentRegime != Regime.None)
+					{
+						CancelSideGrid(currentRegime, "trade_limit_cycle");
+						dayStatus = "TradeLimitHit";
+						lastEvent = "TradeLimitHit";
+					}
+					else
+					{
+						CancelAllGrid("out_window_or_locked");
+						if (Position == null || Position.MarketPosition == MarketPosition.Flat)
+						{
+							CancelStopLoss();
+							CancelFinancialTarget();
+						}
+					}
+				}
+
+				CheckFlattenProgress();
+
+				PublishPanelSnapshot("OnBarUpdate");
+			}
+			catch (Exception ex)
+			{
+				Print($"[HawkVwapBandsVolatility] OnBarUpdate exception: {ex}");
+			}
+		}
+
+		private void ApplyDailyResetIfNeeded(DateTime calDay)
+		{
+			if (lastCalendarDayBrt.Date != calDay.Date)
+			{
+				lastCalendarDayBrt = calDay.Date;
+				isLockedForDay = false;
+				_lockReason = "";
+				_lockedAtUtc = DateTime.MinValue;
+				realizedPnlDay = 0;
+				_unrealizedPnlManual = 0;
+				_totalPnlDay = 0;
+				_cachedPnlDay = "0.00";
+				dayStatus = "Waiting";
+				lastAutoCloseDate = DateTime.MinValue;
+				_lastPreCloseDate = DateTime.MinValue;
+
+				lastRegime = currentRegime;
+				currentRegime = Regime.None;
+
+				ResetTradeCounters(calDay);
+
+				if (PanelPnlMode == PanelPnLMode.RealtimeOnly)
+				{
+					_rtBrtDay = calDay.Date;
+					int newYm = calDay.Year * 100 + calDay.Month;
+					if (_rtBrtYearMonth != newYm)
+					{
+						_rtRealizedMonth = 0;
+						_rtBrtYearMonth = newYm;
+					}
+					_rtRealizedDay = 0;
+				}
+
+				LogMsg("DayReset", $"Novo dia calendário BRT {lastCalendarDayBrt:yyyy-MM-dd} (unlock; pnl reset; trade counters reset)", 2);
+			}
+		}
+		#endregion
+
+		#region OnOrderUpdate / Execution logging
+		protected override void OnOrderUpdate(Order order, double limitPrice, double stopPrice, int quantity, int filled, double averageFillPrice, OrderState orderState, DateTime time, ErrorCode error, string nativeError)
+		{
+			if (order == null) return;
+
+			bool isGrid2 = order.Name != null && (order.Name.Contains("Grid2_Buy") || order.Name.Contains("Grid2_Sell"));
+			bool isGrid = order.Name != null && order.Name.StartsWith("Grid", StringComparison.OrdinalIgnoreCase);
+			bool isReplace = order.Name != null && order.Name.IndexOf("_R", StringComparison.OrdinalIgnoreCase) >= 0;
+			bool isOppBand = order.Name != null && order.Name.StartsWith("OppBandExit", StringComparison.OrdinalIgnoreCase);
+			bool isVwap = order.Name != null && order.Name.StartsWith("VWAPExit", StringComparison.OrdinalIgnoreCase);
+			bool isFinTarget = order.Name != null && order.Name.StartsWith("FinTarget", StringComparison.OrdinalIgnoreCase);
+
+			if (isGrid2)
+				LogMsg("Grid2State", $"state={orderState} name={order.Name} lim={limitPrice:0.00} stop={stopPrice:0.00} filled={filled}/{quantity} err={error} native={nativeError}", 3);
+			else
+				LogMsg("OrderUpdate", $"{order.Name} state={orderState} qty={quantity} filled={filled} lim={limitPrice:0.00} stop={stopPrice:0.00} avg={averageFillPrice:0.00} err={error} native={nativeError}", error != ErrorCode.NoError ? 1 : 3);
+
+			if (isOppBand && isReplace)
+			{
+				if (orderState == OrderState.Rejected || orderState == OrderState.Cancelled)
+				{
+					if (oppositeBandExitOrderReplace == order) oppositeBandExitOrderReplace = null;
+					if (orderState == OrderState.Rejected)
+						LogMsg("OppBandExitReplaceFailed", $"name={order.Name} err={error} native={nativeError} lim={limitPrice:0.00}", 1);
+					return;
+				}
+
+				if (orderState == OrderState.Accepted || orderState == OrderState.Working)
+				{
+					if (oppositeBandExitOrder != null && IsActiveOrSubmitted(oppositeBandExitOrder) && oppositeBandExitOrder != order)
+					{
+						try { CancelOrder(oppositeBandExitOrder); } catch { }
+					}
+					oppositeBandExitOrder = order;
+					oppositeBandExitOrderReplace = null;
+					LogMsg("OppBandExitReplaced", $"name={order.Name} newLim={limitPrice:0.00}", 2);
+					return;
+				}
+			}
+
+			if (isVwap && isReplace)
+			{
+				if (orderState == OrderState.Rejected || orderState == OrderState.Cancelled)
+				{
+					if (exitVwapOrderReplace == order) exitVwapOrderReplace = null;
+					if (orderState == OrderState.Rejected)
+						LogMsg("VWAPExitReplaceFailed", $"name={order.Name} err={error} native={nativeError} lim={limitPrice:0.00}", 1);
+					return;
+				}
+
+				if (orderState == OrderState.Accepted || orderState == OrderState.Working)
+				{
+					if (exitVwapOrder != null && IsActiveOrSubmitted(exitVwapOrder) && exitVwapOrder != order)
+					{
+						try { CancelOrder(exitVwapOrder); } catch { }
+					}
+					exitVwapOrder = order;
+					exitVwapOrderReplace = null;
+					LogMsg("VWAPExitReplaced", $"name={order.Name} newLim={limitPrice:0.00}", 2);
+					return;
+				}
+			}
+
+			if (isFinTarget && isReplace)
+			{
+				if (orderState == OrderState.Rejected || orderState == OrderState.Cancelled)
+				{
+					if (financialTargetOrderReplace == order) financialTargetOrderReplace = null;
+					if (orderState == OrderState.Rejected)
+						LogMsg("FinTargetReplaceFailed", $"name={order.Name} err={error} native={nativeError} lim={limitPrice:0.00}", 1);
+					return;
+				}
+
+				if (orderState == OrderState.Accepted || orderState == OrderState.Working)
+				{
+					if (financialTargetOrder != null && IsActiveOrSubmitted(financialTargetOrder) && financialTargetOrder != order)
+					{
+						try { CancelOrder(financialTargetOrder); } catch { }
+					}
+					financialTargetOrder = order;
+					financialTargetOrderReplace = null;
+					LogMsg("FinTargetReplaced", $"name={order.Name} newLim={limitPrice:0.00}", 2);
+					return;
+				}
+			}
+
+			if (isGrid && isReplace)
+			{
+				int idx = -1;
+				for (int i = 0; i < 5; i++)
+				{
+					if (order.Name.IndexOf($"Grid{i + 1}_", StringComparison.OrdinalIgnoreCase) >= 0)
+					{
+						idx = i; break;
+					}
+				}
+				if (idx >= 0)
+				{
+					bool isBuy = order.Name.IndexOf("_Buy", StringComparison.OrdinalIgnoreCase) >= 0;
+					if (orderState == OrderState.Rejected || orderState == OrderState.Cancelled)
+					{
+						if (isBuy && gridLongReplace[idx] == order) gridLongReplace[idx] = null;
+						if (!isBuy && gridShortReplace[idx] == order) gridShortReplace[idx] = null;
+						if (orderState == OrderState.Rejected)
+							LogMsg("GridReplaceFailed", $"Grid{idx + 1} {order.OrderAction} rejected lim={limitPrice:0.00} err={error} native={nativeError}", 1);
+						return;
+					}
+
+					if (orderState == OrderState.Accepted || orderState == OrderState.Working)
+					{
+						if (isBuy)
+						{
+							if (gridLong[idx] != null && IsActiveOrSubmitted(gridLong[idx]) && gridLong[idx] != order)
+							{
+								try { CancelOrder(gridLong[idx]); } catch { }
+							}
+							gridLong[idx] = order;
+							gridLongReplace[idx] = null;
+						}
+						else
+						{
+							if (gridShort[idx] != null && IsActiveOrSubmitted(gridShort[idx]) && gridShort[idx] != order)
+							{
+								try { CancelOrder(gridShort[idx]); } catch { }
+							}
+							gridShort[idx] = order;
+							gridShortReplace[idx] = null;
+						}
+						LogMsg("GridReplaced", $"Grid{idx + 1} action={order.OrderAction} newLim={limitPrice:0.00}", 3);
+						return;
+					}
+				}
+			}
+
+			if (isGrid && orderState == OrderState.Rejected)
+			{
+				LogMsg("GridRejected", $"name={order.Name} err={error} native={nativeError} lim={limitPrice:0.00} stop={stopPrice:0.00}", 1);
+			}
+
+			if (orderState == OrderState.Rejected || orderState == OrderState.Cancelled)
+			{
+				if (flattenOrder == order) flattenOrder = null;
+				ClearOrderReference(order);
+			}
+			else
+			{
+				MapOrderReference(order);
+			}
+		}
+
+		protected override void OnExecutionUpdate(Execution execution, string executionId, double price, int quantity, MarketPosition marketPosition, string orderId, DateTime time)
+		{
+			if (execution?.Order == null) return;
+			if (execution.Order.OrderState == OrderState.Filled)
+			{
+				LogMsg("OrderFill", $"{execution.Order.Name} {execution.Order.OrderAction} qty={quantity} price={price:0.00}", 2);
+
+				MarkBandFilledFromOrderName(execution.Order.Name);
+			}
+
+			TrackCycleCounters(time);
+
+			if (flattenInProgress && flattenOrder != null && execution.Order == flattenOrder)
+			{
+				// Treat the flatten order fill as success immediately. Depending on connection timing,
+				// the Position object may still report the pre-fill state for a short moment.
+				LogMsg("FlattenSuccess", $"reason={flattenReason} byExecution attempt={flattenAttemptCount}", 2);
+				flattenInProgress = false;
+				flattenOrder = null;
+			}
+
+			ProcessNewRealtimeTrades();
+		}
+		#endregion
+
+		// Helper kept for compatibility (no longer required, but harmless)
+		private void OnCycleClosed_ResetBandGuards()
+		{
+			ResetBandFillGuards();
+			LogMsg("BandFillGuardReset", "Cycle closed -> reset per-band fill guards", 2);
+		}
+
+	}   // fecha a classe HawkVwapBandsVolatility
+}       // fecha o namespace NinjaTrader.NinjaScript.Strategies
