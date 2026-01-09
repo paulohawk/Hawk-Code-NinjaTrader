@@ -101,10 +101,11 @@ function updateDashboard() {
 
   const period = getSelectedPeriod_(shDash);
   const trades = getFilteredTrades_(ss, period);
+  const dashboardData = buildDashboardData_(trades);
 
   // Renderização (Atualiza apenas valores e gráficos)
-  renderKpis_(shDash, trades);
-  renderCharts_(shDash, trades);
+  renderKpis_(shDash, trades, dashboardData);
+  renderCharts_(shDash, dashboardData);
   renderRightColumn_(shDash, trades);
 
   SpreadsheetApp.flush();
@@ -316,21 +317,28 @@ function setupCardHeader_(sh, row, title) {
    .setHorizontalAlignment("left");
 }
 
+function buildDashboardData_(trades) {
+  const daily = aggregateDaily_(trades);
+  const cumulative = buildCumulative_(daily);
+  const efficiency = buildEfficiency_(trades);
+  return { daily, cumulative, efficiency };
+}
+
 /* ================= KPI RENDER ================= */
-function renderKpis_(sh, trades) {
-  const totalPnL = sum_(trades.map(t => t.pnl));
-  const daysCount = countUnique_(trades.map(t => t.date.getTime()));
+function renderKpis_(sh, trades, dashboardData) {
+  const daily = dashboardData.daily || [];
+  const efficiencyData = dashboardData.efficiency || [];
+
+  const totalPnL = sum_(daily.map(d => d.pnl));
+  const daysCount = daily.length;
   const wins = trades.filter(t => t.pnl > 0).length;
   const winRate = trades.length ? Math.round((wins / trades.length) * 100) : 0;
 
-  const pos = sum_(trades.filter(t => t.pnl > 0).map(t => t.pnl));
-  const negAbs = sum_(trades.filter(t => t.pnl < 0).map(t => Math.abs(t.pnl)));
+  const pos = Number((efficiencyData[1] || [])[1] || 0);
+  const negAbs = Number((efficiencyData[2] || [])[1] || 0);
   const efficiency = (pos + negAbs) > 0 ? Math.round((pos / (pos + negAbs)) * 100) : 0;
 
-  const daily = aggregateDaily_(trades);
-  const cumArr = [];
-  let cum = 0;
-  daily.forEach(d => { cum += d.pnl; cumArr.push(cum); });
+  const cumArr = (dashboardData.cumulative || []).slice(1).map(row => row[1]);
   const maxDD = computeMaxDrawdown_(cumArr);
 
   const pnlMedio = trades.length ? (totalPnL / trades.length) : 0;
@@ -371,16 +379,16 @@ function computeMaxDrawdown_(cumArr){
 }
 
 /* ================= CHARTS ================= */
-function renderCharts_(sh, trades) {
+function renderCharts_(sh, dashboardData) {
   sh.getCharts().forEach(c => sh.removeChart(c));
 
-  const daily = aggregateDaily_(trades);
+  const daily = dashboardData.daily || [];
+  const curve = dashboardData.cumulative || [];
+  const eff = dashboardData.efficiency || [];
   
   // Se não houver dados, para aqui para não criar gráficos vazios
   if (!daily.length) return;
 
-  const curve = buildCumulative_(daily);
-  const eff   = buildEfficiency_(trades);
   const bars  = buildBars_(daily);
 
   // Área de dados oculta (Longe da visão)
