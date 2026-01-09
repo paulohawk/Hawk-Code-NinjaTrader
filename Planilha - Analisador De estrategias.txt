@@ -31,6 +31,8 @@ const CHART_CURVE_ROWS = 200;
 const CHART_BARS_ROWS = 200;
 const CHART_EFF_ROWS = 3;
 
+const TRADES_FORMAT_BUFFER = 100;
+
 const RIGHT_COLUMN_ROWS_PROP = "dashflix.rightColumnRows";
 
 const THEME = {
@@ -583,18 +585,19 @@ function renderRightColumn_(sh, trades) {
 function formatTradesSheet_(sh) {
   sh.setHiddenGridlines(true);
 
-  // Garante tamanho mínimo de linhas (ex: 1000 ou atual + 100)
+  // Formata somente até a última linha usada + buffer
+  const lastUsedRow = Math.max(sh.getLastRow(), TRADES_HEADER_ROW);
+  const formatLastRow = lastUsedRow + TRADES_FORMAT_BUFFER;
+
   const currentMax = sh.getMaxRows();
-  const desiredMin = 1000;
-  if (currentMax < desiredMin) {
-    sh.insertRowsAfter(currentMax, desiredMin - currentMax);
+  if (currentMax < formatLastRow) {
+    sh.insertRowsAfter(currentMax, formatLastRow - currentMax);
   }
 
-  const maxRows = sh.getMaxRows();
-  const maxCols = Math.max(sh.getMaxColumns(), 4);
+  const maxRows = Math.min(sh.getMaxRows(), formatLastRow);
 
-  // Formata TUDO (do início ao fim da planilha)
-  sh.getRange(1, 1, maxRows, maxCols)
+  // Formata apenas a coluna A (reduz custo)
+  sh.getRange(1, 1, maxRows, 1)
     .setBackground(THEME.bg)
     .setFontColor(THEME.text)
     .setFontFamily("Arial");
@@ -614,11 +617,9 @@ function formatTradesSheet_(sh) {
   sh.setColumnWidth(3, 110);
   sh.setColumnWidth(4, 110);
 
-  // Formatações de Coluna Inteira (A2:A, B2:B, etc)
-  const rowsToFormat = maxRows - 1;
+  // Formatações de Coluna no intervalo reduzido
+  const rowsToFormat = Math.max(maxRows - 1, 0);
   if (rowsToFormat > 0) {
-    const dataRange = sh.getRange(2, 1, rowsToFormat, 4);
-    
     // Formatos numéricos
     sh.getRange(2,1,rowsToFormat,1).setNumberFormat("dd/MM/yyyy");
     sh.getRange(2,2,rowsToFormat,1).setNumberFormat("$#,##0.00");
