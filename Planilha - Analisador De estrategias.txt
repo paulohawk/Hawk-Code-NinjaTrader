@@ -110,11 +110,12 @@ function updateDashboard() {
 
   const period = getSelectedPeriod_(shDash);
   const trades = getFilteredTrades_(ss, period);
+  const dashboardData = buildDashboardData_(trades);
 
   // Renderização (Atualiza apenas valores e gráficos)
-  renderKpis_(shDash, trades);
+  renderKpis_(shDash, trades, dashboardData);
   ensureCharts_(shDash);
-  renderCharts_(shDash, trades);
+  renderCharts_(shDash, dashboardData);
   renderRightColumn_(shDash, trades);
 
   SpreadsheetApp.flush();
@@ -328,20 +329,20 @@ function setupCardHeader_(sh, row, title) {
 }
 
 /* ================= KPI RENDER ================= */
-function renderKpis_(sh, trades) {
+function renderKpis_(sh, trades, dashboardData) {
   const totalPnL = sum_(trades.map(t => t.pnl));
   const daysCount = countUnique_(trades.map(t => t.date.getTime()));
   const wins = trades.filter(t => t.pnl > 0).length;
   const winRate = trades.length ? Math.round((wins / trades.length) * 100) : 0;
 
-  const pos = sum_(trades.filter(t => t.pnl > 0).map(t => t.pnl));
-  const negAbs = sum_(trades.filter(t => t.pnl < 0).map(t => Math.abs(t.pnl)));
+  const efficiencyRows = (dashboardData && dashboardData.efficiency) ? dashboardData.efficiency : buildEfficiency_(trades);
+  const pos = Number((efficiencyRows[1] || [0, 0])[1]) || 0;
+  const negAbs = Number((efficiencyRows[2] || [0, 0])[1]) || 0;
   const efficiency = (pos + negAbs) > 0 ? Math.round((pos / (pos + negAbs)) * 100) : 0;
 
-  const daily = aggregateDaily_(trades);
-  const cumArr = [];
-  let cum = 0;
-  daily.forEach(d => { cum += d.pnl; cumArr.push(cum); });
+  const daily = (dashboardData && dashboardData.daily) ? dashboardData.daily : aggregateDaily_(trades);
+  const cumulativeRows = (dashboardData && dashboardData.cumulative) ? dashboardData.cumulative : buildCumulative_(daily);
+  const cumArr = cumulativeRows.slice(1).map(row => Number(row[1]) || 0);
   const maxDD = computeMaxDrawdown_(cumArr);
 
   const pnlMedio = trades.length ? (totalPnL / trades.length) : 0;
@@ -382,10 +383,10 @@ function computeMaxDrawdown_(cumArr){
 }
 
 /* ================= CHARTS ================= */
-function renderCharts_(sh, trades) {
-  const daily = aggregateDaily_(trades);
-  const curve = daily.length ? buildCumulative_(daily) : [["Data", "PnL"]];
-  const eff   = buildEfficiency_(trades);
+function renderCharts_(sh, dashboardData) {
+  const daily = (dashboardData && dashboardData.daily) ? dashboardData.daily : [];
+  const curve = (dashboardData && dashboardData.cumulative) ? dashboardData.cumulative : [["Data", "PnL"]];
+  const eff   = (dashboardData && dashboardData.efficiency) ? dashboardData.efficiency : [["Tipo", "Valor"]];
   const bars  = daily.length ? buildBars_(daily) : [["Data", "PnL"]];
 
   const curveRange = sh.getRange(CHART_DATA_START_ROW, 1, CHART_CURVE_ROWS, 2);
@@ -399,6 +400,13 @@ function renderCharts_(sh, trades) {
   curveRange.setValues(padTable_(curve, CHART_CURVE_ROWS, 2));
   effRange.setValues(padTable_(eff, CHART_EFF_ROWS, 2));
   barsRange.setValues(padTable_(bars, CHART_BARS_ROWS, 2));
+}
+
+function buildDashboardData_(trades) {
+  const daily = aggregateDaily_(trades);
+  const cumulative = daily.length ? buildCumulative_(daily) : [["Data", "PnL"]];
+  const efficiency = buildEfficiency_(trades);
+  return { daily, cumulative, efficiency };
 }
 
 function aggregateDaily_(trades) {
