@@ -507,7 +507,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 		{
 			PlotVWAP1U[0] = upper[0];
 			PlotVWAP1L[0] = lower[0];
-			if (!EnableVisuals) return;
 			Draw.Region(this, "dev1", CurrentBar, 0, PlotVWAP1U, PlotVWAP1L, null, SD1AreaBrush, SD1AreaOpacity);
 		}
 
@@ -516,7 +515,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotDevOne();
 			PlotVWAP2U[0] = upper[1];
 			PlotVWAP2L[0] = lower[1];
-			if (!EnableVisuals) return;
 			Draw.Region(this, "dev2", CurrentBar, 0, PlotVWAP1U, PlotVWAP2U, null, SD2AreaBrush, SD2AreaOpacity);
 			Draw.Region(this, "dev3", CurrentBar, 0, PlotVWAP1L, PlotVWAP2L, null, SD2AreaBrush, SD2AreaOpacity);
 		}
@@ -526,7 +524,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotDevTwo();
 			PlotVWAP3U[0] = upper[2];
 			PlotVWAP3L[0] = lower[2];
-			if (!EnableVisuals) return;
 			Draw.Region(this, "dev4", CurrentBar, 0, PlotVWAP2U, PlotVWAP3U, null, SD3AreaBrush, SD3AreaOpacity);
 			Draw.Region(this, "dev5", CurrentBar, 0, PlotVWAP2L, PlotVWAP3L, null, SD3AreaBrush, SD3AreaOpacity);
 		}
@@ -536,7 +533,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotDevThree();
 			PlotVWAP4U[0] = upper[3];
 			PlotVWAP4L[0] = lower[3];
-			if (!EnableVisuals) return;
 			Draw.Region(this, "dev6", CurrentBar, 0, PlotVWAP3U, PlotVWAP4U, null, SD4AreaBrush, SD4AreaOpacity);
 			Draw.Region(this, "dev7", CurrentBar, 0, PlotVWAP3L, PlotVWAP4L, null, SD4AreaBrush, SD4AreaOpacity);
 		}
@@ -546,7 +542,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotDevFour();
 			PlotVWAP5U[0] = upper[4];
 			PlotVWAP5L[0] = lower[4];
-			if (!EnableVisuals) return;
 			Draw.Region(this, "dev8", CurrentBar, 0, PlotVWAP4U, PlotVWAP5U, null, SD5AreaBrush, SD5AreaOpacity);
 			Draw.Region(this, "dev9", CurrentBar, 0, PlotVWAP4L, PlotVWAP5L, null, SD5AreaBrush, SD5AreaOpacity);
 		}
