@@ -25,6 +25,12 @@ const TRADES_COLUMNS = 4; // Date, PnL, Contracts, Asset
 // Lista padrão de ativos (dropdown)
 const DEFAULT_ASSETS = ["MNQ", "NQ", "MES", "ES"];
 
+// Área fixa de dados auxiliares para gráficos
+const CHART_DATA_START_ROW = 300;
+const CHART_CURVE_ROWS = 200;
+const CHART_BARS_ROWS = 200;
+const CHART_EFF_ROWS = 3;
+
 const THEME = {
   bg: "#121212",
   panel: "#1E1E1E",
@@ -79,6 +85,7 @@ function setupDashflix(opts) {
 
   // Layout do dashboard (Pesado - só roda no Setup)
   ensureDashboardLayout_(shDash);
+  ensureCharts_(shDash);
 
   // Mantém Trades formatado (tema + validações em TODA a planilha)
   formatTradesSheet_(shTrades);
@@ -104,6 +111,7 @@ function updateDashboard() {
 
   // Renderização (Atualiza apenas valores e gráficos)
   renderKpis_(shDash, trades);
+  ensureCharts_(shDash);
   renderCharts_(shDash, trades);
   renderRightColumn_(shDash, trades);
 
@@ -372,78 +380,22 @@ function computeMaxDrawdown_(cumArr){
 
 /* ================= CHARTS ================= */
 function renderCharts_(sh, trades) {
-  sh.getCharts().forEach(c => sh.removeChart(c));
-
   const daily = aggregateDaily_(trades);
-  
-  // Se não houver dados, para aqui para não criar gráficos vazios
-  if (!daily.length) return;
-
-  const curve = buildCumulative_(daily);
+  const curve = daily.length ? buildCumulative_(daily) : [["Data", "PnL"]];
   const eff   = buildEfficiency_(trades);
-  const bars  = buildBars_(daily);
+  const bars  = daily.length ? buildBars_(daily) : [["Data", "PnL"]];
 
-  // Área de dados oculta (Longe da visão)
-  const DATA_ROW = Math.max(sh.getMaxRows(), 300) + 10;
-  // Garante que existe espaço
-  if (sh.getMaxRows() < DATA_ROW + 100) {
-    sh.insertRowsAfter(sh.getMaxRows(), 200);
-  }
+  const curveRange = sh.getRange(CHART_DATA_START_ROW, 1, CHART_CURVE_ROWS, 2);
+  const effRange   = sh.getRange(CHART_DATA_START_ROW, 4, CHART_EFF_ROWS, 2);
+  const barsRange  = sh.getRange(CHART_DATA_START_ROW, 7, CHART_BARS_ROWS, 2);
 
-  // Limpa área de dados auxiliares antiga
-  sh.getRange(DATA_ROW, 1, 100, 10).clearContent();
+  curveRange.clearContent();
+  effRange.clearContent();
+  barsRange.clearContent();
 
-  // Escreve dados auxiliares
-  if(curve.length) sh.getRange(DATA_ROW, 1, curve.length, 2).setValues(curve);
-  if(eff.length)   sh.getRange(DATA_ROW, 4, eff.length, 2).setValues(eff);
-  if(bars.length)  sh.getRange(DATA_ROW, 7, bars.length, 2).setValues(bars);
-
-  // Formata datas na área oculta (opcional, mas bom pra debug)
-  sh.getRange(DATA_ROW+1, 1, Math.max(1, curve.length-1), 1).setNumberFormat("dd/MM/yyyy");
-  sh.getRange(DATA_ROW+1, 7, Math.max(1, bars.length-1), 1).setNumberFormat("dd/MM/yyyy");
-
-  const chartWidth  = 900;
-  const chartHeight = 290;
-  const commonOpts = {
-    backgroundColor: { fill: THEME.bg },
-    hAxis: { textStyle: { color: THEME.text }, gridlines: { color: THEME.grid } },
-    vAxis: { textStyle: { color: THEME.text }, gridlines: { color: THEME.grid } },
-    legend: { position: "none" },
-    width: chartWidth,
-    height: chartHeight
-  };
-
-  // 1. Linha (Cumulative)
-  const c1 = sh.newChart().setChartType(Charts.ChartType.LINE)
-    .addRange(sh.getRange(DATA_ROW, 1, curve.length, 2))
-    .setPosition(8, 1, 0, 0)
-    .setOption("colors", [THEME.bronze]);
-  
-  // Aplica opções comuns manualmente pois setOption retorna builder
-  for (let k in commonOpts) c1.setOption(k, commonOpts[k]);
-  sh.insertChart(c1.build());
-
-  // 2. Pizza (Eficiência)
-  const c2 = sh.newChart().setChartType(Charts.ChartType.PIE)
-    .addRange(sh.getRange(DATA_ROW, 4, eff.length, 2))
-    .setPosition(21, 1, 0, 0)
-    .setOption("pieHole", 0.5)
-    .setOption("colors", [THEME.bronze, "#555555"])
-    .setOption("legend", { position: "right", textStyle: { color: THEME.text } })
-    .setOption("pieSliceText", "percentage")
-    .setOption("backgroundColor.fill", THEME.bg)
-    .setOption("width", chartWidth)
-    .setOption("height", chartHeight)
-    .build();
-  sh.insertChart(c2);
-
-  // 3. Coluna (Diário)
-  const c3 = sh.newChart().setChartType(Charts.ChartType.COLUMN)
-    .addRange(sh.getRange(DATA_ROW, 7, bars.length, 2))
-    .setPosition(34, 1, 0, 0)
-    .setOption("colors", [THEME.bronze]);
-  for (let k in commonOpts) c3.setOption(k, commonOpts[k]);
-  sh.insertChart(c3.build());
+  curveRange.setValues(padTable_(curve, CHART_CURVE_ROWS, 2));
+  effRange.setValues(padTable_(eff, CHART_EFF_ROWS, 2));
+  barsRange.setValues(padTable_(bars, CHART_BARS_ROWS, 2));
 }
 
 function aggregateDaily_(trades) {
@@ -477,6 +429,78 @@ function buildEfficiency_(trades) {
   const pos = sum_(trades.filter(t => t.pnl > 0).map(t => t.pnl));
   const neg = sum_(trades.filter(t => t.pnl < 0).map(t => Math.abs(t.pnl)));
   return [ ["Tipo", "Valor"], ["Positivo", pos], ["Negativo", neg] ];
+}
+
+function ensureCharts_(sh) {
+  ensureChartDataRange_(sh);
+
+  const charts = sh.getCharts();
+  if (charts.length >= 3) return;
+
+  const chartWidth  = 900;
+  const chartHeight = 290;
+  const commonOpts = {
+    backgroundColor: { fill: THEME.bg },
+    hAxis: { textStyle: { color: THEME.text }, gridlines: { color: THEME.grid } },
+    vAxis: { textStyle: { color: THEME.text }, gridlines: { color: THEME.grid } },
+    legend: { position: "none" },
+    width: chartWidth,
+    height: chartHeight
+  };
+
+  const curveRange = sh.getRange(CHART_DATA_START_ROW, 1, CHART_CURVE_ROWS, 2);
+  const effRange   = sh.getRange(CHART_DATA_START_ROW, 4, CHART_EFF_ROWS, 2);
+  const barsRange  = sh.getRange(CHART_DATA_START_ROW, 7, CHART_BARS_ROWS, 2);
+
+  const c1 = sh.newChart().setChartType(Charts.ChartType.LINE)
+    .addRange(curveRange)
+    .setPosition(8, 1, 0, 0)
+    .setOption("colors", [THEME.bronze]);
+  for (let k in commonOpts) c1.setOption(k, commonOpts[k]);
+  sh.insertChart(c1.build());
+
+  const c2 = sh.newChart().setChartType(Charts.ChartType.PIE)
+    .addRange(effRange)
+    .setPosition(21, 1, 0, 0)
+    .setOption("pieHole", 0.5)
+    .setOption("colors", [THEME.bronze, "#555555"])
+    .setOption("legend", { position: "right", textStyle: { color: THEME.text } })
+    .setOption("pieSliceText", "percentage")
+    .setOption("backgroundColor.fill", THEME.bg)
+    .setOption("width", chartWidth)
+    .setOption("height", chartHeight)
+    .build();
+  sh.insertChart(c2);
+
+  const c3 = sh.newChart().setChartType(Charts.ChartType.COLUMN)
+    .addRange(barsRange)
+    .setPosition(34, 1, 0, 0)
+    .setOption("colors", [THEME.bronze]);
+  for (let k in commonOpts) c3.setOption(k, commonOpts[k]);
+  sh.insertChart(c3.build());
+}
+
+function ensureChartDataRange_(sh) {
+  const requiredLastRow = CHART_DATA_START_ROW + Math.max(CHART_CURVE_ROWS, CHART_BARS_ROWS, CHART_EFF_ROWS);
+  if (sh.getMaxRows() < requiredLastRow) {
+    sh.insertRowsAfter(sh.getMaxRows(), requiredLastRow - sh.getMaxRows());
+  }
+
+  sh.getRange(CHART_DATA_START_ROW + 1, 1, CHART_CURVE_ROWS - 1, 1).setNumberFormat("dd/MM/yyyy");
+  sh.getRange(CHART_DATA_START_ROW + 1, 7, CHART_BARS_ROWS - 1, 1).setNumberFormat("dd/MM/yyyy");
+}
+
+function padTable_(rows, targetRows, targetCols) {
+  const out = [];
+  for (let r = 0; r < targetRows; r++) {
+    const source = rows[r] || [];
+    const row = [];
+    for (let c = 0; c < targetCols; c++) {
+      row.push(source[c] !== undefined ? source[c] : "");
+    }
+    out.push(row);
+  }
+  return out;
 }
 
 /* ================= RIGHT COLUMN (M:P) ================= */
