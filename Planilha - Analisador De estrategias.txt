@@ -268,7 +268,10 @@ function ensureDashboardLayout_(sh) {
     .setFontColor(THEME.bronze);
 
   const rule = SpreadsheetApp.newDataValidation()
-    .requireValueInList(["Diário","Semanal","Mensal","Anual","Geral"], true)
+    .requireValueInList(
+      ["Diário", "Semanal", "Mensal", "Anual", "Últimos 30 dias", "Últimos 12 meses", "Geral"],
+      true
+    )
     .setAllowInvalid(false)
     .build();
   periodBlock.setDataValidation(rule);
