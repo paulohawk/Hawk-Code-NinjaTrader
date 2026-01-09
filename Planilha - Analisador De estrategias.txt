@@ -80,6 +80,15 @@ function onEdit(e) {
       updateDashboard();
     }
   }
+
+  if (name === SHEET_TRADES) {
+    const r = e.range.getRow();
+    const c = e.range.getColumn();
+
+    if (r >= TRADES_DATA_START_ROW && c >= 1 && c <= TRADES_COLUMNS) {
+      updateDashboard();
+    }
+  }
 }
 
 /* ================= SETUP ================= */
