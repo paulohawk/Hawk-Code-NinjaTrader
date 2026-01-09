@@ -233,6 +233,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 		private D2D.GradientStopCollection _dxGradientStops;
 		private D2D.SolidColorBrush _dxHighlightBrush;
 		private bool _panelDxReady;
+		private bool _disableSharpDxPanel;
 
 		// Layout constants
 		private const float PanelMargin = 8f;
@@ -656,6 +657,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 		{
 			DisposeDx();
 			_panelDxReady = false;
+			_disableSharpDxPanel = false;
 
 			if (RenderTarget != null)
 			{
@@ -686,6 +688,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				{
 					DisposeDx();
 					_panelDxReady = false;
+					_disableSharpDxPanel = true;
 				}
 			}
 
@@ -697,6 +700,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 			base.OnRender(chartControl, chartScale);
 
 			if (!EnableVisuals)
+				return;
+
+			if (_disableSharpDxPanel)
 				return;
 
 			if (RenderTarget == null || !_panelDxReady || ChartPanel == null || string.IsNullOrEmpty(_infoText) ||
@@ -736,6 +742,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 			catch
 			{
 				_panelDxReady = false;
+				_disableSharpDxPanel = true;
 			}
 		}
 
