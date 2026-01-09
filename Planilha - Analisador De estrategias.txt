@@ -513,7 +513,7 @@ function ensureCharts_(sh) {
 
   const c2 = sh.newChart().setChartType(Charts.ChartType.PIE)
     .addRange(effRange)
-    .setPosition(21, 1, 0, 0)
+    .setPosition(24, 1, 0, 0)
     .setOption("pieHole", 0.5)
     .setOption("colors", [THEME.bronze, "#555555"])
     .setOption("legend", { position: "right", textStyle: { color: THEME.text } })
@@ -526,7 +526,7 @@ function ensureCharts_(sh) {
 
   const c3 = sh.newChart().setChartType(Charts.ChartType.COLUMN)
     .addRange(barsRange)
-    .setPosition(34, 1, 0, 0)
+    .setPosition(37, 1, 0, 0)
     .setOption("colors", [THEME.bronze]);
   for (let k in commonOpts) c3.setOption(k, commonOpts[k]);
   sh.insertChart(c3.build());
