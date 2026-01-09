@@ -573,6 +573,12 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 		private void UpdateInfoText()
 		{
+			if (!EnableVisuals || _disableSharpDxPanel)
+			{
+				_infoText = string.Empty;
+				return;
+			}
+
 			if (TickSize <= 0 || double.IsNaN(curVWAP) || double.IsNaN(deviation))
 			{
 				_infoText = string.Empty;
