@@ -548,6 +548,7 @@ function padTable_(rows, targetRows, targetCols) {
 function renderRightColumn_(sh, trades) {
   const startCol = 13; // M
   const startRow = 6;
+  const totalRow = 44;
 
   const props = PropertiesService.getDocumentProperties();
   const prevCount = parseInt(props.getProperty(RIGHT_COLUMN_ROWS_PROP) || "0", 10);
@@ -561,7 +562,10 @@ function renderRightColumn_(sh, trades) {
   }
 
   const sorted = trades.slice().sort((a,b)=>b.date - a.date);
-  const limit = getRightColumnLimit_(sh);
+  const listStartRow = startRow + 1;
+  const maxListRow = totalRow - 1;
+  const maxListLength = Math.max(0, maxListRow - listStartRow + 1);
+  const limit = Math.min(getRightColumnLimit_(sh), maxListLength);
   const limited = sorted.slice(0, limit);
 
   if (limited.length) {
@@ -572,17 +576,16 @@ function renderRightColumn_(sh, trades) {
       String(t.asset||"")
     ]));
 
-    sh.getRange(startRow + 1, startCol, rows.length, 4).setValues(rows);
+    sh.getRange(listStartRow, startCol, rows.length, 4).setValues(rows);
 
     // Formatação leve
-    sh.getRange(startRow + 1, startCol, rows.length, 1).setHorizontalAlignment("left");
-    sh.getRange(startRow + 1, startCol + 1, rows.length, 1).setNumberFormat("$#,##0.00").setHorizontalAlignment("right");
-    sh.getRange(startRow + 1, startCol + 2, rows.length, 2).setHorizontalAlignment("center");
+    sh.getRange(listStartRow, startCol, rows.length, 1).setHorizontalAlignment("left");
+    sh.getRange(listStartRow, startCol + 1, rows.length, 1).setNumberFormat("$#,##0.00").setHorizontalAlignment("right");
+    sh.getRange(listStartRow, startCol + 2, rows.length, 2).setHorizontalAlignment("center");
   }
 
   // TOTAL
   const total = sum_(trades.map(t => t.pnl));
-  const totalRow = startRow + 1 + limited.length + 1; // 1 linha de respiro
 
   // Garante que temos linhas suficientes
   if (totalRow + 2 > sh.getMaxRows()) {
@@ -607,7 +610,7 @@ function renderRightColumn_(sh, trades) {
     .setHorizontalAlignment("right")
     .setFontSize(14);
 
-  const renderedRows = limited.length + 3;
+  const renderedRows = totalRow - startRow + 1;
   props.setProperty(RIGHT_COLUMN_ROWS_PROP, String(renderedRows));
 }
 
