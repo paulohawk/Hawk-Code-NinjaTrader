@@ -343,10 +343,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 				signalShort       = new Series<int>(this);
 				touchedBandIndex  = new Series<int>(this);
 				touchedSide       = new Series<int>(this);
-				_logLevelInt      = ParseLogLevel(LogLevel);
-				_lastModeLabel    = string.Empty;
 				_sessionIterator  = new SessionIterator(Bars);
 				RefreshFrozenBrushCache();
+				_logLevelInt      = ParseLogLevel(LogLevel);
+				_lastModeLabel    = string.Empty;
 			}
 		}
 
