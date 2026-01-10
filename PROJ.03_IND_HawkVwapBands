@@ -586,6 +586,19 @@ namespace NinjaTrader.NinjaScript.Indicators
 				DrawRegionOnce($"VWAP_DEV5U_SESSION_{sessionTag}", startBarsAgo, PlotVWAP4U, PlotVWAP5U, SD5AreaBrush, SD5AreaOpacity);
 				DrawRegionOnce($"VWAP_DEV5L_SESSION_{sessionTag}", startBarsAgo, PlotVWAP4L, PlotVWAP5L, SD5AreaBrush, SD5AreaOpacity);
 			}
+			if (NumDeviations >= 5)
+			{
+				DrawRegionOnce($"VWAP_DEV5U_SESSION_{sessionTag}", startBarsAgo, PlotVWAP4U, PlotVWAP5U, SD5AreaBrush, SD5AreaOpacity);
+				DrawRegionOnce($"VWAP_DEV5L_SESSION_{sessionTag}", startBarsAgo, PlotVWAP4L, PlotVWAP5L, SD5AreaBrush, SD5AreaOpacity);
+			}
+		}
+
+		private void DrawRegionOnce(string tag, int startBarsAgo, ISeries<double> upperSeries, ISeries<double> lowerSeries, Brush areaBrush, int areaOpacity)
+		{
+			if (DrawObjects != null && DrawObjects.ContainsKey(tag))
+				return;
+
+			Draw.Region(this, tag, startBarsAgo, 0, upperSeries, lowerSeries, null, areaBrush, areaOpacity);
 		}
 
 		private void DrawRegionOnce(string tag, int startBarsAgo, ISeries<double> upperSeries, ISeries<double> lowerSeries, Brush areaBrush, int areaOpacity)
