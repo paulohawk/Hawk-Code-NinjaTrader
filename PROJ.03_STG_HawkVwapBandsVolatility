@@ -1941,6 +1941,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private readonly double[] lower = new double[5];
 
 		private Indicators.HawkVwapBands hvb;
+		private StochasticsFast _stoch;
 
 		private DateTime _lastHbUtc = DateTime.MinValue;
 
@@ -2077,6 +2078,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 						TouchMarginTicks,
 						false
 					);
+					_stoch = StochasticsFast(StochPeriodD, StochPeriodK);
 
 					chartToken = (ChartControl != null) ? RuntimeHelpers.GetHashCode(ChartControl).ToString("X") : "HEADLESS";
 					cacheKey = "";
