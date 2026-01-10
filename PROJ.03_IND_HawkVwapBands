@@ -223,7 +223,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 		// Hawk panel text
 		private string _infoText = string.Empty;
-		private int _sessionStartBar = -1;
 
 		// DX resources
 		private DW.Factory _dwriteFactory;
@@ -233,8 +232,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 		private D2D.LinearGradientBrush _dxGradientBrush;
 		private D2D.GradientStopCollection _dxGradientStops;
 		private D2D.SolidColorBrush _dxHighlightBrush;
-		private bool _panelDxReady;
-		private bool _disableSharpDxPanel;
 
 		// Layout constants
 		private const float PanelMargin = 8f;
@@ -309,7 +306,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 				_logLevelInt      = ParseLogLevel(LogLevel);
 				_lastModeLabel    = string.Empty;
 				_sessionIterator  = new SessionIterator(Bars);
-				_sessionStartBar  = -1;
 			}
 		}
 
@@ -355,7 +351,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 			if (Bars.IsFirstBarOfSession)
 			{
-				_sessionStartBar = CurrentBar;
 				iCumVolume        = VOL()[0];
 				iCumTypicalVolume = VOL()[0] * hl3;
 				v2Sum             = VOL()[0] * hl3 * hl3;
@@ -405,26 +400,18 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 			ComputeSignals();
 
-			string modeLabel = GetModeLabel();
-			bool modeChanged = !string.Equals(modeLabel, _lastModeLabel, StringComparison.Ordinal);
-			bool shouldUpdatePanel = Bars.IsFirstBarOfSession || modeChanged || signalLong[0] == 1 || signalShort[0] == 1 || string.IsNullOrEmpty(_infoText);
-			if (shouldUpdatePanel)
+			if (EnableVisuals)
+			{
 				UpdateInfoText();
-			PublishSnapshot();
+				PublishSnapshot();
+			}
 
-			if (modeChanged)
+			string modeLabel = GetModeLabel();
+			if (!string.Equals(modeLabel, _lastModeLabel, StringComparison.Ordinal))
 			{
 				_lastModeLabel = modeLabel;
 				if (ShouldLog(2))
 					Print(LogMsg("ModeChanged", $"mode={modeLabel}"));
-			}
-
-			if (Bars.IsLastBarOfSession)
-			{
-				DateTime tradingDay = Time[0].Date;
-				if (_sessionIterator != null)
-					tradingDay = _sessionIterator.GetTradingDay(Time[0]);
-				DrawSessionRegions(tradingDay);
 			}
 		}
 
@@ -520,6 +507,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 		{
 			PlotVWAP1U[0] = upper[0];
 			PlotVWAP1L[0] = lower[0];
+			if (!EnableVisuals) return;
+			Draw.Region(this, "dev1", CurrentBar, 0, PlotVWAP1U, PlotVWAP1L, null, SD1AreaBrush, SD1AreaOpacity);
 		}
 
 		void PlotDevTwo()
@@ -527,6 +516,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotDevOne();
 			PlotVWAP2U[0] = upper[1];
 			PlotVWAP2L[0] = lower[1];
+			if (!EnableVisuals) return;
+			Draw.Region(this, "dev2", CurrentBar, 0, PlotVWAP1U, PlotVWAP2U, null, SD2AreaBrush, SD2AreaOpacity);
+			Draw.Region(this, "dev3", CurrentBar, 0, PlotVWAP1L, PlotVWAP2L, null, SD2AreaBrush, SD2AreaOpacity);
 		}
 
 		void PlotDevThree()
@@ -534,6 +526,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotDevTwo();
 			PlotVWAP3U[0] = upper[2];
 			PlotVWAP3L[0] = lower[2];
+			if (!EnableVisuals) return;
+			Draw.Region(this, "dev4", CurrentBar, 0, PlotVWAP2U, PlotVWAP3U, null, SD3AreaBrush, SD3AreaOpacity);
+			Draw.Region(this, "dev5", CurrentBar, 0, PlotVWAP2L, PlotVWAP3L, null, SD3AreaBrush, SD3AreaOpacity);
 		}
 
 		void PlotDevFour()
@@ -541,6 +536,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotDevThree();
 			PlotVWAP4U[0] = upper[3];
 			PlotVWAP4L[0] = lower[3];
+			if (!EnableVisuals) return;
+			Draw.Region(this, "dev6", CurrentBar, 0, PlotVWAP3U, PlotVWAP4U, null, SD4AreaBrush, SD4AreaOpacity);
+			Draw.Region(this, "dev7", CurrentBar, 0, PlotVWAP3L, PlotVWAP4L, null, SD4AreaBrush, SD4AreaOpacity);
 		}
 
 		void PlotDevFive()
@@ -548,52 +546,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotDevFour();
 			PlotVWAP5U[0] = upper[4];
 			PlotVWAP5L[0] = lower[4];
-		}
-
-		private void DrawSessionRegions(DateTime tradingDay)
-		{
-			if (!EnableVisuals)
-				return;
-
-			if (_sessionStartBar < 0)
-				_sessionStartBar = CurrentBar;
-
-			int startBarsAgo = CurrentBar - _sessionStartBar;
-			if (startBarsAgo < 0)
-				startBarsAgo = 0;
-
-			string sessionTag = tradingDay.ToString("yyyyMMdd");
-
-			if (NumDeviations >= 1)
-				DrawRegionOnce($"VWAP_DEV1_SESSION_{sessionTag}", startBarsAgo, PlotVWAP1U, PlotVWAP1L, SD1AreaBrush, SD1AreaOpacity);
-			if (NumDeviations >= 2)
-			{
-				DrawRegionOnce($"VWAP_DEV2U_SESSION_{sessionTag}", startBarsAgo, PlotVWAP1U, PlotVWAP2U, SD2AreaBrush, SD2AreaOpacity);
-				DrawRegionOnce($"VWAP_DEV2L_SESSION_{sessionTag}", startBarsAgo, PlotVWAP1L, PlotVWAP2L, SD2AreaBrush, SD2AreaOpacity);
-			}
-			if (NumDeviations >= 3)
-			{
-				DrawRegionOnce($"VWAP_DEV3U_SESSION_{sessionTag}", startBarsAgo, PlotVWAP2U, PlotVWAP3U, SD3AreaBrush, SD3AreaOpacity);
-				DrawRegionOnce($"VWAP_DEV3L_SESSION_{sessionTag}", startBarsAgo, PlotVWAP2L, PlotVWAP3L, SD3AreaBrush, SD3AreaOpacity);
-			}
-			if (NumDeviations >= 4)
-			{
-				DrawRegionOnce($"VWAP_DEV4U_SESSION_{sessionTag}", startBarsAgo, PlotVWAP3U, PlotVWAP4U, SD4AreaBrush, SD4AreaOpacity);
-				DrawRegionOnce($"VWAP_DEV4L_SESSION_{sessionTag}", startBarsAgo, PlotVWAP3L, PlotVWAP4L, SD4AreaBrush, SD4AreaOpacity);
-			}
-			if (NumDeviations >= 5)
-			{
-				DrawRegionOnce($"VWAP_DEV5U_SESSION_{sessionTag}", startBarsAgo, PlotVWAP4U, PlotVWAP5U, SD5AreaBrush, SD5AreaOpacity);
-				DrawRegionOnce($"VWAP_DEV5L_SESSION_{sessionTag}", startBarsAgo, PlotVWAP4L, PlotVWAP5L, SD5AreaBrush, SD5AreaOpacity);
-			}
-		}
-
-		private void DrawRegionOnce(string tag, int startBarsAgo, ISeries<double> upperSeries, ISeries<double> lowerSeries, Brush areaBrush, int areaOpacity)
-		{
-			if (DrawObjects != null && DrawObjects.ContainsKey(tag))
-				return;
-
-			Draw.Region(this, tag, startBarsAgo, 0, upperSeries, lowerSeries, null, areaBrush, areaOpacity);
+			if (!EnableVisuals) return;
+			Draw.Region(this, "dev8", CurrentBar, 0, PlotVWAP4U, PlotVWAP5U, null, SD5AreaBrush, SD5AreaOpacity);
+			Draw.Region(this, "dev9", CurrentBar, 0, PlotVWAP4L, PlotVWAP5L, null, SD5AreaBrush, SD5AreaOpacity);
 		}
 
 		//*************************************************************************************
@@ -611,11 +566,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 		private void UpdateInfoText()
 		{
-			if (!EnableVisuals || _disableSharpDxPanel)
-			{
-				_infoText = string.Empty;
-				return;
-			}
+			if (!EnableVisuals) { _infoText = string.Empty; return; }
 
 			if (TickSize <= 0 || double.IsNaN(curVWAP) || double.IsNaN(deviation))
 			{
@@ -655,6 +606,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 		private void PublishSnapshot()
 		{
+			if (!EnableVisuals) return; // sem feed quando desabilitado
 			DateTime tradingDay = Time[0].Date;
 			if (_sessionIterator != null)
 				tradingDay = _sessionIterator.GetTradingDay(Time[0]);
@@ -700,40 +652,28 @@ namespace NinjaTrader.NinjaScript.Indicators
 		public override void OnRenderTargetChanged()
 		{
 			DisposeDx();
-			_panelDxReady = false;
-			_disableSharpDxPanel = false;
 
-			if (RenderTarget != null)
+			if (RenderTarget != null && EnableVisuals)
 			{
-				try
+				_dwriteFactory = new DW.Factory();
+				_textFormat = new DW.TextFormat(_dwriteFactory, PanelFont, PanelFontSize)
 				{
-					_dwriteFactory = new DW.Factory();
-					_textFormat = new DW.TextFormat(_dwriteFactory, PanelFont, PanelFontSize)
-					{
-						TextAlignment = DW.TextAlignment.Leading,
-						ParagraphAlignment = DW.ParagraphAlignment.Near
-					};
+					TextAlignment = DW.TextAlignment.Leading,
+					ParagraphAlignment = DW.ParagraphAlignment.Near
+				};
 
-					_dxBorderBrush   = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0xFF, 0xD4, 0xA0, 0x17)));
-					_dxTextBrush     = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0xE6, 0xCC, 0xCC, 0xCC)));
-					var stops = new[]
-					{
-						new D2D.GradientStop { Color = ToColor4(Media.Color.FromArgb(0xC0, 0x50, 0x50, 0x50)), Position = 0.0f },
-						new D2D.GradientStop { Color = ToColor4(Media.Color.FromArgb(0xB4, 0x28, 0x28, 0x28)), Position = 1.0f }
-					};
-					_dxGradientStops = new D2D.GradientStopCollection(RenderTarget, stops, D2D.Gamma.StandardRgb, D2D.ExtendMode.Clamp);
-					_dxGradientBrush = new D2D.LinearGradientBrush(RenderTarget,
-						new D2D.LinearGradientBrushProperties { StartPoint = new Vector2(0f, 0f), EndPoint = new Vector2(0f, 1f) },
-						_dxGradientStops);
-					_dxHighlightBrush = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)));
-					_panelDxReady = true;
-				}
-				catch
+				_dxBorderBrush   = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0xFF, 0xD4, 0xA0, 0x17)));
+				_dxTextBrush     = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0xE6, 0xCC, 0xCC, 0xCC)));
+				var stops = new[]
 				{
-					DisposeDx();
-					_panelDxReady = false;
-					_disableSharpDxPanel = true;
-				}
+					new D2D.GradientStop { Color = ToColor4(Media.Color.FromArgb(0xC0, 0x50, 0x50, 0x50)), Position = 0.0f },
+					new D2D.GradientStop { Color = ToColor4(Media.Color.FromArgb(0xB4, 0x28, 0x28, 0x28)), Position = 1.0f }
+				};
+				_dxGradientStops = new D2D.GradientStopCollection(RenderTarget, stops, D2D.Gamma.StandardRgb, D2D.ExtendMode.Clamp);
+				_dxGradientBrush = new D2D.LinearGradientBrush(RenderTarget,
+					new D2D.LinearGradientBrushProperties { StartPoint = new Vector2(0f, 0f), EndPoint = new Vector2(0f, 1f) },
+					_dxGradientStops);
+				_dxHighlightBrush = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)));
 			}
 
 			base.OnRenderTargetChanged();
@@ -746,47 +686,36 @@ namespace NinjaTrader.NinjaScript.Indicators
 			if (!EnableVisuals)
 				return;
 
-			if (_disableSharpDxPanel)
-				return;
-
-			if (RenderTarget == null || !_panelDxReady || ChartPanel == null || string.IsNullOrEmpty(_infoText) ||
+			if (RenderTarget == null || ChartPanel == null || string.IsNullOrEmpty(_infoText) ||
 			    _dwriteFactory == null || _textFormat == null || _dxGradientBrush == null ||
 			    _dxBorderBrush == null || _dxTextBrush == null || _dxHighlightBrush == null)
 				return;
 
-			try
+			using (var textLayout = new DW.TextLayout(_dwriteFactory, _infoText, _textFormat, float.MaxValue, float.MaxValue))
 			{
-				using (var textLayout = new DW.TextLayout(_dwriteFactory, _infoText, _textFormat, float.MaxValue, float.MaxValue))
+				float boxW = (float)textLayout.Metrics.Width + 2f * PanelPadding;
+				float boxH = (float)textLayout.Metrics.Height + 2f * PanelPadding;
+
+				float x = (float)Math.Floor(ChartPanel.X + PanelMargin) + 0.5f;
+				float y = (float)Math.Floor(ChartPanel.Y + ChartPanel.H - PanelLift - boxH) + 0.5f;
+
+				var rect = new D2D.RoundedRectangle
 				{
-					float boxW = (float)textLayout.Metrics.Width + 2f * PanelPadding;
-					float boxH = (float)textLayout.Metrics.Height + 2f * PanelPadding;
+					Rect = new RectangleF(x, y, boxW, boxH),
+					RadiusX = PanelCornerRadius,
+					RadiusY = PanelCornerRadius
+				};
 
-					float x = (float)Math.Floor(ChartPanel.X + PanelMargin) + 0.5f;
-					float y = (float)Math.Floor(ChartPanel.Y + ChartPanel.H - PanelLift - boxH) + 0.5f;
+				_dxGradientBrush.StartPoint = new Vector2(x, y);
+				_dxGradientBrush.EndPoint   = new Vector2(x, y + boxH);
 
-					var rect = new D2D.RoundedRectangle
-					{
-						Rect = new RectangleF(x, y, boxW, boxH),
-						RadiusX = PanelCornerRadius,
-						RadiusY = PanelCornerRadius
-					};
+				RenderTarget.FillRoundedRectangle(rect, _dxGradientBrush);
+				RenderTarget.DrawLine(new Vector2(x + PanelCornerRadius, y + 1f), new Vector2(x + boxW - PanelCornerRadius, y + 1f), _dxHighlightBrush, 1.0f);
+				RenderTarget.DrawRoundedRectangle(rect, _dxBorderBrush, 1.4f);
 
-					_dxGradientBrush.StartPoint = new Vector2(x, y);
-					_dxGradientBrush.EndPoint   = new Vector2(x, y + boxH);
-
-					RenderTarget.FillRoundedRectangle(rect, _dxGradientBrush);
-					RenderTarget.DrawLine(new Vector2(x + PanelCornerRadius, y + 1f), new Vector2(x + boxW - PanelCornerRadius, y + 1f), _dxHighlightBrush, 1.0f);
-					RenderTarget.DrawRoundedRectangle(rect, _dxBorderBrush, 1.4f);
-
-					float textX = x + PanelPadding;
-					float textY = y + PanelPadding;
-					RenderTarget.DrawTextLayout(new Vector2(textX, textY), textLayout, _dxTextBrush, D2D.DrawTextOptions.None);
-				}
-			}
-			catch
-			{
-				_panelDxReady = false;
-				_disableSharpDxPanel = true;
+				float textX = x + PanelPadding;
+				float textY = y + PanelPadding;
+				RenderTarget.DrawTextLayout(new Vector2(textX, textY), textLayout, _dxTextBrush, D2D.DrawTextOptions.None);
 			}
 		}
 
@@ -812,7 +741,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 				_dxHighlightBrush = null;
 				_textFormat = null;
 				_dwriteFactory = null;
-				_panelDxReady = false;
 			}
 		}
 
@@ -844,18 +772,18 @@ namespace NinjaTrader.NinjaScript.Indicators
 	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
 	{
 		private HawkVwapBands[] cacheHawkVwapBands;
-		public HawkVwapBands HawkVwapBands(int numDeviations, bool useFiboBands, bool useFixedBands, double fixed1Pct, double fixed2Pct, double fixed3Pct, double fixed4Pct, double fixed5Pct, bool enableVerboseLog, string logLevel, int feedStaleTimeoutSeconds, int touchMarginTicks)
+		public HawkVwapBands HawkVwapBands(int numDeviations, bool useFiboBands, bool useFixedBands, double fixed1Pct, double fixed2Pct, double fixed3Pct, double fixed4Pct, double fixed5Pct, bool enableVerboseLog, string logLevel, int feedStaleTimeoutSeconds, int touchMarginTicks, bool enableVisuals)
 		{
-			return HawkVwapBands(Input, numDeviations, useFiboBands, useFixedBands, fixed1Pct, fixed2Pct, fixed3Pct, fixed4Pct, fixed5Pct, enableVerboseLog, logLevel, feedStaleTimeoutSeconds, touchMarginTicks);
+			return HawkVwapBands(Input, numDeviations, useFiboBands, useFixedBands, fixed1Pct, fixed2Pct, fixed3Pct, fixed4Pct, fixed5Pct, enableVerboseLog, logLevel, feedStaleTimeoutSeconds, touchMarginTicks, enableVisuals);
 		}
 
-		public HawkVwapBands HawkVwapBands(ISeries<double> input, int numDeviations, bool useFiboBands, bool useFixedBands, double fixed1Pct, double fixed2Pct, double fixed3Pct, double fixed4Pct, double fixed5Pct, bool enableVerboseLog, string logLevel, int feedStaleTimeoutSeconds, int touchMarginTicks)
+		public HawkVwapBands HawkVwapBands(ISeries<double> input, int numDeviations, bool useFiboBands, bool useFixedBands, double fixed1Pct, double fixed2Pct, double fixed3Pct, double fixed4Pct, double fixed5Pct, bool enableVerboseLog, string logLevel, int feedStaleTimeoutSeconds, int touchMarginTicks, bool enableVisuals)
 		{
 			if (cacheHawkVwapBands != null)
 				for (int idx = 0; idx < cacheHawkVwapBands.Length; idx++)
-					if (cacheHawkVwapBands[idx] != null && cacheHawkVwapBands[idx].NumDeviations == numDeviations && cacheHawkVwapBands[idx].UseFiboBands == useFiboBands && cacheHawkVwapBands[idx].UseFixedBands == useFixedBands && cacheHawkVwapBands[idx].Fixed1Pct == fixed1Pct && cacheHawkVwapBands[idx].Fixed2Pct == fixed2Pct && cacheHawkVwapBands[idx].Fixed3Pct == fixed3Pct && cacheHawkVwapBands[idx].Fixed4Pct == fixed4Pct && cacheHawkVwapBands[idx].Fixed5Pct == fixed5Pct && cacheHawkVwapBands[idx].EnableVerboseLog == enableVerboseLog && cacheHawkVwapBands[idx].LogLevel == logLevel && cacheHawkVwapBands[idx].FeedStaleTimeoutSeconds == feedStaleTimeoutSeconds && cacheHawkVwapBands[idx].TouchMarginTicks == touchMarginTicks && cacheHawkVwapBands[idx].EqualsInput(input))
+					if (cacheHawkVwapBands[idx] != null && cacheHawkVwapBands[idx].NumDeviations == numDeviations && cacheHawkVwapBands[idx].UseFiboBands == useFiboBands && cacheHawkVwapBands[idx].UseFixedBands == useFixedBands && cacheHawkVwapBands[idx].Fixed1Pct == fixed1Pct && cacheHawkVwapBands[idx].Fixed2Pct == fixed2Pct && cacheHawkVwapBands[idx].Fixed3Pct == fixed3Pct && cacheHawkVwapBands[idx].Fixed4Pct == fixed4Pct && cacheHawkVwapBands[idx].Fixed5Pct == fixed5Pct && cacheHawkVwapBands[idx].EnableVerboseLog == enableVerboseLog && cacheHawkVwapBands[idx].LogLevel == logLevel && cacheHawkVwapBands[idx].FeedStaleTimeoutSeconds == feedStaleTimeoutSeconds && cacheHawkVwapBands[idx].TouchMarginTicks == touchMarginTicks && cacheHawkVwapBands[idx].EnableVisuals == enableVisuals && cacheHawkVwapBands[idx].EqualsInput(input))
 						return cacheHawkVwapBands[idx];
-			return CacheIndicator<HawkVwapBands>(new HawkVwapBands(){ NumDeviations = numDeviations, UseFiboBands = useFiboBands, UseFixedBands = useFixedBands, Fixed1Pct = fixed1Pct, Fixed2Pct = fixed2Pct, Fixed3Pct = fixed3Pct, Fixed4Pct = fixed4Pct, Fixed5Pct = fixed5Pct, EnableVerboseLog = enableVerboseLog, LogLevel = logLevel, FeedStaleTimeoutSeconds = feedStaleTimeoutSeconds, TouchMarginTicks = touchMarginTicks }, input, ref cacheHawkVwapBands);
+			return CacheIndicator<HawkVwapBands>(new HawkVwapBands(){ NumDeviations = numDeviations, UseFiboBands = useFiboBands, UseFixedBands = useFixedBands, Fixed1Pct = fixed1Pct, Fixed2Pct = fixed2Pct, Fixed3Pct = fixed3Pct, Fixed4Pct = fixed4Pct, Fixed5Pct = fixed5Pct, EnableVerboseLog = enableVerboseLog, LogLevel = logLevel, FeedStaleTimeoutSeconds = feedStaleTimeoutSeconds, TouchMarginTicks = touchMarginTicks, EnableVisuals = enableVisuals }, input, ref cacheHawkVwapBands);
 		}
 	}
 }
@@ -864,14 +792,14 @@ namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
 {
 	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
 	{
-		public Indicators.HawkVwapBands HawkVwapBands(int numDeviations, bool useFiboBands, bool useFixedBands, double fixed1Pct, double fixed2Pct, double fixed3Pct, double fixed4Pct, double fixed5Pct, bool enableVerboseLog, string logLevel, int feedStaleTimeoutSeconds, int touchMarginTicks)
+		public Indicators.HawkVwapBands HawkVwapBands(int numDeviations, bool useFiboBands, bool useFixedBands, double fixed1Pct, double fixed2Pct, double fixed3Pct, double fixed4Pct, double fixed5Pct, bool enableVerboseLog, string logLevel, int feedStaleTimeoutSeconds, int touchMarginTicks, bool enableVisuals)
 		{
-			return indicator.HawkVwapBands(Input, numDeviations, useFiboBands, useFixedBands, fixed1Pct, fixed2Pct, fixed3Pct, fixed4Pct, fixed5Pct, enableVerboseLog, logLevel, feedStaleTimeoutSeconds, touchMarginTicks);
+			return indicator.HawkVwapBands(Input, numDeviations, useFiboBands, useFixedBands, fixed1Pct, fixed2Pct, fixed3Pct, fixed4Pct, fixed5Pct, enableVerboseLog, logLevel, feedStaleTimeoutSeconds, touchMarginTicks, enableVisuals);
 		}
 
-		public Indicators.HawkVwapBands HawkVwapBands(ISeries<double> input , int numDeviations, bool useFiboBands, bool useFixedBands, double fixed1Pct, double fixed2Pct, double fixed3Pct, double fixed4Pct, double fixed5Pct, bool enableVerboseLog, string logLevel, int feedStaleTimeoutSeconds, int touchMarginTicks)
+		public Indicators.HawkVwapBands HawkVwapBands(ISeries<double> input , int numDeviations, bool useFiboBands, bool useFixedBands, double fixed1Pct, double fixed2Pct, double fixed3Pct, double fixed4Pct, double fixed5Pct, bool enableVerboseLog, string logLevel, int feedStaleTimeoutSeconds, int touchMarginTicks, bool enableVisuals)
 		{
-			return indicator.HawkVwapBands(input, numDeviations, useFiboBands, useFixedBands, fixed1Pct, fixed2Pct, fixed3Pct, fixed4Pct, fixed5Pct, enableVerboseLog, logLevel, feedStaleTimeoutSeconds, touchMarginTicks);
+			return indicator.HawkVwapBands(input, numDeviations, useFiboBands, useFixedBands, fixed1Pct, fixed2Pct, fixed3Pct, fixed4Pct, fixed5Pct, enableVerboseLog, logLevel, feedStaleTimeoutSeconds, touchMarginTicks, enableVisuals);
 		}
 	}
 }
@@ -880,14 +808,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
 	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
 	{
-		public Indicators.HawkVwapBands HawkVwapBands(int numDeviations, bool useFiboBands, bool useFixedBands, double fixed1Pct, double fixed2Pct, double fixed3Pct, double fixed4Pct, double fixed5Pct, bool enableVerboseLog, string logLevel, int feedStaleTimeoutSeconds, int touchMarginTicks)
+		public Indicators.HawkVwapBands HawkVwapBands(int numDeviations, bool useFiboBands, bool useFixedBands, double fixed1Pct, double fixed2Pct, double fixed3Pct, double fixed4Pct, double fixed5Pct, bool enableVerboseLog, string logLevel, int feedStaleTimeoutSeconds, int touchMarginTicks, bool enableVisuals)
 		{
-			return indicator.HawkVwapBands(Input, numDeviations, useFiboBands, useFixedBands, fixed1Pct, fixed2Pct, fixed3Pct, fixed4Pct, fixed5Pct, enableVerboseLog, logLevel, feedStaleTimeoutSeconds, touchMarginTicks);
+			return indicator.HawkVwapBands(Input, numDeviations, useFiboBands, useFixedBands, fixed1Pct, fixed2Pct, fixed3Pct, fixed4Pct, fixed5Pct, enableVerboseLog, logLevel, feedStaleTimeoutSeconds, touchMarginTicks, enableVisuals);
 		}
 
-		public Indicators.HawkVwapBands HawkVwapBands(ISeries<double> input , int numDeviations, bool useFiboBands, bool useFixedBands, double fixed1Pct, double fixed2Pct, double fixed3Pct, double fixed4Pct, double fixed5Pct, bool enableVerboseLog, string logLevel, int feedStaleTimeoutSeconds, int touchMarginTicks)
+		public Indicators.HawkVwapBands HawkVwapBands(ISeries<double> input , int numDeviations, bool useFiboBands, bool useFixedBands, double fixed1Pct, double fixed2Pct, double fixed3Pct, double fixed4Pct, double fixed5Pct, bool enableVerboseLog, string logLevel, int feedStaleTimeoutSeconds, int touchMarginTicks, bool enableVisuals)
 		{
-			return indicator.HawkVwapBands(input, numDeviations, useFiboBands, useFixedBands, fixed1Pct, fixed2Pct, fixed3Pct, fixed4Pct, fixed5Pct, enableVerboseLog, logLevel, feedStaleTimeoutSeconds, touchMarginTicks);
+			return indicator.HawkVwapBands(input, numDeviations, useFiboBands, useFixedBands, fixed1Pct, fixed2Pct, fixed3Pct, fixed4Pct, fixed5Pct, enableVerboseLog, logLevel, feedStaleTimeoutSeconds, touchMarginTicks, enableVisuals);
 		}
 	}
 }
