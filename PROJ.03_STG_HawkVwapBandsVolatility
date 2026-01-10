@@ -1711,6 +1711,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 	public class HawkVwapBandsVolatility : Strategy
 	{
+		public enum HawkLogLevel { Off, Error, Info, Debug, Trace }
+
 		#region Inputs (public)
 		[NinjaScriptProperty, Display(Name = "Start Time BRT (HH:mm[:ss])", GroupName = "Horas", Order = 1)]
 		public string StartTimeBrt { get; set; } = "10:00:00";
@@ -1801,8 +1803,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[NinjaScriptProperty, Display(Name = "Financial Stop (USD)", GroupName = "Stops", Order = 4)]
 		public double FinancialStopUsd { get; set; } = 500;
 
-		[NinjaScriptProperty, Display(Name = "Log Level (Off/Error/Info/Verbose)", GroupName = "Debug", Order = 1)]
-		public string LogLevel { get; set; } = "Info";
+		[NinjaScriptProperty]
+		[Display(Name = "Log Level", Order = 9001, GroupName = "Diagnostics")]
+		public HawkLogLevel LogLevel { get; set; } = HawkLogLevel.Info;
 
 		[NinjaScriptProperty, Display(Name = "Panel Title", GroupName = "Painel", Order = 1)]
 		public string PanelTitle { get; set; } = "HawkVwapBandsVolatility";
@@ -1862,8 +1865,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private int startHHmmss, stopHHmmss, flattenHHmmss;
 		private TimeSpan flattenSpan = new TimeSpan(17, 0, 0);
-		private int logLevelInt = 2;
-
 		private HVB_PanelHelper panelHelper;
 		private DateTime lastPanelPub = DateTime.MinValue;
 		private string cacheKey = "";
@@ -1982,7 +1983,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				}
 				else if (State == State.Configure)
 				{
-					logLevelInt = ParseLogLevel(LogLevel);
 					startHHmmss = ParseHms(StartTimeBrt);
 					stopHHmmss = ParseHms(StopNewTradesTimeBrt);
 					flattenHHmmss = ParseHms(FlattenTimeBrt);
@@ -2005,6 +2005,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				}
 				else if (State == State.DataLoaded)
 				{
+					Log(HawkLogLevel.Info, "DataLoaded", "state=entered");
 					hvb = HawkVwapBands(
 						Input,
 						NumDeviations,
@@ -2022,8 +2023,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 					cacheKey = "";
 					isAnalyzerMode = (ChartControl == null);
 				}
+				else if (State == State.Historical)
+				{
+					Log(HawkLogLevel.Info, "Historical", "state=entered");
+				}
 				else if (State == State.Realtime)
 				{
+					Log(HawkLogLevel.Info, "Realtime", "state=entered");
 					if (string.IsNullOrWhiteSpace(cacheKey))
 						cacheKey = GetCacheKey();
 
@@ -2088,6 +2094,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				{
 					if (terminatedHandled) return;
 					terminatedHandled = true;
+					Log(HawkLogLevel.Info, "Terminated", "state=entered");
 					PublishPanelOffSnapshot("Terminated");
 					try { HVB_PanelStateHub.Remove(cacheKey); } catch { }
 					try { StopFlattenTimer(); } catch { }
@@ -2135,24 +2142,36 @@ namespace NinjaTrader.NinjaScript.Strategies
 			try { dynamic self = this; self.ExitOnSessionCloseSeconds = 0; } catch { }
 		}
 
-		private int ParseLogLevel(string lvl)
+		private bool ShouldLog(HawkLogLevel level)
 		{
-			if (string.IsNullOrEmpty(lvl)) return 2;
-			switch (lvl.Trim().ToLowerInvariant())
-			{
-				case "off": return 0;
-				case "error": return 1;
-				case "verbose": return 3;
-				default: return 2;
-			}
+			if (LogLevel == HawkLogLevel.Off) return false;
+			return (int)level <= (int)LogLevel;
 		}
-		private bool ShouldLog(int level) => logLevelInt >= level;
-		private void LogMsg(string tag, string msg, int level = 2)
+
+		private void Log(HawkLogLevel level, string tag, string msg)
 		{
 			if (!ShouldLog(level)) return;
-			try { Print($"[HawkVwapBandsVolatility] {tag} | {Time[0]:yyyy-MM-dd HH:mm:ss} | {msg}"); }
-			catch { Print($"[HawkVwapBandsVolatility] {tag} | (no time) | {msg}"); }
+			string levelText = level.ToString().ToUpperInvariant();
+			string body = string.IsNullOrWhiteSpace(msg) ? "msg=" : msg;
+			try { Print($"[{Name}][{levelText}][{tag}] {body}"); }
+			catch { Print($"[{Name}][{levelText}][{tag}] {body}"); }
 			lastEvent = tag;
+		}
+
+		private HawkLogLevel MapLogLevel(int level)
+		{
+			switch (level)
+			{
+				case 1: return HawkLogLevel.Error;
+				case 2: return HawkLogLevel.Info;
+				case 3: return HawkLogLevel.Debug;
+				default: return HawkLogLevel.Trace;
+			}
+		}
+
+		private void LogMsg(string tag, string msg, int level = 2)
+		{
+			Log(MapLogLevel(level), tag, msg);
 		}
 
 		private int ParseHms(string s)
