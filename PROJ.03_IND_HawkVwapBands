@@ -552,13 +552,13 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotVWAP1L[0] = lower[0];
 			Draw.Region(
 				this,
-				"dev1_" + Time[0].Date.ToString("yyyyMMdd"),
+				"dev1",
 				CurrentBar,
 				0,
 				PlotVWAP1U,
 				PlotVWAP1L,
 				null,
-				GetFrozenOrTransparent(_sd1Frozen),
+				EnableVisuals ? GetFrozenOrTransparent(_sd1Frozen) : GetFrozenOrTransparent(null),
 				EnableVisuals ? SD1AreaOpacity : 0);
 		}
 
@@ -569,23 +569,23 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotVWAP2L[0] = lower[1];
 			Draw.Region(
 				this,
-				"dev2_" + Time[0].Date.ToString("yyyyMMdd"),
+				"dev2",
 				CurrentBar,
 				0,
 				PlotVWAP1U,
 				PlotVWAP2U,
 				null,
-				GetFrozenOrTransparent(_sd2Frozen),
+				EnableVisuals ? GetFrozenOrTransparent(_sd2Frozen) : GetFrozenOrTransparent(null),
 				EnableVisuals ? SD2AreaOpacity : 0);
 			Draw.Region(
 				this,
-				"dev3_" + Time[0].Date.ToString("yyyyMMdd"),
+				"dev3",
 				CurrentBar,
 				0,
 				PlotVWAP1L,
 				PlotVWAP2L,
 				null,
-				GetFrozenOrTransparent(_sd2Frozen),
+				EnableVisuals ? GetFrozenOrTransparent(_sd2Frozen) : GetFrozenOrTransparent(null),
 				EnableVisuals ? SD2AreaOpacity : 0);
 		}
 
@@ -596,23 +596,23 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotVWAP3L[0] = lower[2];
 			Draw.Region(
 				this,
-				"dev4_" + Time[0].Date.ToString("yyyyMMdd"),
+				"dev4",
 				CurrentBar,
 				0,
 				PlotVWAP2U,
 				PlotVWAP3U,
 				null,
-				GetFrozenOrTransparent(_sd3Frozen),
+				EnableVisuals ? GetFrozenOrTransparent(_sd3Frozen) : GetFrozenOrTransparent(null),
 				EnableVisuals ? SD3AreaOpacity : 0);
 			Draw.Region(
 				this,
-				"dev5_" + Time[0].Date.ToString("yyyyMMdd"),
+				"dev5",
 				CurrentBar,
 				0,
 				PlotVWAP2L,
 				PlotVWAP3L,
 				null,
-				GetFrozenOrTransparent(_sd3Frozen),
+				EnableVisuals ? GetFrozenOrTransparent(_sd3Frozen) : GetFrozenOrTransparent(null),
 				EnableVisuals ? SD3AreaOpacity : 0);
 		}
 
@@ -623,23 +623,23 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotVWAP4L[0] = lower[3];
 			Draw.Region(
 				this,
-				"dev6_" + Time[0].Date.ToString("yyyyMMdd"),
+				"dev6",
 				CurrentBar,
 				0,
 				PlotVWAP3U,
 				PlotVWAP4U,
 				null,
-				GetFrozenOrTransparent(_sd4Frozen),
+				EnableVisuals ? GetFrozenOrTransparent(_sd4Frozen) : GetFrozenOrTransparent(null),
 				EnableVisuals ? SD4AreaOpacity : 0);
 			Draw.Region(
 				this,
-				"dev7_" + Time[0].Date.ToString("yyyyMMdd"),
+				"dev7",
 				CurrentBar,
 				0,
 				PlotVWAP3L,
 				PlotVWAP4L,
 				null,
-				GetFrozenOrTransparent(_sd4Frozen),
+				EnableVisuals ? GetFrozenOrTransparent(_sd4Frozen) : GetFrozenOrTransparent(null),
 				EnableVisuals ? SD4AreaOpacity : 0);
 		}
 
@@ -650,23 +650,23 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotVWAP5L[0] = lower[4];
 			Draw.Region(
 				this,
-				"dev8_" + Time[0].Date.ToString("yyyyMMdd"),
+				"dev8",
 				CurrentBar,
 				0,
 				PlotVWAP4U,
 				PlotVWAP5U,
 				null,
-				GetFrozenOrTransparent(_sd5Frozen),
+				EnableVisuals ? GetFrozenOrTransparent(_sd5Frozen) : GetFrozenOrTransparent(null),
 				EnableVisuals ? SD5AreaOpacity : 0);
 			Draw.Region(
 				this,
-				"dev9_" + Time[0].Date.ToString("yyyyMMdd"),
+				"dev9",
 				CurrentBar,
 				0,
 				PlotVWAP4L,
 				PlotVWAP5L,
 				null,
-				GetFrozenOrTransparent(_sd5Frozen),
+				EnableVisuals ? GetFrozenOrTransparent(_sd5Frozen) : GetFrozenOrTransparent(null),
 				EnableVisuals ? SD5AreaOpacity : 0);
 		}
 
