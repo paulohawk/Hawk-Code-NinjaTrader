@@ -223,6 +223,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 		// Hawk panel text
 		private string _infoText = string.Empty;
+		private bool _regionsDisabled = false;
+		private int _sessionStartBar = -1;
+		private string _sessionTag = string.Empty;
 
 		// DX resources
 		private DW.Factory _dwriteFactory;
@@ -354,6 +357,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 				iCumVolume        = VOL()[0];
 				iCumTypicalVolume = VOL()[0] * hl3;
 				v2Sum             = VOL()[0] * hl3 * hl3;
+				_sessionStartBar  = CurrentBar;
+				_sessionTag       = Time[0].Date.ToString("yyyyMMdd");
 
 				if (ShouldLog(2))
 					Print(LogMsg("SessionReset", $"vol={iCumVolume:0} vwap_reset"));
@@ -508,7 +513,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotVWAP1U[0] = upper[0];
 			PlotVWAP1L[0] = lower[0];
 			if (!EnableVisuals) return;
-			Draw.Region(this, "dev1", CurrentBar, 0, PlotVWAP1U, PlotVWAP1L, null, SD1AreaBrush, SD1AreaOpacity);
+			TryDrawRegion(1, "CORE", PlotVWAP1U, PlotVWAP1L, null, SD1AreaBrush, SD1AreaOpacity);
 		}
 
 		void PlotDevTwo()
@@ -517,8 +522,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotVWAP2U[0] = upper[1];
 			PlotVWAP2L[0] = lower[1];
 			if (!EnableVisuals) return;
-			Draw.Region(this, "dev2", CurrentBar, 0, PlotVWAP1U, PlotVWAP2U, null, SD2AreaBrush, SD2AreaOpacity);
-			Draw.Region(this, "dev3", CurrentBar, 0, PlotVWAP1L, PlotVWAP2L, null, SD2AreaBrush, SD2AreaOpacity);
+			TryDrawRegion(2, "UPPER", PlotVWAP1U, PlotVWAP2U, null, SD2AreaBrush, SD2AreaOpacity);
+			TryDrawRegion(2, "LOWER", PlotVWAP1L, PlotVWAP2L, null, SD2AreaBrush, SD2AreaOpacity);
 		}
 
 		void PlotDevThree()
@@ -527,8 +532,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotVWAP3U[0] = upper[2];
 			PlotVWAP3L[0] = lower[2];
 			if (!EnableVisuals) return;
-			Draw.Region(this, "dev4", CurrentBar, 0, PlotVWAP2U, PlotVWAP3U, null, SD3AreaBrush, SD3AreaOpacity);
-			Draw.Region(this, "dev5", CurrentBar, 0, PlotVWAP2L, PlotVWAP3L, null, SD3AreaBrush, SD3AreaOpacity);
+			TryDrawRegion(3, "UPPER", PlotVWAP2U, PlotVWAP3U, null, SD3AreaBrush, SD3AreaOpacity);
+			TryDrawRegion(3, "LOWER", PlotVWAP2L, PlotVWAP3L, null, SD3AreaBrush, SD3AreaOpacity);
 		}
 
 		void PlotDevFour()
@@ -537,8 +542,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotVWAP4U[0] = upper[3];
 			PlotVWAP4L[0] = lower[3];
 			if (!EnableVisuals) return;
-			Draw.Region(this, "dev6", CurrentBar, 0, PlotVWAP3U, PlotVWAP4U, null, SD4AreaBrush, SD4AreaOpacity);
-			Draw.Region(this, "dev7", CurrentBar, 0, PlotVWAP3L, PlotVWAP4L, null, SD4AreaBrush, SD4AreaOpacity);
+			TryDrawRegion(4, "UPPER", PlotVWAP3U, PlotVWAP4U, null, SD4AreaBrush, SD4AreaOpacity);
+			TryDrawRegion(4, "LOWER", PlotVWAP3L, PlotVWAP4L, null, SD4AreaBrush, SD4AreaOpacity);
 		}
 
 		void PlotDevFive()
@@ -547,8 +552,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotVWAP5U[0] = upper[4];
 			PlotVWAP5L[0] = lower[4];
 			if (!EnableVisuals) return;
-			Draw.Region(this, "dev8", CurrentBar, 0, PlotVWAP4U, PlotVWAP5U, null, SD5AreaBrush, SD5AreaOpacity);
-			Draw.Region(this, "dev9", CurrentBar, 0, PlotVWAP4L, PlotVWAP5L, null, SD5AreaBrush, SD5AreaOpacity);
+			TryDrawRegion(5, "UPPER", PlotVWAP4U, PlotVWAP5U, null, SD5AreaBrush, SD5AreaOpacity);
+			TryDrawRegion(5, "LOWER", PlotVWAP4L, PlotVWAP5L, null, SD5AreaBrush, SD5AreaOpacity);
 		}
 
 		//*************************************************************************************
@@ -602,6 +607,44 @@ namespace NinjaTrader.NinjaScript.Indicators
 			string line5 = $"Obs: {obsText}";
 
 			_infoText = $"{line1}\n{line2}\n{line3}\n{line4}\n{line5}";
+		}
+
+		private string GetSessionTag()
+		{
+			if (string.IsNullOrEmpty(_sessionTag))
+				_sessionTag = Time[0].Date.ToString("yyyyMMdd");
+			return _sessionTag;
+		}
+
+		private string GetRegionTag(int devIndex, string side)
+		{
+			return $"VWAP_DEV{devIndex}_{side}_SESSION_{GetSessionTag()}";
+		}
+
+		private void TryDrawRegion(int devIndex, string side, ISeries<double> series1, ISeries<double> series2, Brush outlineBrush, Brush areaBrush, int areaOpacity)
+		{
+			if (!EnableVisuals || _regionsDisabled)
+				return;
+
+			if (series1 == null || series2 == null)
+				return;
+
+			if (_sessionStartBar < 0)
+				_sessionStartBar = CurrentBar;
+
+			int startBarsAgo = Math.Max(0, CurrentBar - _sessionStartBar);
+			string tag = GetRegionTag(devIndex, side);
+
+			try
+			{
+				Draw.Region(this, tag, startBarsAgo, 0, series1, series2, outlineBrush, areaBrush, areaOpacity);
+			}
+			catch (Exception ex)
+			{
+				_regionsDisabled = true;
+				if (ShouldLog(1))
+					Print(LogMsg("RenderError", $"Draw.Region failed tag={tag} err={ex.Message}"));
+			}
 		}
 
 		private void PublishSnapshot()
