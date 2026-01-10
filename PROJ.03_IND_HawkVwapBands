@@ -12,7 +12,6 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Markup;            // XamlWriter/XamlReader
 using System.Xml.Serialization;
 using NinjaTrader.Cbi;
 using NinjaTrader.Gui;
@@ -72,10 +71,19 @@ namespace NinjaTrader.NinjaScript.Indicators
 			if (_snapshots.TryGetValue(instrument, out snap))
 			{
 				int t = snap?.FeedStaleTimeoutSeconds ?? 0;
-				if (t > 0 && (DateTime.UtcNow - snap.UtcTime).TotalSeconds > t)
+				if (t > 0)
 				{
-					snap = null;
-					return false;
+					var age = DateTime.UtcNow - snap.UtcTime;
+
+					// Replay/Historical: se estiver muito longe do relógio real, não considera stale
+					if (Math.Abs(age.TotalDays) < 1.0)
+					{
+						if (age.TotalSeconds > t)
+						{
+							snap = null;
+							return false;
+						}
+					}
 				}
 				return true;
 			}
@@ -86,14 +94,49 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 	public class HawkVwapBands : Indicator
 	{
-		// Local helpers for serialization (XAML-based, no Serialize dependency)
+		// Local helpers for serialization (ARGB, sem XAML/WPF)
 		private static string BrushToString(Brush b)
 		{
-			try { return b == null ? null : XamlWriter.Save(b); } catch { return null; }
+			try
+			{
+				if (b == null) return null;
+
+				if (b is SolidColorBrush scb)
+				{
+					var c = scb.Color;
+					return $"#{c.A:X2}{c.R:X2}{c.G:X2}{c.B:X2}";
+				}
+
+				return null;
+			}
+			catch
+			{
+				return null;
+			}
 		}
+
 		private static Brush StringToBrush(string s)
 		{
-			try { return string.IsNullOrEmpty(s) ? null : (Brush)XamlReader.Parse(s); } catch { return null; }
+			try
+			{
+				if (string.IsNullOrWhiteSpace(s)) return null;
+				s = s.Trim();
+				if (!s.StartsWith("#") || s.Length != 9) return null;
+
+				byte a = byte.Parse(s.Substring(1, 2), System.Globalization.NumberStyles.HexNumber);
+				byte r = byte.Parse(s.Substring(3, 2), System.Globalization.NumberStyles.HexNumber);
+				byte g = byte.Parse(s.Substring(5, 2), System.Globalization.NumberStyles.HexNumber);
+				byte b = byte.Parse(s.Substring(7, 2), System.Globalization.NumberStyles.HexNumber);
+
+				// Use Media.Color to avoid ambiguity with SharpDX.Color
+				var brush = new SolidColorBrush(Media.Color.FromArgb(a, r, g, b));
+				if (brush.CanFreeze) brush.Freeze();
+				return brush;
+			}
+			catch
+			{
+				return null;
+			}
 		}
 
 		// Inputs
@@ -215,14 +258,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 		private readonly double[] upper = new double[5];
 		private readonly double[] lower = new double[5];
 
-		// Frozen brushes (data thread safe)
-		private Brush _sd1Frozen;
-		private Brush _sd2Frozen;
-		private Brush _sd3Frozen;
-		private Brush _sd4Frozen;
-		private Brush _sd5Frozen;
-		private Brush _transparentFrozen;
-
 		// Signals
 		private Series<int> signalLong;
 		private Series<int> signalShort;
@@ -262,38 +297,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 		public bool EnableVisuals { get; set; } = true;
 
 		private static Color4 ToColor4(Media.Color c) => new Color4(c.ScR, c.ScG, c.ScB, c.ScA);
-
-		private Brush FreezeForDataThread(Brush b)
-		{
-			if (b == null)
-				return null;
-
-			if (b.IsFrozen)
-				return b;
-
-			Brush clone = b.Clone();
-			if (clone.CanFreeze)
-				clone.Freeze();
-			return clone;
-		}
-
-		private void RefreshFrozenBrushCache()
-		{
-			_sd1Frozen = FreezeForDataThread(SD1AreaBrush);
-			_sd2Frozen = FreezeForDataThread(SD2AreaBrush);
-			_sd3Frozen = FreezeForDataThread(SD3AreaBrush);
-			_sd4Frozen = FreezeForDataThread(SD4AreaBrush);
-			_sd5Frozen = FreezeForDataThread(SD5AreaBrush);
-			_transparentFrozen = FreezeForDataThread(Brushes.Transparent);
-		}
-
-		private Brush GetFrozenOrTransparent(Brush frozenCandidate)
-		{
-			if (!EnableVisuals)
-				return _transparentFrozen ?? Brushes.Transparent;
-
-			return frozenCandidate ?? _transparentFrozen ?? Brushes.Transparent;
-		}
 
 		protected override void OnStateChange()
 		{
@@ -343,10 +346,13 @@ namespace NinjaTrader.NinjaScript.Indicators
 				signalShort       = new Series<int>(this);
 				touchedBandIndex  = new Series<int>(this);
 				touchedSide       = new Series<int>(this);
-				_sessionIterator  = new SessionIterator(Bars);
-				RefreshFrozenBrushCache();
 				_logLevelInt      = ParseLogLevel(LogLevel);
 				_lastModeLabel    = string.Empty;
+				_sessionIterator  = new SessionIterator(Bars);
+
+				// Auto-desabilita visuals se não há ChartControl (replay/analyzer/headless)
+				if (ChartControl == null)
+					EnableVisuals = false;
 			}
 		}
 
@@ -366,6 +372,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 		protected override void OnBarUpdate()
 		{
+			// Auto-desliga visuals se não há chart (headless / analyzer / playback sem chart)
+			if (ChartControl == null)
+				EnableVisuals = false;
+
 			// atualizar log level se mudou
 			int parsed = ParseLogLevel(LogLevel);
 			if (parsed != _logLevelInt)
@@ -387,8 +397,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 			if (Bars == null || CurrentBar < 0 || TickSize <= 0)
 				return;
-
-			RefreshFrozenBrushCache();
 
 			hl3 = (High[0] + Low[0] + Close[0]) / 3.0;
 
@@ -443,10 +451,16 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 			ComputeSignals();
 
+			// Publish snapshot SEM depender de EnableVisuals (dados precisam fluir mesmo headless)
+			PublishSnapshot();
+
 			if (EnableVisuals)
 			{
 				UpdateInfoText();
-				PublishSnapshot();
+			}
+			else
+			{
+				_infoText = string.Empty;
 			}
 
 			string modeLabel = GetModeLabel();
@@ -550,16 +564,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 		{
 			PlotVWAP1U[0] = upper[0];
 			PlotVWAP1L[0] = lower[0];
-			Draw.Region(
-				this,
-				"dev1",
-				CurrentBar,
-				0,
-				PlotVWAP1U,
-				PlotVWAP1L,
-				null,
-				EnableVisuals ? GetFrozenOrTransparent(_sd1Frozen) : GetFrozenOrTransparent(null),
-				EnableVisuals ? SD1AreaOpacity : 0);
+			if (!EnableVisuals || ChartControl == null) return;
+			Draw.Region(this, "dev1", CurrentBar, 0, PlotVWAP1U, PlotVWAP1L, null, SD1AreaBrush, SD1AreaOpacity);
 		}
 
 		void PlotDevTwo()
@@ -567,26 +573,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotDevOne();
 			PlotVWAP2U[0] = upper[1];
 			PlotVWAP2L[0] = lower[1];
-			Draw.Region(
-				this,
-				"dev2",
-				CurrentBar,
-				0,
-				PlotVWAP1U,
-				PlotVWAP2U,
-				null,
-				EnableVisuals ? GetFrozenOrTransparent(_sd2Frozen) : GetFrozenOrTransparent(null),
-				EnableVisuals ? SD2AreaOpacity : 0);
-			Draw.Region(
-				this,
-				"dev3",
-				CurrentBar,
-				0,
-				PlotVWAP1L,
-				PlotVWAP2L,
-				null,
-				EnableVisuals ? GetFrozenOrTransparent(_sd2Frozen) : GetFrozenOrTransparent(null),
-				EnableVisuals ? SD2AreaOpacity : 0);
+			if (!EnableVisuals || ChartControl == null) return;
+			Draw.Region(this, "dev2", CurrentBar, 0, PlotVWAP1U, PlotVWAP2U, null, SD2AreaBrush, SD2AreaOpacity);
+			Draw.Region(this, "dev3", CurrentBar, 0, PlotVWAP1L, PlotVWAP2L, null, SD2AreaBrush, SD2AreaOpacity);
 		}
 
 		void PlotDevThree()
@@ -594,26 +583,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotDevTwo();
 			PlotVWAP3U[0] = upper[2];
 			PlotVWAP3L[0] = lower[2];
-			Draw.Region(
-				this,
-				"dev4",
-				CurrentBar,
-				0,
-				PlotVWAP2U,
-				PlotVWAP3U,
-				null,
-				EnableVisuals ? GetFrozenOrTransparent(_sd3Frozen) : GetFrozenOrTransparent(null),
-				EnableVisuals ? SD3AreaOpacity : 0);
-			Draw.Region(
-				this,
-				"dev5",
-				CurrentBar,
-				0,
-				PlotVWAP2L,
-				PlotVWAP3L,
-				null,
-				EnableVisuals ? GetFrozenOrTransparent(_sd3Frozen) : GetFrozenOrTransparent(null),
-				EnableVisuals ? SD3AreaOpacity : 0);
+			if (!EnableVisuals || ChartControl == null) return;
+			Draw.Region(this, "dev4", CurrentBar, 0, PlotVWAP2U, PlotVWAP3U, null, SD3AreaBrush, SD3AreaOpacity);
+			Draw.Region(this, "dev5", CurrentBar, 0, PlotVWAP2L, PlotVWAP3L, null, SD3AreaBrush, SD3AreaOpacity);
 		}
 
 		void PlotDevFour()
@@ -621,26 +593,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotDevThree();
 			PlotVWAP4U[0] = upper[3];
 			PlotVWAP4L[0] = lower[3];
-			Draw.Region(
-				this,
-				"dev6",
-				CurrentBar,
-				0,
-				PlotVWAP3U,
-				PlotVWAP4U,
-				null,
-				EnableVisuals ? GetFrozenOrTransparent(_sd4Frozen) : GetFrozenOrTransparent(null),
-				EnableVisuals ? SD4AreaOpacity : 0);
-			Draw.Region(
-				this,
-				"dev7",
-				CurrentBar,
-				0,
-				PlotVWAP3L,
-				PlotVWAP4L,
-				null,
-				EnableVisuals ? GetFrozenOrTransparent(_sd4Frozen) : GetFrozenOrTransparent(null),
-				EnableVisuals ? SD4AreaOpacity : 0);
+			if (!EnableVisuals || ChartControl == null) return;
+			Draw.Region(this, "dev6", CurrentBar, 0, PlotVWAP3U, PlotVWAP4U, null, SD4AreaBrush, SD4AreaOpacity);
+			Draw.Region(this, "dev7", CurrentBar, 0, PlotVWAP3L, PlotVWAP4L, null, SD4AreaBrush, SD4AreaOpacity);
 		}
 
 		void PlotDevFive()
@@ -648,26 +603,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotDevFour();
 			PlotVWAP5U[0] = upper[4];
 			PlotVWAP5L[0] = lower[4];
-			Draw.Region(
-				this,
-				"dev8",
-				CurrentBar,
-				0,
-				PlotVWAP4U,
-				PlotVWAP5U,
-				null,
-				EnableVisuals ? GetFrozenOrTransparent(_sd5Frozen) : GetFrozenOrTransparent(null),
-				EnableVisuals ? SD5AreaOpacity : 0);
-			Draw.Region(
-				this,
-				"dev9",
-				CurrentBar,
-				0,
-				PlotVWAP4L,
-				PlotVWAP5L,
-				null,
-				EnableVisuals ? GetFrozenOrTransparent(_sd5Frozen) : GetFrozenOrTransparent(null),
-				EnableVisuals ? SD5AreaOpacity : 0);
+			if (!EnableVisuals || ChartControl == null) return;
+			Draw.Region(this, "dev8", CurrentBar, 0, PlotVWAP4U, PlotVWAP5U, null, SD5AreaBrush, SD5AreaOpacity);
+			Draw.Region(this, "dev9", CurrentBar, 0, PlotVWAP4L, PlotVWAP5L, null, SD5AreaBrush, SD5AreaOpacity);
 		}
 
 		//*************************************************************************************
@@ -725,14 +663,16 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 		private void PublishSnapshot()
 		{
-			if (!EnableVisuals) return; // sem feed quando desabilitado
+			// Feed não depende de visuals
+			if (Bars == null || Instrument == null) return;
+
 			DateTime tradingDay = Time[0].Date;
 			if (_sessionIterator != null)
 				tradingDay = _sessionIterator.GetTradingDay(Time[0]);
 
 			var snap = new HawkVwapBandsFeed.Snapshot
 			{
-				UtcTime = DateTime.UtcNow,
+				UtcTime = (State == State.Realtime) ? DateTime.UtcNow : Time[0].ToUniversalTime(),
 				BarTime = Time[0],
 				SessionTradingDay = tradingDay,
 				InstrumentFullName = Instrument?.FullName ?? Instrument?.MasterInstrument?.Name ?? string.Empty,
