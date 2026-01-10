@@ -12,7 +12,6 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Markup;            // XamlWriter/XamlReader
 using System.Xml.Serialization;
 using NinjaTrader.Cbi;
 using NinjaTrader.Gui;
@@ -86,16 +85,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 	public class HawkVwapBands : Indicator
 	{
-		// Local helpers for serialization (XAML-based, no Serialize dependency)
-		private static string BrushToString(Brush b)
-		{
-			try { return b == null ? null : XamlWriter.Save(b); } catch { return null; }
-		}
-		private static Brush StringToBrush(string s)
-		{
-			try { return string.IsNullOrEmpty(s) ? null : (Brush)XamlReader.Parse(s); } catch { return null; }
-		}
-
 		// Inputs
 		[NinjaScriptProperty, Range(1, 5)]
 		[Display(Name="Number of deviations", Order=1, GroupName="Standard Deviations")]
@@ -118,8 +107,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 		[XmlIgnore]
 		[Display(Name="SD1 Fill Color", Order=4, GroupName="Standard Deviations 1")]
 		public Brush SD1AreaBrush { get; set; } = Brushes.DimGray;
-		[Browsable(false)]
-		public string SD1AreaBrushSerializable { get => BrushToString(SD1AreaBrush); set => SD1AreaBrush = StringToBrush(value) ?? Brushes.DimGray; }
 
 		//Deviation 2
 		[Display(Name="Deviation 2", Order=5, GroupName="Standard Deviations 2")]
@@ -129,8 +116,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 		[XmlIgnore]
 		[Display(Name="SD2 Fill Color", Order=7, GroupName="Standard Deviations 2")]
 		public Brush SD2AreaBrush { get; set; } = Brushes.DimGray;
-		[Browsable(false)]
-		public string SD2AreaBrushSerializable { get => BrushToString(SD2AreaBrush); set => SD2AreaBrush = StringToBrush(value) ?? Brushes.DimGray; }
 
 		//Deviation 3
 		[Display(Name="Deviation 3", Order=8, GroupName="Standard Deviations 3")]
@@ -140,8 +125,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 		[XmlIgnore]
 		[Display(Name="SD3 Fill Color", Order=10, GroupName="Standard Deviations 3")]
 		public Brush SD3AreaBrush { get; set; } = Brushes.DimGray;
-		[Browsable(false)]
-		public string SD3AreaBrushSerializable { get => BrushToString(SD3AreaBrush); set => SD3AreaBrush = StringToBrush(value) ?? Brushes.DimGray; }
 
 		//Deviation 4
 		[Display(Name="Deviation 4", Order=11, GroupName="Standard Deviations 4")]
@@ -151,8 +134,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 		[XmlIgnore]
 		[Display(Name="SD4 Fill Color", Order=13, GroupName="Standard Deviations 4")]
 		public Brush SD4AreaBrush { get; set; } = Brushes.DimGray;
-		[Browsable(false)]
-		public string SD4AreaBrushSerializable { get => BrushToString(SD4AreaBrush); set => SD4AreaBrush = StringToBrush(value) ?? Brushes.DimGray; }
 
 		//Deviation 5
 		[Display(Name="Deviation 5", Order=14, GroupName="Standard Deviations 5")]
@@ -162,8 +143,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 		[XmlIgnore]
 		[Display(Name="SD5 Fill Color", Order=16, GroupName="Standard Deviations 5")]
 		public Brush SD5AreaBrush { get; set; } = Brushes.DarkGoldenrod;
-		[Browsable(false)]
-		public string SD5AreaBrushSerializable { get => BrushToString(SD5AreaBrush); set => SD5AreaBrush = StringToBrush(value) ?? Brushes.DarkGoldenrod; }
 
 		// Bandas Fixas (%)
 		[NinjaScriptProperty]
@@ -507,8 +486,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 		{
 			PlotVWAP1U[0] = upper[0];
 			PlotVWAP1L[0] = lower[0];
-			if (!EnableVisuals) return;
-			Draw.Region(this, "dev1_" + Time[0].Date.ToString("yyyyMMdd"), CurrentBar, 0, PlotVWAP1U, PlotVWAP1L, null, SD1AreaBrush, SD1AreaOpacity);
+			Draw.Region(this, "dev1", CurrentBar, 0, PlotVWAP1U, PlotVWAP1L, null, SD1AreaBrush, SD1AreaOpacity);
 		}
 
 		void PlotDevTwo()
@@ -516,9 +494,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotDevOne();
 			PlotVWAP2U[0] = upper[1];
 			PlotVWAP2L[0] = lower[1];
-			if (!EnableVisuals) return;
-			Draw.Region(this, "dev2_" + Time[0].Date.ToString("yyyyMMdd"), CurrentBar, 0, PlotVWAP1U, PlotVWAP2U, null, SD2AreaBrush, SD2AreaOpacity);
-			Draw.Region(this, "dev3_" + Time[0].Date.ToString("yyyyMMdd"), CurrentBar, 0, PlotVWAP1L, PlotVWAP2L, null, SD2AreaBrush, SD2AreaOpacity);
+			Draw.Region(this, "dev2", CurrentBar, 0, PlotVWAP1U, PlotVWAP2U, null, SD2AreaBrush, SD2AreaOpacity);
+			Draw.Region(this, "dev3", CurrentBar, 0, PlotVWAP1L, PlotVWAP2L, null, SD2AreaBrush, SD2AreaOpacity);
 		}
 
 		void PlotDevThree()
@@ -526,9 +503,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotDevTwo();
 			PlotVWAP3U[0] = upper[2];
 			PlotVWAP3L[0] = lower[2];
-			if (!EnableVisuals) return;
-			Draw.Region(this, "dev4_" + Time[0].Date.ToString("yyyyMMdd"), CurrentBar, 0, PlotVWAP2U, PlotVWAP3U, null, SD3AreaBrush, SD3AreaOpacity);
-			Draw.Region(this, "dev5_" + Time[0].Date.ToString("yyyyMMdd"), CurrentBar, 0, PlotVWAP2L, PlotVWAP3L, null, SD3AreaBrush, SD3AreaOpacity);
+			Draw.Region(this, "dev4", CurrentBar, 0, PlotVWAP2U, PlotVWAP3U, null, SD3AreaBrush, SD3AreaOpacity);
+			Draw.Region(this, "dev5", CurrentBar, 0, PlotVWAP2L, PlotVWAP3L, null, SD3AreaBrush, SD3AreaOpacity);
 		}
 
 		void PlotDevFour()
@@ -536,9 +512,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotDevThree();
 			PlotVWAP4U[0] = upper[3];
 			PlotVWAP4L[0] = lower[3];
-			if (!EnableVisuals) return;
-			Draw.Region(this, "dev6_" + Time[0].Date.ToString("yyyyMMdd"), CurrentBar, 0, PlotVWAP3U, PlotVWAP4U, null, SD4AreaBrush, SD4AreaOpacity);
-			Draw.Region(this, "dev7_" + Time[0].Date.ToString("yyyyMMdd"), CurrentBar, 0, PlotVWAP3L, PlotVWAP4L, null, SD4AreaBrush, SD4AreaOpacity);
+			Draw.Region(this, "dev6", CurrentBar, 0, PlotVWAP3U, PlotVWAP4U, null, SD4AreaBrush, SD4AreaOpacity);
+			Draw.Region(this, "dev7", CurrentBar, 0, PlotVWAP3L, PlotVWAP4L, null, SD4AreaBrush, SD4AreaOpacity);
 		}
 
 		void PlotDevFive()
@@ -546,9 +521,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotDevFour();
 			PlotVWAP5U[0] = upper[4];
 			PlotVWAP5L[0] = lower[4];
-			if (!EnableVisuals) return;
-			Draw.Region(this, "dev8_" + Time[0].Date.ToString("yyyyMMdd"), CurrentBar, 0, PlotVWAP4U, PlotVWAP5U, null, SD5AreaBrush, SD5AreaOpacity);
-			Draw.Region(this, "dev9_" + Time[0].Date.ToString("yyyyMMdd"), CurrentBar, 0, PlotVWAP4L, PlotVWAP5L, null, SD5AreaBrush, SD5AreaOpacity);
+			Draw.Region(this, "dev8", CurrentBar, 0, PlotVWAP4U, PlotVWAP5U, null, SD5AreaBrush, SD5AreaOpacity);
+			Draw.Region(this, "dev9", CurrentBar, 0, PlotVWAP4L, PlotVWAP5L, null, SD5AreaBrush, SD5AreaOpacity);
 		}
 
 		//*************************************************************************************
