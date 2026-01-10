@@ -388,6 +388,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 			if (Bars == null || CurrentBar < 0 || TickSize <= 0)
 				return;
 
+			RefreshFrozenBrushCache();
+
 			hl3 = (High[0] + Low[0] + Close[0]) / 3.0;
 
 			if (Bars.IsFirstBarOfSession)
