@@ -223,6 +223,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 		// Hawk panel text
 		private string _infoText = string.Empty;
+		private string _stochStatus = "OFF";
+		private bool _panelDisabled = false;
+		private bool _regionsDisabled = false;
 
 		// DX resources
 		private DW.Factory _dwriteFactory;
@@ -508,7 +511,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotVWAP1U[0] = upper[0];
 			PlotVWAP1L[0] = lower[0];
 			if (!EnableVisuals) return;
-			Draw.Region(this, "dev1", CurrentBar, 0, PlotVWAP1U, PlotVWAP1L, null, SD1AreaBrush, SD1AreaOpacity);
+			TryDrawRegion("dev1", CurrentBar, 0, PlotVWAP1U, PlotVWAP1L, null, SD1AreaBrush, SD1AreaOpacity);
 		}
 
 		void PlotDevTwo()
@@ -517,8 +520,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotVWAP2U[0] = upper[1];
 			PlotVWAP2L[0] = lower[1];
 			if (!EnableVisuals) return;
-			Draw.Region(this, "dev2", CurrentBar, 0, PlotVWAP1U, PlotVWAP2U, null, SD2AreaBrush, SD2AreaOpacity);
-			Draw.Region(this, "dev3", CurrentBar, 0, PlotVWAP1L, PlotVWAP2L, null, SD2AreaBrush, SD2AreaOpacity);
+			TryDrawRegion("dev2", CurrentBar, 0, PlotVWAP1U, PlotVWAP2U, null, SD2AreaBrush, SD2AreaOpacity);
+			TryDrawRegion("dev3", CurrentBar, 0, PlotVWAP1L, PlotVWAP2L, null, SD2AreaBrush, SD2AreaOpacity);
 		}
 
 		void PlotDevThree()
@@ -527,8 +530,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotVWAP3U[0] = upper[2];
 			PlotVWAP3L[0] = lower[2];
 			if (!EnableVisuals) return;
-			Draw.Region(this, "dev4", CurrentBar, 0, PlotVWAP2U, PlotVWAP3U, null, SD3AreaBrush, SD3AreaOpacity);
-			Draw.Region(this, "dev5", CurrentBar, 0, PlotVWAP2L, PlotVWAP3L, null, SD3AreaBrush, SD3AreaOpacity);
+			TryDrawRegion("dev4", CurrentBar, 0, PlotVWAP2U, PlotVWAP3U, null, SD3AreaBrush, SD3AreaOpacity);
+			TryDrawRegion("dev5", CurrentBar, 0, PlotVWAP2L, PlotVWAP3L, null, SD3AreaBrush, SD3AreaOpacity);
 		}
 
 		void PlotDevFour()
@@ -537,8 +540,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotVWAP4U[0] = upper[3];
 			PlotVWAP4L[0] = lower[3];
 			if (!EnableVisuals) return;
-			Draw.Region(this, "dev6", CurrentBar, 0, PlotVWAP3U, PlotVWAP4U, null, SD4AreaBrush, SD4AreaOpacity);
-			Draw.Region(this, "dev7", CurrentBar, 0, PlotVWAP3L, PlotVWAP4L, null, SD4AreaBrush, SD4AreaOpacity);
+			TryDrawRegion("dev6", CurrentBar, 0, PlotVWAP3U, PlotVWAP4U, null, SD4AreaBrush, SD4AreaOpacity);
+			TryDrawRegion("dev7", CurrentBar, 0, PlotVWAP3L, PlotVWAP4L, null, SD4AreaBrush, SD4AreaOpacity);
 		}
 
 		void PlotDevFive()
@@ -547,8 +550,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotVWAP5U[0] = upper[4];
 			PlotVWAP5L[0] = lower[4];
 			if (!EnableVisuals) return;
-			Draw.Region(this, "dev8", CurrentBar, 0, PlotVWAP4U, PlotVWAP5U, null, SD5AreaBrush, SD5AreaOpacity);
-			Draw.Region(this, "dev9", CurrentBar, 0, PlotVWAP4L, PlotVWAP5L, null, SD5AreaBrush, SD5AreaOpacity);
+			TryDrawRegion("dev8", CurrentBar, 0, PlotVWAP4U, PlotVWAP5U, null, SD5AreaBrush, SD5AreaOpacity);
+			TryDrawRegion("dev9", CurrentBar, 0, PlotVWAP4L, PlotVWAP5L, null, SD5AreaBrush, SD5AreaOpacity);
 		}
 
 		//*************************************************************************************
@@ -598,10 +601,35 @@ namespace NinjaTrader.NinjaScript.Indicators
 			string line1 = $"{lineMode} | VWAP: {curVWAP:0.00} | Preço: {Close[0]:0.00} | {contexto} ({distVWAP:0.0}t)";
 			string line2 = $"Desvio -1: {FPrice(d1L)} | -2: {FPrice(d2L)} | -3: {FPrice(d3L)} | -4: {FPrice(d4L)} | -5: {FPrice(d5L)}";
 			string line3 = $"Desvio +1: {FPrice(d1U)} | +2: {FPrice(d2U)} | +3: {FPrice(d3U)} | +4: {FPrice(d4U)} | +5: {FPrice(d5U)}";
-			string line4 = $"Canal +: {FTicks(chanPlus)}t | Canal -: {FTicks(chanMinus)}t | Range (±5): {FTicks(rangeOuter)}t | σ: {FTicks(sigmaTicks)}t";
+			string line4 = $"Canal +: {FTicks(chanPlus)}t | Canal -: {FTicks(chanMinus)}t | Range (±5): {FTicks(rangeOuter)}t | σ: {FTicks(sigmaTicks)}t | Stochastic: {_stochStatus}";
 			string line5 = $"Obs: {obsText}";
 
 			_infoText = $"{line1}\n{line2}\n{line3}\n{line4}\n{line5}";
+		}
+
+		internal void SetStochasticEnabled(bool enabled)
+		{
+			_stochStatus = enabled ? "ON" : "OFF";
+		}
+
+		private void TryDrawRegion(string tag, int startBarsAgo, int endBarsAgo, ISeries<double> series1, ISeries<double> series2, Brush outlineBrush, Brush areaBrush, int areaOpacity)
+		{
+			if (!EnableVisuals || _regionsDisabled)
+				return;
+
+			if (series1 == null || series2 == null)
+				return;
+
+			try
+			{
+				Draw.Region(this, tag, startBarsAgo, endBarsAgo, series1, series2, outlineBrush, areaBrush, areaOpacity);
+			}
+			catch (Exception ex)
+			{
+				_regionsDisabled = true;
+				if (ShouldLog(1))
+					Print(LogMsg("RenderError", $"Draw.Region failed tag={tag} err={ex.Message}"));
+			}
 		}
 
 		private void PublishSnapshot()
@@ -655,25 +683,36 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 			if (RenderTarget != null && EnableVisuals)
 			{
-				_dwriteFactory = new DW.Factory();
-				_textFormat = new DW.TextFormat(_dwriteFactory, PanelFont, PanelFontSize)
+				_panelDisabled = false;
+				try
 				{
-					TextAlignment = DW.TextAlignment.Leading,
-					ParagraphAlignment = DW.ParagraphAlignment.Near
-				};
+					_dwriteFactory = new DW.Factory();
+					_textFormat = new DW.TextFormat(_dwriteFactory, PanelFont, PanelFontSize)
+					{
+						TextAlignment = DW.TextAlignment.Leading,
+						ParagraphAlignment = DW.ParagraphAlignment.Near
+					};
 
-				_dxBorderBrush   = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0xFF, 0xD4, 0xA0, 0x17)));
-				_dxTextBrush     = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0xE6, 0xCC, 0xCC, 0xCC)));
-				var stops = new[]
+					_dxBorderBrush   = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0xFF, 0xD4, 0xA0, 0x17)));
+					_dxTextBrush     = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0xE6, 0xCC, 0xCC, 0xCC)));
+					var stops = new[]
+					{
+						new D2D.GradientStop { Color = ToColor4(Media.Color.FromArgb(0xC0, 0x50, 0x50, 0x50)), Position = 0.0f },
+						new D2D.GradientStop { Color = ToColor4(Media.Color.FromArgb(0xB4, 0x28, 0x28, 0x28)), Position = 1.0f }
+					};
+					_dxGradientStops = new D2D.GradientStopCollection(RenderTarget, stops, D2D.Gamma.StandardRgb, D2D.ExtendMode.Clamp);
+					_dxGradientBrush = new D2D.LinearGradientBrush(RenderTarget,
+						new D2D.LinearGradientBrushProperties { StartPoint = new Vector2(0f, 0f), EndPoint = new Vector2(0f, 1f) },
+						_dxGradientStops);
+					_dxHighlightBrush = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)));
+				}
+				catch (Exception ex)
 				{
-					new D2D.GradientStop { Color = ToColor4(Media.Color.FromArgb(0xC0, 0x50, 0x50, 0x50)), Position = 0.0f },
-					new D2D.GradientStop { Color = ToColor4(Media.Color.FromArgb(0xB4, 0x28, 0x28, 0x28)), Position = 1.0f }
-				};
-				_dxGradientStops = new D2D.GradientStopCollection(RenderTarget, stops, D2D.Gamma.StandardRgb, D2D.ExtendMode.Clamp);
-				_dxGradientBrush = new D2D.LinearGradientBrush(RenderTarget,
-					new D2D.LinearGradientBrushProperties { StartPoint = new Vector2(0f, 0f), EndPoint = new Vector2(0f, 1f) },
-					_dxGradientStops);
-				_dxHighlightBrush = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)));
+					_panelDisabled = true;
+					DisposeDx();
+					if (ShouldLog(1))
+						Print(LogMsg("RenderError", $"DX init failed: {ex.Message}"));
+				}
 			}
 
 			base.OnRenderTargetChanged();
@@ -683,7 +722,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 		{
 			base.OnRender(chartControl, chartScale);
 
-			if (!EnableVisuals)
+			if (!EnableVisuals || _panelDisabled)
 				return;
 
 			if (RenderTarget == null || ChartPanel == null || string.IsNullOrEmpty(_infoText) ||
@@ -691,31 +730,41 @@ namespace NinjaTrader.NinjaScript.Indicators
 			    _dxBorderBrush == null || _dxTextBrush == null || _dxHighlightBrush == null)
 				return;
 
-			using (var textLayout = new DW.TextLayout(_dwriteFactory, _infoText, _textFormat, float.MaxValue, float.MaxValue))
+			try
 			{
-				float boxW = (float)textLayout.Metrics.Width + 2f * PanelPadding;
-				float boxH = (float)textLayout.Metrics.Height + 2f * PanelPadding;
-
-				float x = (float)Math.Floor(ChartPanel.X + PanelMargin) + 0.5f;
-				float y = (float)Math.Floor(ChartPanel.Y + ChartPanel.H - PanelLift - boxH) + 0.5f;
-
-				var rect = new D2D.RoundedRectangle
+				using (var textLayout = new DW.TextLayout(_dwriteFactory, _infoText, _textFormat, float.MaxValue, float.MaxValue))
 				{
-					Rect = new RectangleF(x, y, boxW, boxH),
-					RadiusX = PanelCornerRadius,
-					RadiusY = PanelCornerRadius
-				};
+					float boxW = (float)textLayout.Metrics.Width + 2f * PanelPadding;
+					float boxH = (float)textLayout.Metrics.Height + 2f * PanelPadding;
 
-				_dxGradientBrush.StartPoint = new Vector2(x, y);
-				_dxGradientBrush.EndPoint   = new Vector2(x, y + boxH);
+					float x = (float)Math.Floor(ChartPanel.X + PanelMargin) + 0.5f;
+					float y = (float)Math.Floor(ChartPanel.Y + ChartPanel.H - PanelLift - boxH) + 0.5f;
 
-				RenderTarget.FillRoundedRectangle(rect, _dxGradientBrush);
-				RenderTarget.DrawLine(new Vector2(x + PanelCornerRadius, y + 1f), new Vector2(x + boxW - PanelCornerRadius, y + 1f), _dxHighlightBrush, 1.0f);
-				RenderTarget.DrawRoundedRectangle(rect, _dxBorderBrush, 1.4f);
+					var rect = new D2D.RoundedRectangle
+					{
+						Rect = new RectangleF(x, y, boxW, boxH),
+						RadiusX = PanelCornerRadius,
+						RadiusY = PanelCornerRadius
+					};
 
-				float textX = x + PanelPadding;
-				float textY = y + PanelPadding;
-				RenderTarget.DrawTextLayout(new Vector2(textX, textY), textLayout, _dxTextBrush, D2D.DrawTextOptions.None);
+					_dxGradientBrush.StartPoint = new Vector2(x, y);
+					_dxGradientBrush.EndPoint   = new Vector2(x, y + boxH);
+
+					RenderTarget.FillRoundedRectangle(rect, _dxGradientBrush);
+					RenderTarget.DrawLine(new Vector2(x + PanelCornerRadius, y + 1f), new Vector2(x + boxW - PanelCornerRadius, y + 1f), _dxHighlightBrush, 1.0f);
+					RenderTarget.DrawRoundedRectangle(rect, _dxBorderBrush, 1.4f);
+
+					float textX = x + PanelPadding;
+					float textY = y + PanelPadding;
+					RenderTarget.DrawTextLayout(new Vector2(textX, textY), textLayout, _dxTextBrush, D2D.DrawTextOptions.None);
+				}
+			}
+			catch (Exception ex)
+			{
+				_panelDisabled = true;
+				DisposeDx();
+				if (ShouldLog(1))
+					Print(LogMsg("RenderError", $"DX render failed: {ex.Message}"));
 			}
 		}
 
