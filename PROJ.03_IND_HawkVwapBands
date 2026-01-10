@@ -215,6 +215,14 @@ namespace NinjaTrader.NinjaScript.Indicators
 		private readonly double[] upper = new double[5];
 		private readonly double[] lower = new double[5];
 
+		// Frozen brushes (data thread safe)
+		private Brush _sd1Frozen;
+		private Brush _sd2Frozen;
+		private Brush _sd3Frozen;
+		private Brush _sd4Frozen;
+		private Brush _sd5Frozen;
+		private Brush _transparentFrozen;
+
 		// Signals
 		private Series<int> signalLong;
 		private Series<int> signalShort;
@@ -254,6 +262,38 @@ namespace NinjaTrader.NinjaScript.Indicators
 		public bool EnableVisuals { get; set; } = true;
 
 		private static Color4 ToColor4(Media.Color c) => new Color4(c.ScR, c.ScG, c.ScB, c.ScA);
+
+		private Brush FreezeForDataThread(Brush b)
+		{
+			if (b == null)
+				return null;
+
+			if (b.IsFrozen)
+				return b;
+
+			Brush clone = b.Clone();
+			if (clone.CanFreeze)
+				clone.Freeze();
+			return clone;
+		}
+
+		private void RefreshFrozenBrushCache()
+		{
+			_sd1Frozen = FreezeForDataThread(SD1AreaBrush);
+			_sd2Frozen = FreezeForDataThread(SD2AreaBrush);
+			_sd3Frozen = FreezeForDataThread(SD3AreaBrush);
+			_sd4Frozen = FreezeForDataThread(SD4AreaBrush);
+			_sd5Frozen = FreezeForDataThread(SD5AreaBrush);
+			_transparentFrozen = FreezeForDataThread(Brushes.Transparent);
+		}
+
+		private Brush GetFrozenOrTransparent(Brush frozenCandidate)
+		{
+			if (!EnableVisuals)
+				return _transparentFrozen ?? Brushes.Transparent;
+
+			return frozenCandidate ?? _transparentFrozen ?? Brushes.Transparent;
+		}
 
 		protected override void OnStateChange()
 		{
@@ -306,6 +346,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				_logLevelInt      = ParseLogLevel(LogLevel);
 				_lastModeLabel    = string.Empty;
 				_sessionIterator  = new SessionIterator(Bars);
+				RefreshFrozenBrushCache();
 			}
 		}
 
@@ -515,7 +556,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				PlotVWAP1U,
 				PlotVWAP1L,
 				null,
-				EnableVisuals ? SD1AreaBrush : Brushes.Transparent,
+				GetFrozenOrTransparent(_sd1Frozen),
 				EnableVisuals ? SD1AreaOpacity : 0);
 		}
 
@@ -532,7 +573,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				PlotVWAP1U,
 				PlotVWAP2U,
 				null,
-				EnableVisuals ? SD2AreaBrush : Brushes.Transparent,
+				GetFrozenOrTransparent(_sd2Frozen),
 				EnableVisuals ? SD2AreaOpacity : 0);
 			Draw.Region(
 				this,
@@ -542,7 +583,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				PlotVWAP1L,
 				PlotVWAP2L,
 				null,
-				EnableVisuals ? SD2AreaBrush : Brushes.Transparent,
+				GetFrozenOrTransparent(_sd2Frozen),
 				EnableVisuals ? SD2AreaOpacity : 0);
 		}
 
@@ -559,7 +600,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				PlotVWAP2U,
 				PlotVWAP3U,
 				null,
-				EnableVisuals ? SD3AreaBrush : Brushes.Transparent,
+				GetFrozenOrTransparent(_sd3Frozen),
 				EnableVisuals ? SD3AreaOpacity : 0);
 			Draw.Region(
 				this,
@@ -569,7 +610,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				PlotVWAP2L,
 				PlotVWAP3L,
 				null,
-				EnableVisuals ? SD3AreaBrush : Brushes.Transparent,
+				GetFrozenOrTransparent(_sd3Frozen),
 				EnableVisuals ? SD3AreaOpacity : 0);
 		}
 
@@ -586,7 +627,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				PlotVWAP3U,
 				PlotVWAP4U,
 				null,
-				EnableVisuals ? SD4AreaBrush : Brushes.Transparent,
+				GetFrozenOrTransparent(_sd4Frozen),
 				EnableVisuals ? SD4AreaOpacity : 0);
 			Draw.Region(
 				this,
@@ -596,7 +637,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				PlotVWAP3L,
 				PlotVWAP4L,
 				null,
-				EnableVisuals ? SD4AreaBrush : Brushes.Transparent,
+				GetFrozenOrTransparent(_sd4Frozen),
 				EnableVisuals ? SD4AreaOpacity : 0);
 		}
 
@@ -613,7 +654,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				PlotVWAP4U,
 				PlotVWAP5U,
 				null,
-				EnableVisuals ? SD5AreaBrush : Brushes.Transparent,
+				GetFrozenOrTransparent(_sd5Frozen),
 				EnableVisuals ? SD5AreaOpacity : 0);
 			Draw.Region(
 				this,
@@ -623,7 +664,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				PlotVWAP4L,
 				PlotVWAP5L,
 				null,
-				EnableVisuals ? SD5AreaBrush : Brushes.Transparent,
+				GetFrozenOrTransparent(_sd5Frozen),
 				EnableVisuals ? SD5AreaOpacity : 0);
 		}
 
