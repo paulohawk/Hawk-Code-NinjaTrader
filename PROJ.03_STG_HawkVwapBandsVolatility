@@ -3518,7 +3518,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (orders == null) return false;
 			foreach (var ord in orders)
 			{
-				if (ord != null && (ord.OrderState == OrderState.Working || ord.OrderState == OrderState.Accepted))
+				if (ord != null && ord.OrderState == OrderState.Working)
 					return true;
 			}
 			return false;
