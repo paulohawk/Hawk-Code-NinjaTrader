@@ -223,6 +223,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 		// Hawk panel text
 		private string _infoText = string.Empty;
+		private int _sessionStartBar = -1;
 
 		// DX resources
 		private DW.Factory _dwriteFactory;
@@ -308,6 +309,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				_logLevelInt      = ParseLogLevel(LogLevel);
 				_lastModeLabel    = string.Empty;
 				_sessionIterator  = new SessionIterator(Bars);
+				_sessionStartBar  = -1;
 			}
 		}
 
@@ -353,6 +355,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 			if (Bars.IsFirstBarOfSession)
 			{
+				_sessionStartBar = CurrentBar;
 				iCumVolume        = VOL()[0];
 				iCumTypicalVolume = VOL()[0] * hl3;
 				v2Sum             = VOL()[0] * hl3 * hl3;
@@ -402,15 +405,26 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 			ComputeSignals();
 
-			UpdateInfoText();
+			string modeLabel = GetModeLabel();
+			bool modeChanged = !string.Equals(modeLabel, _lastModeLabel, StringComparison.Ordinal);
+			bool shouldUpdatePanel = Bars.IsFirstBarOfSession || modeChanged || signalLong[0] == 1 || signalShort[0] == 1 || string.IsNullOrEmpty(_infoText);
+			if (shouldUpdatePanel)
+				UpdateInfoText();
 			PublishSnapshot();
 
-			string modeLabel = GetModeLabel();
-			if (!string.Equals(modeLabel, _lastModeLabel, StringComparison.Ordinal))
+			if (modeChanged)
 			{
 				_lastModeLabel = modeLabel;
 				if (ShouldLog(2))
 					Print(LogMsg("ModeChanged", $"mode={modeLabel}"));
+			}
+
+			if (Bars.IsLastBarOfSession)
+			{
+				DateTime tradingDay = Time[0].Date;
+				if (_sessionIterator != null)
+					tradingDay = _sessionIterator.GetTradingDay(Time[0]);
+				DrawSessionRegions(tradingDay);
 			}
 		}
 
@@ -506,8 +520,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 		{
 			PlotVWAP1U[0] = upper[0];
 			PlotVWAP1L[0] = lower[0];
-			if (EnableVisuals)
-				Draw.Region(this, $"dev1_{CurrentBar}", CurrentBar, 0, PlotVWAP1U, PlotVWAP1L, null, SD1AreaBrush, SD1AreaOpacity);
 		}
 
 		void PlotDevTwo()
@@ -515,11 +527,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotDevOne();
 			PlotVWAP2U[0] = upper[1];
 			PlotVWAP2L[0] = lower[1];
-			if (EnableVisuals)
-			{
-				Draw.Region(this, $"dev2_{CurrentBar}", CurrentBar, 0, PlotVWAP1U, PlotVWAP2U, null, SD2AreaBrush, SD2AreaOpacity);
-				Draw.Region(this, $"dev3_{CurrentBar}", CurrentBar, 0, PlotVWAP1L, PlotVWAP2L, null, SD2AreaBrush, SD2AreaOpacity);
-			}
 		}
 
 		void PlotDevThree()
@@ -527,11 +534,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotDevTwo();
 			PlotVWAP3U[0] = upper[2];
 			PlotVWAP3L[0] = lower[2];
-			if (EnableVisuals)
-			{
-				Draw.Region(this, $"dev4_{CurrentBar}", CurrentBar, 0, PlotVWAP2U, PlotVWAP3U, null, SD3AreaBrush, SD3AreaOpacity);
-				Draw.Region(this, $"dev5_{CurrentBar}", CurrentBar, 0, PlotVWAP2L, PlotVWAP3L, null, SD3AreaBrush, SD3AreaOpacity);
-			}
 		}
 
 		void PlotDevFour()
@@ -539,11 +541,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotDevThree();
 			PlotVWAP4U[0] = upper[3];
 			PlotVWAP4L[0] = lower[3];
-			if (EnableVisuals)
-			{
-				Draw.Region(this, $"dev6_{CurrentBar}", CurrentBar, 0, PlotVWAP3U, PlotVWAP4U, null, SD4AreaBrush, SD4AreaOpacity);
-				Draw.Region(this, $"dev7_{CurrentBar}", CurrentBar, 0, PlotVWAP3L, PlotVWAP4L, null, SD4AreaBrush, SD4AreaOpacity);
-			}
 		}
 
 		void PlotDevFive()
@@ -551,11 +548,58 @@ namespace NinjaTrader.NinjaScript.Indicators
 			PlotDevFour();
 			PlotVWAP5U[0] = upper[4];
 			PlotVWAP5L[0] = lower[4];
-			if (EnableVisuals)
+		}
+
+		private void DrawSessionRegions(DateTime tradingDay)
+		{
+			if (!EnableVisuals)
+				return;
+
+			if (_sessionStartBar < 0)
+				_sessionStartBar = CurrentBar;
+
+			int startBarsAgo = CurrentBar - _sessionStartBar;
+			if (startBarsAgo < 0)
+				startBarsAgo = 0;
+
+			string sessionTag = tradingDay.ToString("yyyyMMdd");
+
+			if (NumDeviations >= 1)
+				DrawRegionOnce($"VWAP_DEV1_SESSION_{sessionTag}", startBarsAgo, PlotVWAP1U, PlotVWAP1L, SD1AreaBrush, SD1AreaOpacity);
+			if (NumDeviations >= 2)
 			{
-				Draw.Region(this, $"dev8_{CurrentBar}", CurrentBar, 0, PlotVWAP4U, PlotVWAP5U, null, SD5AreaBrush, SD5AreaOpacity);
-				Draw.Region(this, $"dev9_{CurrentBar}", CurrentBar, 0, PlotVWAP4L, PlotVWAP5L, null, SD5AreaBrush, SD5AreaOpacity);
+				DrawRegionOnce($"VWAP_DEV2U_SESSION_{sessionTag}", startBarsAgo, PlotVWAP1U, PlotVWAP2U, SD2AreaBrush, SD2AreaOpacity);
+				DrawRegionOnce($"VWAP_DEV2L_SESSION_{sessionTag}", startBarsAgo, PlotVWAP1L, PlotVWAP2L, SD2AreaBrush, SD2AreaOpacity);
 			}
+			if (NumDeviations >= 3)
+			{
+				DrawRegionOnce($"VWAP_DEV3U_SESSION_{sessionTag}", startBarsAgo, PlotVWAP2U, PlotVWAP3U, SD3AreaBrush, SD3AreaOpacity);
+				DrawRegionOnce($"VWAP_DEV3L_SESSION_{sessionTag}", startBarsAgo, PlotVWAP2L, PlotVWAP3L, SD3AreaBrush, SD3AreaOpacity);
+			}
+			if (NumDeviations >= 4)
+			{
+				DrawRegionOnce($"VWAP_DEV4U_SESSION_{sessionTag}", startBarsAgo, PlotVWAP3U, PlotVWAP4U, SD4AreaBrush, SD4AreaOpacity);
+				DrawRegionOnce($"VWAP_DEV4L_SESSION_{sessionTag}", startBarsAgo, PlotVWAP3L, PlotVWAP4L, SD4AreaBrush, SD4AreaOpacity);
+			}
+			if (NumDeviations >= 5)
+			{
+				DrawRegionOnce($"VWAP_DEV5U_SESSION_{sessionTag}", startBarsAgo, PlotVWAP4U, PlotVWAP5U, SD5AreaBrush, SD5AreaOpacity);
+				DrawRegionOnce($"VWAP_DEV5L_SESSION_{sessionTag}", startBarsAgo, PlotVWAP4L, PlotVWAP5L, SD5AreaBrush, SD5AreaOpacity);
+			}
+		}
+
+		private void DrawRegionOnce(string tag, int startBarsAgo, ISeries<double> upperSeries, ISeries<double> lowerSeries, Brush areaBrush, int areaOpacity)
+		{
+			if (DrawObjects != null)
+			{
+				foreach (var obj in DrawObjects)
+				{
+					if (obj.Tag == tag)
+						return;
+				}
+			}
+
+			Draw.Region(this, tag, startBarsAgo, 0, upperSeries, lowerSeries, null, areaBrush, areaOpacity);
 		}
 
 		//*************************************************************************************
