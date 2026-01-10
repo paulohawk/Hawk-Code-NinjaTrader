@@ -4458,7 +4458,24 @@ namespace NinjaTrader.NinjaScript.Strategies
 			return decision;
 		}
 
-		private void TryExecute(SignalDecision decision, double vwap, int touched, DateTime nowBrtDt, int nowBrtInt, bool inWindow)
+		private bool IsStochasticOk(Regime regime)
+		{
+			if (!EnableSlowStochFilter)
+				return true;
+
+			double stochD = _stoch?.D[0] ?? double.NaN;
+			if (double.IsNaN(stochD))
+				return false;
+
+			if (regime == Regime.Buy)
+				return stochD <= StochLowerThreshold;
+			if (regime == Regime.Sell)
+				return stochD >= StochUpperThreshold;
+
+			return false;
+		}
+
+		private void TryExecute(SignalDecision decision, double vwap, int touched, DateTime nowBrtDt, int nowBrtInt, bool inWindow, bool stochasticOk)
 		{
 			if (decision.RegimeChanged)
 			{
@@ -4517,7 +4534,16 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			if (decision.RepriceGrid)
 			{
-				RepriceOrPlaceGrid(upper, lower);
+				if (stochasticOk)
+				{
+					RepriceOrPlaceGrid(upper, lower);
+				}
+				else
+				{
+					_lastBlockReason = "stochastic_filter";
+					SupportDump("trade_blocked");
+					CancelAllGrid("stochastic_filter");
+				}
 			}
 			else
 			{
@@ -4610,7 +4636,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				ApplyDailyResetIfNeeded(calDay);
 
 				// ---- rest of your original OnBarUpdate follows unchanged ----
-				if (!EnableSlowStochFilter)
 				{
 					if (hvb == null)
 					{
@@ -4705,179 +4730,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 					int touched = hvb.TouchedBandIndexSeries[0];
 					var decision = EvaluateSignals(vwap, inWindow);
-					TryExecute(decision, vwap, touched, nowBrtDt, nowBrtInt, inWindow);
+					bool stochasticOk = IsStochasticOk(decision.NextRegime);
+					TryExecute(decision, vwap, touched, nowBrtDt, nowBrtInt, inWindow, stochasticOk);
 
-					PublishPanelSnapshot("OnBarUpdate");
-				}
-				else
-				{
-					if (hvb == null)
-					{
-						dayStatus = "Waiting";
-						LogMsg("Skip", "Waiting: hvb is null", 2);
-						CancelAllGrid("hvb_null");
-						CancelStopLoss();
-						CancelExitVwap();
-						CancelOppositeBandExit();
-						CancelFinancialTarget();
-						PublishPanelSnapshot("Waiting-hvbNull");
-						return;
-					}
-
-					double vwap = hvb.PlotVWAP[0];
-					if (double.IsNaN(vwap) || vwap <= 0)
-					{
-						dayStatus = "NoVwapYet";
-						LogMsg("Skip", $"NoVwapYet: vwap={vwap}", 3);
-						CancelAllGrid("no_vwap");
-						CancelStopLoss();
-						CancelExitVwap();
-						CancelOppositeBandExit();
-						CancelFinancialTarget();
-						PublishPanelSnapshot("NoVwapYet");
-						return;
-					}
-
-					upper[0] = hvb.PlotVWAP1U[0]; lower[0] = hvb.PlotVWAP1L[0];
-					upper[1] = hvb.PlotVWAP2U[0]; lower[1] = hvb.PlotVWAP2L[0];
-					upper[2] = hvb.PlotVWAP3U[0]; lower[2] = hvb.PlotVWAP3L[0];
-					upper[3] = hvb.PlotVWAP4U[0]; lower[3] = hvb.PlotVWAP4L[0];
-					upper[4] = hvb.PlotVWAP5U[0]; lower[4] = hvb.PlotVWAP5L[0];
-
-					lastSnapVwap = vwap;
-					Array.Copy(upper, lastSnapUpper, 5);
-					Array.Copy(lower, lastSnapLower, 5);
-
-					if (PanelPnlMode == PanelPnLMode.ChartHistorical)
-					{
-						RecalcPnLIfNeeded(nowBrtDt);
-						int count = SystemPerformance.AllTrades.Count;
-						if (count != _lastSavedHistoricalTradesCount)
-						{
-							_lastSavedHistoricalTradesCount = count;
-							_panelCacheSaveRequested = true;
-						}
-					}
-					else
-					{
-						realizedPnlDay = _rtRealizedDay;
-						_cachedPnlMonth = _rtRealizedMonth.ToString("0.00");
-						_cachedPnlTotal = _rtRealizedTotal.ToString("0.00");
-					}
-
-					UpdateUnrealizedAndTotalPnL();
-					UpdateStreaksIfClosedTradesChanged();
-
-					dayStopDollars = $"-{DailyLossLimitUsd:0}";
-					dayTargetDollars = $"+{DailyProfitLimitUsd:0}";
-					dayBreakevenDollars = "-";
-
-					bool skipLimits = (State == State.Historical && DisableDailyLimitsInStrategyAnalyzer);
-					if (!isLockedForDay && !skipLimits)
-					{
-						if (_totalPnlDay >= DailyProfitLimitUsd)
-						{
-							LogMsg("DailyLimitHitProfit", $"TotalPnL={_totalPnlDay:0.00} (R={realizedPnlDay:0.00} U={_unrealizedPnlManual:0.00}) >= {DailyProfitLimitUsd:0.00}", 2);
-							RequestFlatten("DailyProfitLimit", allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
-							LockDay("DailyProfitLimit");
-							PublishPanelSnapshot("DailyLimit");
-							return;
-						}
-						else if (_totalPnlDay <= -DailyLossLimitUsd)
-						{
-							LogMsg("DailyLimitHitLoss", $"TotalPnL={_totalPnlDay:0.00} (R={realizedPnlDay:0.00} U={_unrealizedPnlManual:0.00}) <= -{DailyLossLimitUsd:0.00}", 2);
-							RequestFlatten("DailyLossLimit", allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
-							LockDay("DailyLossLimit");
-							PublishPanelSnapshot("DailyLimit");
-							return;
-						}
-					}
-
-					bool inWindow = InTradingWindow(nowBrtInt) && !isLockedForDay;
-					if (isAnalyzer && IgnoreWindowInAnalyzer)
-						inWindow = !isLockedForDay;
-
-					if (!isLockedForDay)
-						dayStatus = inWindow ? "Trading" : (nowBrtInt < startHHmmss ? "BeforeStart" : "StopNewTrades");
-					else
-						dayStatus = "Locked";
-
-					Regime newRegime = GetEffectiveRegime(vwap);
-					bool canFlip = (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0) && !cycleOpen;
-					bool regimeChanged = canFlip && newRegime != currentRegime;
-					if (regimeChanged)
-					{
-						lastRegime = currentRegime;
-						currentRegime = newRegime;
-						_lastSignal = $"RegimeChanged:{newRegime}";
-						SupportDump("signal_detected");
-						CancelAllGrid("regime_flip_price_vs_vwap");
-						LogMsg("RegimeChanged",
-							$"Regime={currentRegime} byPrice close={Close[0]:0.00} vwap={vwap:0.00}",
-							2);
-					}
-					else
-					{
-						currentRegime = newRegime;
-					}
-
-					var mode = GetExitMode();
-					bool canMaintainExit = !isLockedForDay && Position.MarketPosition != MarketPosition.Flat;
-					bool useVwapExit = mode == ExitMode.Vwap && canMaintainExit;
-					bool useOppositeBandExit = mode == ExitMode.OppositeBand && canMaintainExit;
-					bool useFinancialExit = !useVwapExit && !useOppositeBandExit;
-					bool checkFinancialExit = useFinancialExit && !isLockedForDay;
-
-					if (useVwapExit)
-					{
-						MaintainVwapExitOrder(vwap);
-						CancelOppositeBandExit();
-						CancelFinancialTarget();
-					}
-					else if (useOppositeBandExit)
-					{
-						CancelExitVwap();
-						MaintainOppositeBandExitOrder();
-						CancelFinancialTarget();
-					}
-					else
-					{
-						CancelExitVwap();
-						CancelOppositeBandExit();
-						if (checkFinancialExit)
-							CheckFinancialExitPerTrade();
-						MaintainFinancialTargetLimit();
-					}
-
-					MaintainStopLoss();
-
-					CancelAllGrid("slow_stoch_mode");
-
-					bool isFlat = Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0;
-					bool hasWorkingOrders = HasAnyWorkingOrders();
-					double stochD = _stoch?.D[0] ?? double.NaN;
-					bool canStartCycle = CanStartNewCycle(newRegime);
-
-					if (inWindow && !isLockedForDay && isFlat && !hasWorkingOrders && canStartCycle && !double.IsNaN(stochD))
-					{
-						if (!BlockIfSameBar("slow_stoch_entry"))
-						{
-							if (newRegime == Regime.Buy && Close[0] <= lower[1] && stochD <= StochLowerThreshold)
-							{
-								EnterLong(0, QuantityPerGridOrder, "SlowStoch_Long");
-								_lastAction = "EnterLongMarket";
-								MarkActionExecuted();
-							}
-							else if (newRegime == Regime.Sell && Close[0] >= upper[1] && stochD >= StochUpperThreshold)
-							{
-								EnterShort(0, QuantityPerGridOrder, "SlowStoch_Short");
-								_lastAction = "EnterShortMarket";
-								MarkActionExecuted();
-							}
-						}
-					}
-
-					CheckFlattenProgress();
 					PublishPanelSnapshot("OnBarUpdate");
 				}
 			}
