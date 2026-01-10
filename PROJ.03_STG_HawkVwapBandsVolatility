@@ -1924,6 +1924,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private string _lastBlockReason = "";
 		private string _lastSignal = "";
 		private string _lastAction = "";
+		private int _lastActionBar = -1;
 
 		private int tradesClosedTodayTotal = 0;
 		private int tradesClosedTodayBuy = 0;
@@ -2220,6 +2221,25 @@ namespace NinjaTrader.NinjaScript.Strategies
 				};
 			}
 			catch { }
+		}
+
+		private bool BlockIfSameBar(string actionTag)
+		{
+			if (CurrentBar < 0) return false;
+			if (_lastActionBar == CurrentBar)
+			{
+				_lastBlockReason = $"block_same_bar:{actionTag}";
+				UpdateSnapshot("block");
+				LogMsg("OrderBlock", $"blocked same bar action={actionTag} bar={CurrentBar}", 3);
+				return true;
+			}
+			return false;
+		}
+
+		private void MarkActionExecuted()
+		{
+			if (CurrentBar >= 0)
+				_lastActionBar = CurrentBar;
 		}
 
 		private int ParseHms(string s)
@@ -3029,13 +3049,24 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (Math.Abs(ord.LimitPrice - target) > repricingThreshold ||
 				    ord.Quantity != qty)
 				{
+					if (BlockIfSameBar("OppBandExitReplace")) return;
+					if (HasWorkingOrders(oppositeBandExitOrderReplace))
+					{
+						_lastBlockReason = "block_working_exit:OppBandExitReplace";
+						UpdateSnapshot("block");
+						LogMsg("OrderBlock", "blocked working exit order for OppBandExitReplace", 3);
+						return;
+					}
 					if (Position.MarketPosition == MarketPosition.Long)
 						oppositeBandExitOrderReplace = ExitLongLimit(0, true, qty, target, "OppBandExitL_R", null);
 					else
 						oppositeBandExitOrderReplace = ExitShortLimit(0, true, qty, target, "OppBandExitS_R", null);
 
 					if (oppositeBandExitOrderReplace != null)
+					{
+						MarkActionExecuted();
 						UpdateSnapshot($"order_sent:{oppositeBandExitOrderReplace.Name}");
+					}
 					LogMsg("OppBandExitReplaceSubmit", $"pos={Position.MarketPosition} old={ord.LimitPrice:0.00} new={target:0.00}", 2);
 				}
 				return;
@@ -3044,16 +3075,38 @@ namespace NinjaTrader.NinjaScript.Strategies
 			// No active main => place new
 			if (Position.MarketPosition == MarketPosition.Long)
 			{
+				if (BlockIfSameBar("OppBandExitNew")) return;
+				if (HasWorkingOrders(oppositeBandExitOrder))
+				{
+					_lastBlockReason = "block_working_exit:OppBandExitNew";
+					UpdateSnapshot("block");
+					LogMsg("OrderBlock", "blocked working exit order for OppBandExitNew", 3);
+					return;
+				}
 				oppositeBandExitOrder = ExitLongLimit(0, true, qty, target, "OppBandExitL", null);
 				if (oppositeBandExitOrder != null)
+				{
+					MarkActionExecuted();
 					UpdateSnapshot($"order_sent:{oppositeBandExitOrder.Name}");
+				}
 				LogMsg("OppBandExitPlaced", $"L target={target:0.00}", 2);
 			}
 			else if (Position.MarketPosition == MarketPosition.Short)
 			{
+				if (BlockIfSameBar("OppBandExitNew")) return;
+				if (HasWorkingOrders(oppositeBandExitOrder))
+				{
+					_lastBlockReason = "block_working_exit:OppBandExitNew";
+					UpdateSnapshot("block");
+					LogMsg("OrderBlock", "blocked working exit order for OppBandExitNew", 3);
+					return;
+				}
 				oppositeBandExitOrder = ExitShortLimit(0, true, qty, target, "OppBandExitS", null);
 				if (oppositeBandExitOrder != null)
+				{
+					MarkActionExecuted();
 					UpdateSnapshot($"order_sent:{oppositeBandExitOrder.Name}");
+				}
 				LogMsg("OppBandExitPlaced", $"S target={target:0.00}", 2);
 			}
 		}
@@ -3163,13 +3216,24 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			if (!needReprice) return;
 
+			if (BlockIfSameBar("FinTargetReplace")) return;
+			if (HasWorkingOrders(financialTargetOrderReplace))
+			{
+				_lastBlockReason = "block_working_exit:FinTargetReplace";
+				UpdateSnapshot("block");
+				LogMsg("OrderBlock", "blocked working exit order for FinTargetReplace", 3);
+				return;
+			}
 			if (Position.MarketPosition == MarketPosition.Long)
 				financialTargetOrderReplace = ExitLongLimit(0, true, qty, target, "FinTargetL_R", null);
 			else if (Position.MarketPosition == MarketPosition.Short)
 				financialTargetOrderReplace = ExitShortLimit(0, true, qty, target, "FinTargetS_R", null);
 
 			if (financialTargetOrderReplace != null)
+			{
+				MarkActionExecuted();
 				UpdateSnapshot($"order_sent:{financialTargetOrderReplace.Name}");
+			}
 			LogMsg("FinTargetUpdated", $"side={Position.MarketPosition} qty={qty} avg={Position.AveragePrice:0.00} tgt={target:0.00} usd={TradeProfitTargetUsd:0.00}", 2);
 		}
 		#endregion
@@ -3233,13 +3297,24 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 			catch { }
 
+			if (BlockIfSameBar("FinStop")) return;
+			if (HasWorkingOrders(stopLossOrder))
+			{
+				_lastBlockReason = "block_working_exit:FinStop";
+				UpdateSnapshot("block");
+				LogMsg("OrderBlock", "blocked working exit order for FinStop", 3);
+				return;
+			}
 			if (Position.MarketPosition == MarketPosition.Long)
 				stopLossOrder = ExitLongStopMarket(0, true, qty, stopPrice, "FinStopL", null);
 			else if (Position.MarketPosition == MarketPosition.Short)
 				stopLossOrder = ExitShortStopMarket(0, true, qty, stopPrice, "FinStopS", null);
 
 			if (stopLossOrder != null)
+			{
+				MarkActionExecuted();
 				UpdateSnapshot($"order_sent:{stopLossOrder.Name}");
+			}
 			LogMsg("FinStopUpdated", $"side={Position.MarketPosition} qty={qty} avg={Position.AveragePrice:0.00} stop={stopPrice:0.00} usd={FinancialStopUsd:0.00}", 2);
 		}
 		#endregion
@@ -3378,6 +3453,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private bool IsCancelling(Order ord) =>
 			ord != null && (ord.OrderState == OrderState.CancelPending || ord.OrderState == OrderState.CancelSubmitted);
 
+		private bool HasWorkingOrders(params Order[] orders)
+		{
+			if (orders == null) return false;
+			foreach (var ord in orders)
+			{
+				if (ord != null && (ord.OrderState == OrderState.Working || ord.OrderState == OrderState.Accepted))
+					return true;
+			}
+			return false;
+		}
+
 		// SINGLE definition of IsDeadOrder in Part 2B (removed from 2A to avoid duplicates)
 		private bool IsDeadOrder(Order ord) =>
 			ord == null || ord.OrderState == OrderState.Cancelled || ord.OrderState == OrderState.Rejected;
@@ -3471,6 +3557,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 					return;
 				}
 
+				if (BlockIfSameBar($"Grid{idx + 1}_Buy_R")) return;
+				if (HasWorkingOrders(gridLongReplace[idx]))
+				{
+					_lastBlockReason = $"block_working_entry:Grid{idx + 1}_Buy_R";
+					UpdateSnapshot("block");
+					LogMsg("OrderBlock", $"blocked working entry order for Grid{idx + 1} Buy replace", 3);
+					return;
+				}
 				var o = EnterLongLimit(0, true, qty, price, $"Grid{idx + 1}_Buy_R");
 				if (o == null)
 				{
@@ -3479,6 +3573,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				}
 				gridLongReplace[idx] = o;
 				_lastGridRepriceBarLong[idx] = CurrentBar;
+				MarkActionExecuted();
 				UpdateSnapshot($"order_sent:{o.Name}");
 
 				if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
@@ -3488,6 +3583,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 				return;
 			}
 
+			if (BlockIfSameBar($"Grid{idx + 1}_Buy")) return;
+			if (HasWorkingOrders(gridLong[idx]))
+			{
+				_lastBlockReason = $"block_working_entry:Grid{idx + 1}_Buy";
+				UpdateSnapshot("block");
+				LogMsg("OrderBlock", $"blocked working entry order for Grid{idx + 1} Buy", 3);
+				return;
+			}
 			var newOrd = EnterLongLimit(0, true, qty, price, $"Grid{idx + 1}_Buy");
 			if (newOrd == null)
 			{
@@ -3495,6 +3598,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				return;
 			}
 			gridLong[idx] = newOrd;
+			MarkActionExecuted();
 			UpdateSnapshot($"order_sent:{newOrd.Name}");
 
 			if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
@@ -3592,6 +3696,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 					return;
 				}
 
+				if (BlockIfSameBar($"Grid{idx + 1}_Sell_R")) return;
+				if (HasWorkingOrders(gridShortReplace[idx]))
+				{
+					_lastBlockReason = $"block_working_entry:Grid{idx + 1}_Sell_R";
+					UpdateSnapshot("block");
+					LogMsg("OrderBlock", $"blocked working entry order for Grid{idx + 1} Sell replace", 3);
+					return;
+				}
 				var o = EnterShortLimit(0, true, qty, price, $"Grid{idx + 1}_Sell_R");
 				if (o == null)
 				{
@@ -3600,6 +3712,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				}
 				gridShortReplace[idx] = o;
 				_lastGridRepriceBarShort[idx] = CurrentBar;
+				MarkActionExecuted();
 				UpdateSnapshot($"order_sent:{o.Name}");
 
 				if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
@@ -3609,6 +3722,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 				return;
 			}
 
+			if (BlockIfSameBar($"Grid{idx + 1}_Sell")) return;
+			if (HasWorkingOrders(gridShort[idx]))
+			{
+				_lastBlockReason = $"block_working_entry:Grid{idx + 1}_Sell";
+				UpdateSnapshot("block");
+				LogMsg("OrderBlock", $"blocked working entry order for Grid{idx + 1} Sell", 3);
+				return;
+			}
 			var newOrd = EnterShortLimit(0, true, qty, price, $"Grid{idx + 1}_Sell");
 			if (newOrd == null)
 			{
@@ -3616,6 +3737,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				return;
 			}
 			gridShort[idx] = newOrd;
+			MarkActionExecuted();
 			UpdateSnapshot($"order_sent:{newOrd.Name}");
 
 			if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
@@ -3702,17 +3824,39 @@ namespace NinjaTrader.NinjaScript.Strategies
 					if (Math.Abs(exitVwapOrder.LimitPrice - vwap) > repricingThreshold ||
 					    exitVwapOrder.Quantity != qty)
 					{
+						if (BlockIfSameBar("VWAPExitReplace")) return;
+						if (HasWorkingOrders(exitVwapOrderReplace))
+						{
+							_lastBlockReason = "block_working_exit:VWAPExitReplace";
+							UpdateSnapshot("block");
+							LogMsg("OrderBlock", "blocked working exit order for VWAPExitReplace", 3);
+							return;
+						}
 						exitVwapOrderReplace = ExitLongLimit(0, true, qty, vwap, "VWAPExitL_R", null);
 						if (exitVwapOrderReplace != null)
+						{
+							MarkActionExecuted();
 							UpdateSnapshot($"order_sent:{exitVwapOrderReplace.Name}");
+						}
 						LogMsg("VWAPExitReplaceSubmit", $"old={exitVwapOrder.LimitPrice:0.00} new={vwap:0.00}", 2);
 					}
 					return;
 				}
 
+				if (BlockIfSameBar("VWAPExitNew")) return;
+				if (HasWorkingOrders(exitVwapOrder))
+				{
+					_lastBlockReason = "block_working_exit:VWAPExitNew";
+					UpdateSnapshot("block");
+					LogMsg("OrderBlock", "blocked working exit order for VWAPExitNew", 3);
+					return;
+				}
 				exitVwapOrder = ExitLongLimit(0, true, qty, vwap, "VWAPExitL", null);
 				if (exitVwapOrder != null)
+				{
+					MarkActionExecuted();
 					UpdateSnapshot($"order_sent:{exitVwapOrder.Name}");
+				}
 			}
 			else if (Position.MarketPosition == MarketPosition.Short)
 			{
@@ -3721,17 +3865,39 @@ namespace NinjaTrader.NinjaScript.Strategies
 					if (Math.Abs(exitVwapOrder.LimitPrice - vwap) > repricingThreshold ||
 					    exitVwapOrder.Quantity != qty)
 					{
+						if (BlockIfSameBar("VWAPExitReplace")) return;
+						if (HasWorkingOrders(exitVwapOrderReplace))
+						{
+							_lastBlockReason = "block_working_exit:VWAPExitReplace";
+							UpdateSnapshot("block");
+							LogMsg("OrderBlock", "blocked working exit order for VWAPExitReplace", 3);
+							return;
+						}
 						exitVwapOrderReplace = ExitShortLimit(0, true, qty, vwap, "VWAPExitS_R", null);
 						if (exitVwapOrderReplace != null)
+						{
+							MarkActionExecuted();
 							UpdateSnapshot($"order_sent:{exitVwapOrderReplace.Name}");
+						}
 						LogMsg("VWAPExitReplaceSubmit", $"old={exitVwapOrder.LimitPrice:0.00} new={vwap:0.00}", 2);
 					}
 					return;
 				}
 
+				if (BlockIfSameBar("VWAPExitNew")) return;
+				if (HasWorkingOrders(exitVwapOrder))
+				{
+					_lastBlockReason = "block_working_exit:VWAPExitNew";
+					UpdateSnapshot("block");
+					LogMsg("OrderBlock", "blocked working exit order for VWAPExitNew", 3);
+					return;
+				}
 				exitVwapOrder = ExitShortLimit(0, true, qty, vwap, "VWAPExitS", null);
 				if (exitVwapOrder != null)
+				{
+					MarkActionExecuted();
 					UpdateSnapshot($"order_sent:{exitVwapOrder.Name}");
+				}
 			}
 		}
 
@@ -3803,8 +3969,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 
 			// Prevent double-submission on the same bar (e.g., multi-series timing or post-fill lag).
+			if (BlockIfSameBar("FlattenSubmit")) return;
 			if (_lastFlattenSubmitBar == CurrentBar)
 			{
+				_lastBlockReason = "block_same_bar:FlattenSubmit";
+				UpdateSnapshot("block");
 				LogMsg("FlattenSkip", $"reason={reason} skip=same_bar curBar={CurrentBar}", 2);
 				return;
 			}
@@ -3835,6 +4004,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			if (flattenOrder == null)
 				LogMsg("FlattenSubmitNull", $"reason={reason} pos={Position.MarketPosition} qty={qty} attempt={flattenAttemptCount}", 1);
+			else
+				MarkActionExecuted();
 
 			LogMsg("FlattenRequest", $"reason={reason} pos={Position.MarketPosition} qty={qty} attempt={flattenAttemptCount} allowFallback={flattenAllowFallback}", 2);
 		}
