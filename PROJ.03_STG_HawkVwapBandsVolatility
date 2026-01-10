@@ -1861,6 +1861,25 @@ namespace NinjaTrader.NinjaScript.Strategies
 			public string LastAction;
 		}
 
+		private struct SignalDecision
+		{
+			public bool RegimeChanged;
+			public bool ExitModeChanged;
+			public bool UseVwapExit;
+			public bool UseOppositeBandExit;
+			public bool UseFinancialExit;
+			public bool CheckFinancialExit;
+			public bool MaintainFinancialTarget;
+			public bool MaintainStopLoss;
+			public bool RepriceGrid;
+			public bool CancelSideGridForLimit;
+			public bool CancelAllGrid;
+			public bool CancelStopsWhenFlat;
+			public string SignalName;
+			public Regime NextRegime;
+			public ExitMode ExitMode;
+		}
+
 		private enum Regime { None, Buy, Sell }
 		private enum ExitMode { Vwap, OppositeBand, Financial }
 
@@ -4373,6 +4392,125 @@ namespace NinjaTrader.NinjaScript.Strategies
 		}
 		#endregion
 
+		private SignalDecision EvaluateSignals(double vwap, bool inWindow)
+		{
+			SignalDecision decision = new SignalDecision();
+
+			Regime newRegime = GetEffectiveRegime(vwap);
+			bool canFlip = (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0) && !cycleOpen;
+
+			decision.RegimeChanged = canFlip && newRegime != currentRegime;
+			decision.SignalName = decision.RegimeChanged ? $"RegimeChanged:{newRegime}" : string.Empty;
+			decision.NextRegime = newRegime;
+
+			var mode = GetExitMode();
+			decision.ExitMode = mode;
+			decision.ExitModeChanged = lastExitMode == null || lastExitMode != mode;
+
+			bool canMaintainExit = !isLockedForDay && Position.MarketPosition != MarketPosition.Flat;
+			decision.UseVwapExit = mode == ExitMode.Vwap && canMaintainExit;
+			decision.UseOppositeBandExit = mode == ExitMode.OppositeBand && canMaintainExit;
+			decision.UseFinancialExit = !decision.UseVwapExit && !decision.UseOppositeBandExit;
+			decision.CheckFinancialExit = decision.UseFinancialExit && !isLockedForDay;
+			decision.MaintainFinancialTarget = decision.UseFinancialExit;
+			decision.MaintainStopLoss = true;
+
+			bool cycleAlreadyOpen = cycleOpen || (Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0);
+			bool canStartCycle = cycleAlreadyOpen || CanStartNewCycle(newRegime);
+
+			decision.RepriceGrid = inWindow && newRegime != Regime.None && !isLockedForDay && canStartCycle;
+			decision.CancelSideGridForLimit = !canStartCycle && newRegime != Regime.None;
+			decision.CancelAllGrid = !decision.RepriceGrid && !decision.CancelSideGridForLimit;
+			decision.CancelStopsWhenFlat = decision.CancelAllGrid && (Position == null || Position.MarketPosition == MarketPosition.Flat);
+
+			return decision;
+		}
+
+		private void TryExecute(SignalDecision decision, double vwap, int touched, DateTime nowBrtDt, int nowBrtInt, bool inWindow)
+		{
+			if (decision.RegimeChanged)
+			{
+				lastRegime = currentRegime;
+				currentRegime = decision.NextRegime;
+				_lastSignal = decision.SignalName;
+				SupportDump("signal_detected");
+
+				CancelAllGrid("regime_flip_price_vs_vwap");
+				LogMsg("RegimeChanged",
+					$"Regime={currentRegime} byPrice close={Close[0]:0.00} vwap={vwap:0.00} touched={touched}",
+					2);
+			}
+			else
+			{
+				currentRegime = decision.NextRegime;
+			}
+
+			LogMsg("DBG",
+			  $"time={Time[0]:O} brt={nowBrtDt:HH:mm:ss} nowBrt={nowBrtInt} inWindow={inWindow} " +
+			  $"locked={isLockedForDay} lockReason={_lockReason} pos={Position.MarketPosition} qty={Position.Quantity} " +
+			  $"close={Close[0]:0.00} regime={currentRegime} vwap={vwap:0.00} " +
+			  $"pnlT={_totalPnlDay:0.00} pnlR={realizedPnlDay:0.00} pnlU={_unrealizedPnlManual:0.00} pnlM={_monthPnl:0.00} pnlAll={_overallPnl:0.00} " +
+			  $"tradesClosed={tradesClosedTodayTotal} buyClosed={tradesClosedTodayBuy} sellClosed={tradesClosedTodaySell}",
+			  3);
+
+			if (decision.ExitModeChanged)
+			{
+				LogMsg("ExitModeChanged", $"from={(lastExitMode.HasValue ? lastExitMode.ToString() : "None")} to={decision.ExitMode}", 3);
+				lastExitMode = decision.ExitMode;
+			}
+
+			if (decision.UseVwapExit)
+			{
+				MaintainVwapExitOrder(vwap);
+				CancelOppositeBandExit();
+				CancelFinancialTarget();
+			}
+			else if (decision.UseOppositeBandExit)
+			{
+				CancelExitVwap();
+				MaintainOppositeBandExitOrder();
+				CancelFinancialTarget();
+			}
+			else
+			{
+				CancelExitVwap();
+				CancelOppositeBandExit();
+				if (decision.CheckFinancialExit)
+					CheckFinancialExitPerTrade();
+				MaintainFinancialTargetLimit();
+			}
+
+			if (decision.MaintainStopLoss)
+				MaintainStopLoss();
+
+			if (decision.RepriceGrid)
+			{
+				RepriceOrPlaceGrid(upper, lower);
+			}
+			else
+			{
+				if (decision.CancelSideGridForLimit)
+				{
+					CancelSideGrid(currentRegime, "trade_limit_cycle");
+					dayStatus = "TradeLimitHit";
+					lastEvent = "TradeLimitHit";
+					_lastBlockReason = "trade_limit_cycle";
+					SupportDump("trade_blocked");
+				}
+				else
+				{
+					CancelAllGrid("out_window_or_locked");
+					if (decision.CancelStopsWhenFlat)
+					{
+						CancelStopLoss();
+						CancelFinancialTarget();
+					}
+				}
+			}
+
+			CheckFlattenProgress();
+		}
+
 		#region Core OnBarUpdate
 		protected override void OnBarUpdate()
 		{
@@ -4532,94 +4670,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 					dayStatus = "Locked";
 
 				int touched = hvb.TouchedBandIndexSeries[0];
-
-				Regime newRegime = GetEffectiveRegime(vwap);
-				bool canFlip = (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0) && !cycleOpen;
-
-				if (canFlip && newRegime != currentRegime)
-				{
-					lastRegime = currentRegime;
-					currentRegime = newRegime;
-					_lastSignal = $"RegimeChanged:{currentRegime}";
-					SupportDump("signal_detected");
-
-					CancelAllGrid("regime_flip_price_vs_vwap");
-					LogMsg("RegimeChanged",
-						$"Regime={currentRegime} byPrice close={Close[0]:0.00} vwap={vwap:0.00} touched={touched}",
-						2);
-				}
-				else
-				{
-					currentRegime = newRegime;
-				}
-
-				LogMsg("DBG",
-				  $"time={Time[0]:O} brt={nowBrtDt:HH:mm:ss} nowBrt={nowBrtInt} inWindow={inWindow} " +
-				  $"locked={isLockedForDay} lockReason={_lockReason} pos={Position.MarketPosition} qty={Position.Quantity} " +
-				  $"close={Close[0]:0.00} regime={currentRegime} vwap={vwap:0.00} " +
-				  $"pnlT={_totalPnlDay:0.00} pnlR={realizedPnlDay:0.00} pnlU={_unrealizedPnlManual:0.00} pnlM={_monthPnl:0.00} pnlAll={_overallPnl:0.00} " +
-				  $"tradesClosed={tradesClosedTodayTotal} buyClosed={tradesClosedTodayBuy} sellClosed={tradesClosedTodaySell}",
-				  3);
-
-				var mode = GetExitMode();
-				if (lastExitMode == null || lastExitMode != mode)
-				{
-					LogMsg("ExitModeChanged", $"from={(lastExitMode.HasValue ? lastExitMode.ToString() : "None")} to={mode}", 3);
-					lastExitMode = mode;
-				}
-
-				if (mode == ExitMode.Vwap && !isLockedForDay && Position.MarketPosition != MarketPosition.Flat)
-				{
-					MaintainVwapExitOrder(vwap);
-					CancelOppositeBandExit();
-					CancelFinancialTarget();
-				}
-				else if (mode == ExitMode.OppositeBand && !isLockedForDay && Position.MarketPosition != MarketPosition.Flat)
-				{
-					CancelExitVwap();
-					MaintainOppositeBandExitOrder();
-					CancelFinancialTarget();
-				}
-				else
-				{
-					CancelExitVwap();
-					CancelOppositeBandExit();
-					if (!isLockedForDay)
-						CheckFinancialExitPerTrade();
-					MaintainFinancialTargetLimit();
-				}
-
-				MaintainStopLoss();
-
-				bool cycleAlreadyOpen = cycleOpen || (Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0);
-				bool canStartCycle = cycleAlreadyOpen || CanStartNewCycle(currentRegime);
-
-				if (inWindow && currentRegime != Regime.None && !isLockedForDay && canStartCycle)
-				{
-					RepriceOrPlaceGrid(upper, lower);
-				}
-				else
-				{
-					if (!canStartCycle && currentRegime != Regime.None)
-					{
-						CancelSideGrid(currentRegime, "trade_limit_cycle");
-						dayStatus = "TradeLimitHit";
-						lastEvent = "TradeLimitHit";
-						_lastBlockReason = "trade_limit_cycle";
-						SupportDump("trade_blocked");
-					}
-					else
-					{
-						CancelAllGrid("out_window_or_locked");
-						if (Position == null || Position.MarketPosition == MarketPosition.Flat)
-						{
-							CancelStopLoss();
-							CancelFinancialTarget();
-						}
-					}
-				}
-
-				CheckFlattenProgress();
+				var decision = EvaluateSignals(vwap, inWindow);
+				TryExecute(decision, vwap, touched, nowBrtDt, nowBrtInt, inWindow);
 
 				PublishPanelSnapshot("OnBarUpdate");
 			}
