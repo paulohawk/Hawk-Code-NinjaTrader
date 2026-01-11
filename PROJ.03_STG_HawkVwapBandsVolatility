@@ -2610,6 +2610,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			snap.PnLTotalText = _cachedPnlTotal;
 			snap.ATREnabled = EnableSlowStochFilter;
 			snap.AtrDisplayText = EnableSlowStochFilter ? "On" : "Off";
+			snap.BEEnabled = breakEvenActivated;
 
 			snap.DayStopDollar = dayStopDollars;
 			snap.DayTargetDollar = dayTargetDollars;
@@ -4988,7 +4989,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 					dayStopDollars = $"-{DailyLossLimitUsd:0}";
 					dayTargetDollars = $"+{DailyProfitLimitUsd:0}";
-					dayBreakevenDollars = "-";
+					dayBreakevenDollars = breakEvenActivated ? "ON" : "-";
 
 					bool skipLimits = (State == State.Historical && DisableDailyLimitsInStrategyAnalyzer);
 					if (!isLockedForDay && !skipLimits)
@@ -5084,7 +5085,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 					dayStopDollars = $"-{DailyLossLimitUsd:0}";
 					dayTargetDollars = $"+{DailyProfitLimitUsd:0}";
-					dayBreakevenDollars = "-";
+					dayBreakevenDollars = breakEvenActivated ? "ON" : "-";
 
 					bool skipLimits = (State == State.Historical && DisableDailyLimitsInStrategyAnalyzer);
 					if (!isLockedForDay && !skipLimits)
