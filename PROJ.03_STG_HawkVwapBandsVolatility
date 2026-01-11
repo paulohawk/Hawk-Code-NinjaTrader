@@ -2547,9 +2547,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			if (!offSnapshot && PanelPnlMode == PanelPnLMode.ChartHistorical)
 			{
-				DateTime nowLocalBrt = CurrentBar >= 0
-					? ConvertToBrasilia(Time[0]).AddMinutes(UserBrtOffsetMinutes)
-					: ConvertToBrasilia(DateTime.UtcNow).AddMinutes(UserBrtOffsetMinutes);
+				DateTime referenceTime = CurrentBar >= 0 ? Time[0] : DateTime.UtcNow;
+				DateTime nowLocalBrt = ConvertToBrasilia(referenceTime).AddMinutes(UserBrtOffsetMinutes);
 				RecalcPnLIfNeeded(nowLocalBrt);
 			}
 
@@ -2805,8 +2804,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				var all = SystemPerformance.AllTrades;
 				int count = all.Count;
 				DateTime referenceLocal = nowLocalBrt;
-				if (State == State.Historical && CurrentBar >= 0)
-					referenceLocal = Time[0];
 				bool throttle = (DateTime.UtcNow - _lastPnlCalcUtc).TotalSeconds < Math.Max(1, PanelPublishIntervalSeconds);
 				if (count == _lastPnlCalcCount && throttle)
 					return;
