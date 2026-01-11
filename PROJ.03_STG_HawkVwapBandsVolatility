@@ -1711,7 +1711,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 	public class HawkVwapBandsVolatility : Strategy
 	{
-		public enum HawkLogLevel { Off, Error, Info, Debug, Trace }
+		public enum HawkLogLevel { Off, Error, Info, Display, Debug, Trace }
 
 		#region Inputs (public)
 		[NinjaScriptProperty, Display(Name = "Start Time BRT (HH:mm[:ss])", GroupName = "Horas", Order = 1)]
@@ -2263,6 +2263,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 			lastEvent = tag;
 		}
 
+		private void LogDisplay(string tag, string msg)
+		{
+			if (!ShouldLog(HawkLogLevel.Display)) return;
+			Log(HawkLogLevel.Display, tag, msg);
+		}
+
 		private HawkLogLevel MapLogLevel(int level)
 		{
 			switch (level)
@@ -2692,6 +2698,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			var snap = BuildSnapshot(false, dayStatus);
 			if (snap == null) return;
+			LogDisplay("PanelSnapshot",
+				$"ctx={context} beActive={breakEvenActivated} snapBE={(snap.BEEnabled.HasValue ? snap.BEEnabled.Value.ToString() : "null")} " +
+				$"dayBE={snap.DayBreakevenDollar ?? "-"} status={snap.DayTradeStatus ?? "-"} " +
+				$"entry={(snap.EntryPrice.HasValue ? snap.EntryPrice.Value.ToString("0.00") : "-")} " +
+				$"stop={(snap.StopChart.HasValue ? snap.StopChart.Value.ToString("0.00") : "-")} " +
+				$"target={(snap.ExitTarget.HasValue ? snap.ExitTarget.Value.ToString("0.00") : "-")}");
 			HVB_PanelStateHub.Set(cacheKey, snap);
 			if (panelHelper != null)
 			{
@@ -4398,6 +4410,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					dayBreakevenDollars = "ON";
 					if (GetExitMode() == ExitMode.Financial && !isLockedForDay && !flattenInProgress)
 						MaintainFinancialTargetLimit();
+					LogDisplay("BreakEvenTriggered", $"side=Long entry={entryPrice:0.00} newStop={newStop:0.00} riskUsd={riskTriggerUsd:0.00} unrealUsd={unrealizedUsd:0.00} qty={qty}");
 					PublishPanelSnapshot("BreakEvenTriggered");
 				}
 			}
@@ -4419,6 +4432,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					dayBreakevenDollars = "ON";
 					if (GetExitMode() == ExitMode.Financial && !isLockedForDay && !flattenInProgress)
 						MaintainFinancialTargetLimit();
+					LogDisplay("BreakEvenTriggered", $"side=Short entry={entryPrice:0.00} newStop={newStop:0.00} riskUsd={riskTriggerUsd:0.00} unrealUsd={unrealizedUsd:0.00} qty={qty}");
 					PublishPanelSnapshot("BreakEvenTriggered");
 				}
 			}
@@ -4895,11 +4909,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 				{
 					breakEvenActivated = false;
 					entryPrice = 0.0;
+					LogDisplay("BreakEvenReset", "pos=Flat reset breakEvenActivated/entryPrice");
 				}
 
 				if (entryPrice == 0 && Position.MarketPosition != MarketPosition.Flat)
 				{
 					entryPrice = Position.AveragePrice;
+					LogDisplay("BreakEvenEntryPrice", $"pos={Position.MarketPosition} entryPrice={entryPrice:0.00}");
 				}
 
 				if (SupportMode && SupportDumpEveryNBars > 0 && CurrentBar >= 0 &&
