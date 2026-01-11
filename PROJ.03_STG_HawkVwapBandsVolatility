@@ -1922,6 +1922,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private Order closeBarOrder = null;
 		private Regime closeBarOrderDirection = Regime.None;
 		private double closeBarOrderSignalClose = double.NaN;
+		private const string CloseBarEntryLongName = "CloseBarEntryLong";
+		private const string CloseBarEntryShortName = "CloseBarEntryShort";
 
 		private DateTime lastCalendarDayBrt = DateTime.MinValue;
 		private bool isLockedForDay = false;
@@ -3008,6 +3010,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 				flattenOrder = order;
 				return;
 			}
+
+			if (name.StartsWith(CloseBarEntryLongName, StringComparison.OrdinalIgnoreCase) ||
+			    name.StartsWith(CloseBarEntryShortName, StringComparison.OrdinalIgnoreCase))
+			{
+				closeBarOrder = order;
+				return;
+			}
 		}
 
 		private void ClearOrderReference(Order order)
@@ -3114,6 +3123,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 				flattenOrder == order)
 			{
 				flattenOrder = null;
+				return;
+			}
+
+			if ((name.StartsWith(CloseBarEntryLongName, StringComparison.OrdinalIgnoreCase) ||
+			    name.StartsWith(CloseBarEntryShortName, StringComparison.OrdinalIgnoreCase)) &&
+			    closeBarOrder == order)
+			{
+				closeBarOrder = null;
 				return;
 			}
 		}
@@ -3675,7 +3692,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private bool HasAnyWorkingOrders()
 		{
 			if (HasWorkingOrders(exitVwapOrder, exitVwapOrderReplace, oppositeBandExitOrder, oppositeBandExitOrderReplace,
-				stopLossOrder, financialTargetOrder, financialTargetOrderReplace, flattenOrder))
+				stopLossOrder, financialTargetOrder, financialTargetOrderReplace, flattenOrder, closeBarOrder))
 				return true;
 
 			for (int i = 0; i < 5; i++)
@@ -4992,7 +5009,41 @@ namespace NinjaTrader.NinjaScript.Strategies
 					double stochD = _stoch?.D[0] ?? double.NaN;
 					bool canStartCycle = CanStartNewCycle(newRegime);
 
-					if (inWindow && !isLockedForDay && isFlat && !hasWorkingOrders && canStartCycle && !double.IsNaN(stochD))
+					bool hasCloseBarWorkingOrder = closeBarOrder != null && IsActiveOrSubmitted(closeBarOrder);
+					bool closeInsideSecondBand = !double.IsNaN(lower[1]) && !double.IsNaN(upper[1]) &&
+						Close[0] >= lower[1] && Close[0] <= upper[1];
+
+					if (closeBarOrderPending && !hasCloseBarWorkingOrder)
+					{
+						if (inWindow && !isLockedForDay && isFlat && !hasWorkingOrders && canStartCycle && closeInsideSecondBand)
+						{
+							double offset = CloseBarLimitOffsetTicks * TickSize;
+							if (closeBarOrderDirection == Regime.Buy)
+							{
+								double limitPrice = Close[0] + offset;
+								closeBarOrder = EnterLongLimit(0, true, QuantityPerGridOrder, limitPrice, CloseBarEntryLongName);
+								closeBarOrderPending = false;
+								closeBarOrderDirection = Regime.None;
+								closeBarOrderSignalClose = double.NaN;
+								_lastSignal = "CloseBar_Long_Limit";
+								_lastAction = "EnterLongLimitCloseBar";
+								MarkActionExecuted();
+							}
+							else if (closeBarOrderDirection == Regime.Sell)
+							{
+								double limitPrice = Close[0] - offset;
+								closeBarOrder = EnterShortLimit(0, true, QuantityPerGridOrder, limitPrice, CloseBarEntryShortName);
+								closeBarOrderPending = false;
+								closeBarOrderDirection = Regime.None;
+								closeBarOrderSignalClose = double.NaN;
+								_lastSignal = "CloseBar_Short_Limit";
+								_lastAction = "EnterShortLimitCloseBar";
+								MarkActionExecuted();
+							}
+						}
+					}
+
+					if (inWindow && !isLockedForDay && isFlat && !hasWorkingOrders && !hasCloseBarWorkingOrder && canStartCycle && !closeBarOrderPending && !double.IsNaN(stochD))
 					{
 						if (!BlockIfSameBar("slow_stoch_entry"))
 						{
@@ -5104,6 +5155,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 			bool isOppBand = order.Name != null && order.Name.StartsWith("OppBandExit", StringComparison.OrdinalIgnoreCase);
 			bool isVwap = order.Name != null && order.Name.StartsWith("VWAPExit", StringComparison.OrdinalIgnoreCase);
 			bool isFinTarget = order.Name != null && order.Name.StartsWith("FinTarget", StringComparison.OrdinalIgnoreCase);
+			bool isCloseBarEntry = order.Name != null &&
+				(order.Name.StartsWith(CloseBarEntryLongName, StringComparison.OrdinalIgnoreCase) ||
+				 order.Name.StartsWith(CloseBarEntryShortName, StringComparison.OrdinalIgnoreCase));
 
 			if (isGrid2)
 				LogMsg("Grid2State", $"state={orderState} name={order.Name} lim={limitPrice:0.00} stop={stopPrice:0.00} filled={filled}/{quantity} err={error} native={nativeError}", 3);
@@ -5235,6 +5289,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (orderState == OrderState.Rejected || orderState == OrderState.Cancelled)
 			{
 				if (flattenOrder == order) flattenOrder = null;
+				if (isCloseBarEntry)
+				{
+					closeBarOrderPending = false;
+					closeBarOrderDirection = Regime.None;
+					closeBarOrderSignalClose = double.NaN;
+				}
 				ClearOrderReference(order);
 			}
 			else
@@ -5251,6 +5311,16 @@ namespace NinjaTrader.NinjaScript.Strategies
 				LogMsg("OrderFill", $"{execution.Order.Name} {execution.Order.OrderAction} qty={quantity} price={price:0.00}", 2);
 
 				MarkBandFilledFromOrderName(execution.Order.Name);
+
+				if (execution.Order.Name != null &&
+					(execution.Order.Name.StartsWith(CloseBarEntryLongName, StringComparison.OrdinalIgnoreCase) ||
+					 execution.Order.Name.StartsWith(CloseBarEntryShortName, StringComparison.OrdinalIgnoreCase)))
+				{
+					closeBarOrderPending = false;
+					closeBarOrder = null;
+					closeBarOrderDirection = Regime.None;
+					closeBarOrderSignalClose = double.NaN;
+				}
 			}
 
 			TrackCycleCounters(time);
