@@ -4346,6 +4346,22 @@ namespace NinjaTrader.NinjaScript.Strategies
 		#endregion
 
 		#region Stop maintenance (ticks + financial priority)
+		private void UpdateUnrealizedTicksFromPosition()
+		{
+			bool isFlat = Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0;
+			double openTicksFromEntry = 0;
+			unrealizedTicks = 0;
+			if (!isFlat && TickSize > 0)
+			{
+				if (Position.MarketPosition == MarketPosition.Long)
+					openTicksFromEntry = (Close[0] - Position.AveragePrice) / TickSize;
+				else if (Position.MarketPosition == MarketPosition.Short)
+					openTicksFromEntry = (Position.AveragePrice - Close[0]) / TickSize;
+				unrealizedTicks = openTicksFromEntry;
+			}
+			_openTicksFromEntry = openTicksFromEntry;
+		}
+
 		private void ApplyBreakEvenIfTriggered()
 		{
 			if (!EnableBreakEven || breakEvenApplied)
@@ -4355,10 +4371,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (TickSize <= 0)
 				return;
 
-			double triggerUsd = TradeStopLossUsd * BreakEvenTriggerRiskMultiple;
-
-			double pnlUsd = GetTradeFloatingPnlUsd();
-			if (EnableBreakEven && !breakEvenApplied && pnlUsd >= triggerUsd)
+			if (EnableBreakEven && !breakEvenApplied && unrealizedTicks >= BreakEvenTriggerTicks)
 			{
 				double entryPrice = Position.AveragePrice;
 				double newStopPrice = entryPrice;
@@ -4370,24 +4383,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				SetStopLoss(CalculationMode.Price, newStopPrice);
 				breakEvenApplied = true;
 			}
-		}
-
-		private double GetTradeFloatingPnlUsd()
-		{
-			if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
-				return 0;
-
-			double realized = cycleOpen ? GetCumProfitSafe() - _cycleRealizedAtEntry : 0;
-			double pointValue = Instrument?.MasterInstrument?.PointValue ?? 1.0;
-			int qty = Math.Abs(Position.Quantity);
-			double unrealized = 0;
-
-			if (Position.MarketPosition == MarketPosition.Long)
-				unrealized = (Close[0] - Position.AveragePrice) * pointValue * qty;
-			else if (Position.MarketPosition == MarketPosition.Short)
-				unrealized = (Position.AveragePrice - Close[0]) * pointValue * qty;
-
-			return realized + unrealized;
 		}
 
 		private double GetCumProfitSafe()
@@ -4943,6 +4938,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 						UpdateUnrealizedAndTotalPnL();
 						UpdateStreaksIfClosedTradesChanged();
 					}
+					UpdateUnrealizedTicksFromPosition();
 					ApplyBreakEvenIfTriggered();
 
 					dayStopDollars = $"-{DailyLossLimitUsd:0}";
@@ -5036,6 +5032,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 						UpdateUnrealizedAndTotalPnL();
 						UpdateStreaksIfClosedTradesChanged();
 					}
+					UpdateUnrealizedTicksFromPosition();
 					ApplyBreakEvenIfTriggered();
 
 					dayStopDollars = $"-{DailyLossLimitUsd:0}";
@@ -5122,19 +5119,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 					MaintainStopLoss();
 
 					CancelAllGrid("slow_stoch_mode");
-
-					bool isFlat = Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0;
-					double openTicksFromEntry = 0;
-					unrealizedTicks = 0;
-					if (!isFlat && TickSize > 0)
-					{
-						if (Position.MarketPosition == MarketPosition.Long)
-							openTicksFromEntry = (Close[0] - Position.AveragePrice) / TickSize;
-						else if (Position.MarketPosition == MarketPosition.Short)
-							openTicksFromEntry = (Position.AveragePrice - Close[0]) / TickSize;
-						unrealizedTicks = openTicksFromEntry;
-					}
-					_openTicksFromEntry = openTicksFromEntry;
 					bool hasWorkingOrders = HasAnyWorkingOrders();
 					double stochD = _stoch?.D[0] ?? double.NaN;
 					bool stochReady = !double.IsNaN(stochD);
