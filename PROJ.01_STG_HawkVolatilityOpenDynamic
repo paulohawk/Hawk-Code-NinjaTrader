@@ -2634,7 +2634,20 @@ namespace NinjaTrader.NinjaScript.Strategies
                 dayQtyCache = Math.Abs(Position.Quantity);
             }
 
+            bool stopInicialAtivo = false;
+            if (Position.MarketPosition == MarketPosition.Long)
+            {
+                stopInicialAtivo = ordemStopLong != null &&
+                    string.Equals(ordemStopLong.Name, "StopLoss", StringComparison.OrdinalIgnoreCase);
+            }
+            else if (Position.MarketPosition == MarketPosition.Short)
+            {
+                stopInicialAtivo = ordemStopShort != null &&
+                    string.Equals(ordemStopShort.Name, "StopLoss", StringComparison.OrdinalIgnoreCase);
+            }
+
             if (Position.MarketPosition != MarketPosition.Flat &&
+                stopInicialAtivo &&
                 riscoPrecoAtual > 0 &&
                 !breakevenAtivado &&
                 BreakEvenAtRR > 0 &&
