@@ -1829,8 +1829,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		public bool EnableBreakEven { get; set; } = true;
 
 		[NinjaScriptProperty]
-		[Display(Name="BreakEven Trigger (ticks)", Order=2, GroupName="Risk Management")]
-		public int BreakEvenTriggerTicks { get; set; } = 8;
+		[Display(Name="BreakEven Trigger (risk multiple)", Order=2, GroupName="Risk Management")]
+		public double BreakEvenTriggerRiskMultiple { get; set; } = 0.5;
 
 		[NinjaScriptProperty]
 		[Display(Name="BreakEven Offset (ticks)", Order=3, GroupName="Risk Management")]
@@ -4374,10 +4374,16 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (entryPrice == 0)
 				return;
 
+			double riskTriggerUsd = TradeStopLossUsd * BreakEvenTriggerRiskMultiple;
+			if (riskTriggerUsd <= 0)
+				return;
+
+			double unrealizedUsd = 0;
 			if (Position.MarketPosition == MarketPosition.Long)
 			{
-				double unrealizedTicksLocal = (Close[0] - entryPrice) / TickSize;
-				if (unrealizedTicksLocal >= BreakEvenTriggerTicks)
+				double priceMove = Close[0] - entryPrice;
+				unrealizedUsd = priceMove * Instrument.MasterInstrument.PointValue * Position.Quantity;
+				if (unrealizedUsd >= riskTriggerUsd)
 				{
 					double newStop = entryPrice + (BreakEvenOffsetTicks * TickSize);
 					SetStopLoss(CalculationMode.Price, newStop);
@@ -4386,8 +4392,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 			else if (Position.MarketPosition == MarketPosition.Short)
 			{
-				double unrealizedTicksLocal = (entryPrice - Close[0]) / TickSize;
-				if (unrealizedTicksLocal >= BreakEvenTriggerTicks)
+				double priceMove = entryPrice - Close[0];
+				unrealizedUsd = priceMove * Instrument.MasterInstrument.PointValue * Position.Quantity;
+				if (unrealizedUsd >= riskTriggerUsd)
 				{
 					double newStop = entryPrice - (BreakEvenOffsetTicks * TickSize);
 					SetStopLoss(CalculationMode.Price, newStop);
