@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.ComponentModel.DataAnnotations;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -1660,6 +1661,13 @@ namespace NinjaTrader.NinjaScript.Strategies
         [NinjaScriptProperty, Category("Parameters"), DisplayName("BreakEven Lock (R múltiplos)")]
         public double BreakEvenLockRR { get; set; }
 
+        [NinjaScriptProperty, Display(Name = "Enable BreakEven", GroupName = "Risk Management", Order = 1)]
+        public bool EnableBreakEven { get; set; }
+        [NinjaScriptProperty, Display(Name = "BreakEven Trigger Risk Multiple", GroupName = "Risk Management", Order = 2)]
+        public double BreakEvenTriggerRiskMultiple { get; set; }
+        [NinjaScriptProperty, Display(Name = "BreakEven Offset Ticks", GroupName = "Risk Management", Order = 3)]
+        public int BreakEvenOffsetTicks { get; set; }
+
         [NinjaScriptProperty, Category("SuperTrend"), DisplayName("Ativar filtro SuperTrend")]
         public bool UseSuperTrend { get; set; }
         [NinjaScriptProperty, Category("SuperTrend"), DisplayName("SuperTrend TimeFrame (min)")]
@@ -1826,6 +1834,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                 EnterInverted = false;
                 BreakEvenAtRR = 4.0;
                 BreakEvenLockRR = 1.0;
+                EnableBreakEven = false;
+                BreakEvenTriggerRiskMultiple = 1.0;
+                BreakEvenOffsetTicks = 0;
 
                 UseSuperTrend = true;
                 STTimeFrame = 5;
