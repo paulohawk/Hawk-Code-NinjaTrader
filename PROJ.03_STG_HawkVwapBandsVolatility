@@ -327,7 +327,7 @@ namespace NinjaTrader.NinjaScript
 
 			var atrRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
 			_bulletAtr = CreateBullet();
-			var atrLbl = new TextBlock { Text = "ATR", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.None };
+			var atrLbl = new TextBlock { Text = "STOCH", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.None };
 			atrRow.Children.Add(_bulletAtr);
 			atrRow.Children.Add(atrLbl);
 			main.Children.Add(atrRow);
@@ -1812,6 +1812,18 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[NinjaScriptProperty, Display(Name = "Stop por TRADE/CICLO (USD)", GroupName = "Saída", Order = 5)]
 		public double TradeStopLossUsd { get; set; } = 200;
 
+		[NinjaScriptProperty]
+		[Display(Name = "Enable BreakEven", Order = 1, GroupName = "Risk Management")]
+		public bool EnableBreakEven { get; set; } = true;
+
+		[NinjaScriptProperty]
+		[Display(Name = "BreakEven Trigger (ticks)", Order = 2, GroupName = "Risk Management")]
+		public int BreakEvenTriggerTicks { get; set; } = 8;
+
+		[NinjaScriptProperty]
+		[Display(Name = "BreakEven Offset (ticks)", Order = 3, GroupName = "Risk Management")]
+		public int BreakEvenOffsetTicks { get; set; } = 1;
+
 		[NinjaScriptProperty, Display(Name = "Enable Financial Stop (USD->preço)", GroupName = "Stops", Order = 3)]
 		public bool EnableFinancialStop { get; set; } = false;
 
@@ -2006,6 +2018,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private int _rtLastProcessedTradeCount = 0;
 		private DateTime _rtBrtDay = DateTime.MinValue;
 		private int _rtBrtYearMonth = 0;
+		private bool breakEvenActivated = false;
+		private double entryPrice = 0.0;
 
 		// NEW: once-per-band-per-cycle guards (default behavior)
 		private bool[] _bandFilledBuy = new bool[5];
@@ -2432,14 +2446,19 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 					_lastSavedHistoricalTradesCount = state.TradesCountAtSave;
 
+					// Se for RealtimeOnly, restaura os acumuladores realtime a partir do cache salvo
 					if (PanelPnlMode == PanelPnLMode.RealtimeOnly)
 					{
 						_rtRealizedTotal = ParseDoubleFlexible(_cachedPnlTotal);
 						_rtRealizedMonth = ParseDoubleFlexible(_cachedPnlMonth);
 						_rtRealizedDay = ParseDoubleFlexible(_cachedPnlDay);
-						_rtLastProcessedTradeCount = SystemPerformance.AllTrades.Count;
-					if (PanelPnlMode == PanelPnLMode.RealtimeOnly)
-						ClearRealtimePanelStats(resetProcessedCount: false);
+						_rtLastProcessedTradeCount = _lastSavedHistoricalTradesCount;
+					}
+					else
+					{
+						// Fora do modo RealtimeOnly, evita “vazamento” de estado realtime
+						// (não queremos que estado realtime antigo contamine ChartHistorical / outros modos)
+						ClearRealtimePanelStats(true);
 					}
 
 					HVB_PanelStateHub.Set(cacheKey, state.Snapshot);
@@ -2532,10 +2551,16 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (string.IsNullOrWhiteSpace(cacheKey))
 				return null;
 
-			if (!offSnapshot && _cachedPnlTotal == "-" && PanelPnlMode == PanelPnLMode.ChartHistorical)
+			// Em ChartHistorical, sempre recalcula baseado em SystemPerformance para garantir determinismo.
+			// O método RecalcPnLIfNeeded tem proteção por tradesCount e throttle.
+			if (!offSnapshot && PanelPnlMode == PanelPnLMode.ChartHistorical)
 			{
-				var nowLocal = ConvertToBrasilia(Time[0]).AddMinutes(UserBrtOffsetMinutes);
-				RecalcPnLIfNeeded(nowLocal);
+				// Proteção: Time[0] só existe quando há barras processadas
+				if (CurrentBar >= 0)
+				{
+					var nowLocal = ConvertToBrasilia(Time[0]).AddMinutes(UserBrtOffsetMinutes);
+					RecalcPnLIfNeeded(nowLocal);
+				}
 			}
 
 			var snap = new HVB_PanelStateHub.PanelSnapshot();
@@ -2548,9 +2573,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 			snap.DayTradeStatus = status;
 			snap.StatusText = $"{lastEvent} | Mode={mode} | PanelPnL={PanelPnlMode} | Persist={(ShouldPersistPanelCache() ? "On" : "Off")}";
 
-			snap.PnLDiaText = _cachedPnlDay;
-			snap.PnLMesText = _cachedPnlMonth;
-			snap.PnLTotalText = _cachedPnlTotal;
+				snap.PnLDiaText = _cachedPnlDay;
+				snap.PnLMesText = _cachedPnlMonth;
+				snap.PnLTotalText = _cachedPnlTotal;
+				snap.ATREnabled = EnableSlowStochFilter;
+				snap.AtrDisplayText = EnableSlowStochFilter ? "On" : "Off";
 
 			snap.DayStopDollar = dayStopDollars;
 			snap.DayTargetDollar = dayTargetDollars;
@@ -2674,10 +2701,16 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (count == _lastPnlCalcCount && throttle)
 					return;
 
+				// Em histórico, use a data do último bar (Time[0]) para manter determinismo em reload.
+				// Em realtime, usa o nowLocalBrt recebido.
+				DateTime referenceLocal = nowLocalBrt;
+				if (State == State.Historical && CurrentBar >= 0)
+					referenceLocal = ConvertToBrasilia(Time[0]).AddMinutes(UserBrtOffsetMinutes);
+
 				double total = all.TradesPerformance.Currency.CumProfit;
 				double day = 0;
 				double month = 0;
-				DateTime today = nowLocalBrt.Date;
+				DateTime today = referenceLocal.Date;
 
 				for (int i = 0; i < count; i++)
 				{
@@ -2692,11 +2725,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 				_overallPnl = total;
 				_monthPnl = month;
 				realizedPnlDay = day;
+				_totalPnlDay = day;
 				_lastPnlCalcCount = count;
 				_lastPnlCalcUtc = DateTime.UtcNow;
 
-				_cachedPnlMonth = _monthPnl.ToString("0.00");
-				_cachedPnlTotal = _overallPnl.ToString("0.00");
+				_cachedPnlTotal = total.ToString("0.00");
+				_cachedPnlMonth = month.ToString("0.00");
+				_cachedPnlDay = day.ToString("0.00");
 			}
 			catch (Exception ex)
 			{
@@ -2761,6 +2796,43 @@ namespace NinjaTrader.NinjaScript.Strategies
 			catch (Exception ex)
 			{
 				LogMsg("StreakCalcError", "UpdateStreaks ex: " + ex.Message, 1);
+			}
+		}
+
+		private void ApplyBreakEvenIfNeeded()
+		{
+			if (Position == null || Position.MarketPosition == MarketPosition.Flat)
+			{
+				breakEvenActivated = false;
+				entryPrice = 0.0;
+				return;
+			}
+
+			if (entryPrice == 0.0)
+				entryPrice = Position.AveragePrice;
+
+			if (!EnableBreakEven || breakEvenActivated)
+				return;
+
+			if (Position.MarketPosition == MarketPosition.Long)
+			{
+				double unrealizedTicks = (Close[0] - entryPrice) / TickSize;
+				if (unrealizedTicks >= BreakEvenTriggerTicks)
+				{
+					double newStop = entryPrice + (BreakEvenOffsetTicks * TickSize);
+					SetStopLoss(CalculationMode.Price, newStop);
+					breakEvenActivated = true;
+				}
+			}
+			else if (Position.MarketPosition == MarketPosition.Short)
+			{
+				double unrealizedTicks = (entryPrice - Close[0]) / TickSize;
+				if (unrealizedTicks >= BreakEvenTriggerTicks)
+				{
+					double newStop = entryPrice - (BreakEvenOffsetTicks * TickSize);
+					SetStopLoss(CalculationMode.Price, newStop);
+					breakEvenActivated = true;
+				}
 			}
 		}
 		#endregion
@@ -4664,10 +4736,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 						realizedPnlDay = _rtRealizedDay;
 						_cachedPnlMonth = _rtRealizedMonth.ToString("0.00");
 						_cachedPnlTotal = _rtRealizedTotal.ToString("0.00");
+						UpdateUnrealizedAndTotalPnL();
+						UpdateStreaksIfClosedTradesChanged();
 					}
-
-					UpdateUnrealizedAndTotalPnL();
-					UpdateStreaksIfClosedTradesChanged();
 
 					dayStopDollars = $"-{DailyLossLimitUsd:0}";
 					dayTargetDollars = $"+{DailyProfitLimitUsd:0}";
@@ -4706,6 +4777,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 					int touched = hvb.TouchedBandIndexSeries[0];
 					var decision = EvaluateSignals(vwap, inWindow);
 					TryExecute(decision, vwap, touched, nowBrtDt, nowBrtInt, inWindow);
+
+					ApplyBreakEvenIfNeeded();
 
 					PublishPanelSnapshot("OnBarUpdate");
 				}
@@ -4763,10 +4836,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 						realizedPnlDay = _rtRealizedDay;
 						_cachedPnlMonth = _rtRealizedMonth.ToString("0.00");
 						_cachedPnlTotal = _rtRealizedTotal.ToString("0.00");
+						UpdateUnrealizedAndTotalPnL();
+						UpdateStreaksIfClosedTradesChanged();
 					}
-
-					UpdateUnrealizedAndTotalPnL();
-					UpdateStreaksIfClosedTradesChanged();
 
 					dayStopDollars = $"-{DailyLossLimitUsd:0}";
 					dayTargetDollars = $"+{DailyProfitLimitUsd:0}";
@@ -4858,10 +4930,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 					double stochD = _stoch?.D[0] ?? double.NaN;
 					bool canStartCycle = CanStartNewCycle(newRegime);
 
-					if (inWindow && !isLockedForDay && isFlat && !hasWorkingOrders && canStartCycle && !double.IsNaN(stochD))
-					{
-						if (!BlockIfSameBar("slow_stoch_entry"))
+						if (inWindow && !isLockedForDay && isFlat && !hasWorkingOrders && canStartCycle && !double.IsNaN(stochD))
 						{
+							if (!BlockIfSameBar("slow_stoch_entry"))
+							{
 							if (newRegime == Regime.Buy && Close[0] <= lower[1] && stochD <= StochLowerThreshold)
 							{
 								EnterLong(0, QuantityPerGridOrder, "SlowStoch_Long");
@@ -4873,13 +4945,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 								EnterShort(0, QuantityPerGridOrder, "SlowStoch_Short");
 								_lastAction = "EnterShortMarket";
 								MarkActionExecuted();
+								}
 							}
 						}
-					}
 
-					CheckFlattenProgress();
-					PublishPanelSnapshot("OnBarUpdate");
-				}
+						ApplyBreakEvenIfNeeded();
+
+						CheckFlattenProgress();
+						PublishPanelSnapshot("OnBarUpdate");
+					}
 			}
 			catch (Exception ex)
 			{
