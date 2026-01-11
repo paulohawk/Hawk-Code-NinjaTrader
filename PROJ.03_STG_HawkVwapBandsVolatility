@@ -1927,6 +1927,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private Order stopLossOrder = null;
 		private Order financialTargetOrder = null;
 		private Order financialTargetOrderReplace = null;
+		private bool breakEvenApplied = false;
 		private bool closeBarOrderPending = false;
 		private Order closeBarOrder = null;
 		private Regime closeBarOrderDirection = Regime.None;
@@ -4311,6 +4312,34 @@ namespace NinjaTrader.NinjaScript.Strategies
 		#endregion
 
 		#region Stop maintenance (ticks + financial priority)
+		private void ApplyBreakEvenIfTriggered()
+		{
+			if (!EnableBreakEven || breakEvenApplied)
+				return;
+			if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
+				return;
+			if (TickSize <= 0)
+				return;
+
+			double unrealizedTicks = 0;
+			if (Position.MarketPosition == MarketPosition.Long)
+				unrealizedTicks = (Close[0] - Position.AveragePrice) / TickSize;
+			else if (Position.MarketPosition == MarketPosition.Short)
+				unrealizedTicks = (Position.AveragePrice - Close[0]) / TickSize;
+
+			if (EnableBreakEven && !breakEvenApplied && unrealizedTicks >= BreakEvenTriggerTicks)
+			{
+				double newStopPrice = Position.AveragePrice;
+				if (Position.MarketPosition == MarketPosition.Long)
+					newStopPrice = Position.AveragePrice + (BreakEvenOffsetTicks * TickSize);
+				else if (Position.MarketPosition == MarketPosition.Short)
+					newStopPrice = Position.AveragePrice - (BreakEvenOffsetTicks * TickSize);
+
+				SetStopLoss(CalculationMode.Price, newStopPrice);
+				breakEvenApplied = true;
+			}
+		}
+
 		private void MaintainStopLoss()
 		{
 			if (isLockedForDay || flattenInProgress)
@@ -4427,6 +4456,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				cycleOpen = false;
 				cycleDirection = Regime.None;
 			}
+			breakEvenApplied = false;
 
 			for (int i = 0; i < 5; i++)
 			{
@@ -4470,6 +4500,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				cycleOpen = true;
 				cycleDirection = side;
+				breakEvenApplied = false;
 			}
 
 			if (cycleOpen && nowPos == MarketPosition.Flat)
@@ -4492,6 +4523,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 				cycleOpen = false;
 				cycleDirection = Regime.None;
+				breakEvenApplied = false;
 			}
 		}
 		#endregion
@@ -4840,6 +4872,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 						UpdateUnrealizedAndTotalPnL();
 						UpdateStreaksIfClosedTradesChanged();
 					}
+					ApplyBreakEvenIfTriggered();
 
 					dayStopDollars = $"-{DailyLossLimitUsd:0}";
 					dayTargetDollars = $"+{DailyProfitLimitUsd:0}";
@@ -4932,6 +4965,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 						UpdateUnrealizedAndTotalPnL();
 						UpdateStreaksIfClosedTradesChanged();
 					}
+					ApplyBreakEvenIfTriggered();
 
 					dayStopDollars = $"-{DailyLossLimitUsd:0}";
 					dayTargetDollars = $"+{DailyProfitLimitUsd:0}";
