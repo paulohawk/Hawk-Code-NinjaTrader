@@ -2804,10 +2804,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 				var all = SystemPerformance.AllTrades;
 				int count = all.Count;
 				DateTime referenceLocal = nowLocalBrt;
-				bool throttle = (DateTime.UtcNow - _lastPnlCalcUtc).TotalSeconds < Math.Max(1, PanelPublishIntervalSeconds);
-				if (count == _lastPnlCalcCount && throttle)
-					return;
-
+				if (State == State.Historical && CurrentBar >= 0)
+					referenceLocal = ConvertToBrasilia(Time[0]).AddMinutes(UserBrtOffsetMinutes);
 				double total = all.TradesPerformance.Currency.CumProfit;
 				double day = 0;
 				double month = 0;
