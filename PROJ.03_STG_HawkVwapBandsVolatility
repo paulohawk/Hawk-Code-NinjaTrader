@@ -1825,16 +1825,16 @@ namespace NinjaTrader.NinjaScript.Strategies
 		public double FinancialStopUsd { get; set; } = 500;
 
 		[NinjaScriptProperty]
-		[Display(Name="Enable Break Even", GroupName="Risk Management", Order=1)]
-		public bool EnableBreakEven { get; set; }
+		[Display(Name="Enable BreakEven", Order=1, GroupName="Risk Management")]
+		public bool EnableBreakEven { get; set; } = true;
 
 		[NinjaScriptProperty]
-		[Display(Name="Break Even Trigger (ticks)", GroupName="Risk Management", Order=2)]
-		public int BreakEvenTriggerTicks { get; set; }
+		[Display(Name="BreakEven Trigger (risk multiple)", Order=2, GroupName="Risk Management")]
+		public double BreakEvenTriggerRiskMultiple { get; set; } = 0.5;
 
 		[NinjaScriptProperty]
-		[Display(Name="Break Even Offset (ticks)", GroupName="Risk Management", Order=3)]
-		public int BreakEvenOffsetTicks { get; set; }
+		[Display(Name="BreakEven Offset (ticks)", Order=3, GroupName="Risk Management")]
+		public int BreakEvenOffsetTicks { get; set; } = 1;
 
 		[NinjaScriptProperty]
 		[Display(Name = "Log Level", Order = 9001, GroupName = "Diagnostics")]
@@ -1930,7 +1930,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private Order stopLossOrder = null;
 		private Order financialTargetOrder = null;
 		private Order financialTargetOrderReplace = null;
-		private bool breakEvenApplied = false;
+		private bool breakEvenActivated = false;
+		private double entryPrice = 0.0;
 		private bool closeBarOrderPending = false;
 		private Order closeBarOrder = null;
 		private Regime closeBarOrderDirection = Regime.None;
@@ -2609,6 +2610,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			snap.PnLTotalText = _cachedPnlTotal;
 			snap.ATREnabled = EnableSlowStochFilter;
 			snap.AtrDisplayText = EnableSlowStochFilter ? "On" : "Off";
+			snap.BEEnabled = breakEvenActivated;
 
 			snap.DayStopDollar = dayStopDollars;
 			snap.DayTargetDollar = dayTargetDollars;
@@ -4364,24 +4366,61 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private void ApplyBreakEvenIfTriggered()
 		{
-			if (!EnableBreakEven || breakEvenApplied)
+			if (!EnableBreakEven || breakEvenActivated)
 				return;
 			if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
 				return;
 			if (TickSize <= 0)
 				return;
+			if (entryPrice == 0)
+				return;
 
-			if (EnableBreakEven && !breakEvenApplied && unrealizedTicks >= BreakEvenTriggerTicks)
+			double riskTriggerUsd = TradeStopLossUsd * BreakEvenTriggerRiskMultiple;
+			if (riskTriggerUsd <= 0)
+				return;
+
+			double unrealizedUsd = 0;
+			if (Position.MarketPosition == MarketPosition.Long)
 			{
-				double entryPrice = Position.AveragePrice;
-				double newStopPrice = entryPrice;
-				if (Position.MarketPosition == MarketPosition.Long)
-					newStopPrice = entryPrice + (BreakEvenOffsetTicks * TickSize);
-				else if (Position.MarketPosition == MarketPosition.Short)
-					newStopPrice = entryPrice - (BreakEvenOffsetTicks * TickSize);
-
-				SetStopLoss(CalculationMode.Price, newStopPrice);
-				breakEvenApplied = true;
+				double priceMove = Close[0] - entryPrice;
+				unrealizedUsd = priceMove * Instrument.MasterInstrument.PointValue * Position.Quantity;
+				if (unrealizedUsd >= riskTriggerUsd)
+				{
+					double newStop = entryPrice + (BreakEvenOffsetTicks * TickSize);
+					newStop = Instrument.MasterInstrument.RoundToTickSize(newStop);
+					CancelStopLoss();
+					CancelFinancialTarget();
+					if (BlockIfSameBar("BreakEven")) return;
+					if (HasWorkingOrders(stopLossOrder)) return;
+					int qty = Math.Abs(Position.Quantity);
+					stopLossOrder = ExitLongStopMarket(0, true, qty, newStop, "BreakEvenStopL", null);
+					breakEvenActivated = true;
+					dayBreakevenDollars = "ON";
+					if (GetExitMode() == ExitMode.Financial && !isLockedForDay && !flattenInProgress)
+						MaintainFinancialTargetLimit();
+					PublishPanelSnapshot("BreakEvenTriggered");
+				}
+			}
+			else if (Position.MarketPosition == MarketPosition.Short)
+			{
+				double priceMove = entryPrice - Close[0];
+				unrealizedUsd = priceMove * Instrument.MasterInstrument.PointValue * Position.Quantity;
+				if (unrealizedUsd >= riskTriggerUsd)
+				{
+					double newStop = entryPrice - (BreakEvenOffsetTicks * TickSize);
+					newStop = Instrument.MasterInstrument.RoundToTickSize(newStop);
+					CancelStopLoss();
+					CancelFinancialTarget();
+					if (BlockIfSameBar("BreakEven")) return;
+					if (HasWorkingOrders(stopLossOrder)) return;
+					int qty = Math.Abs(Position.Quantity);
+					stopLossOrder = ExitShortStopMarket(0, true, qty, newStop, "BreakEvenStopS", null);
+					breakEvenActivated = true;
+					dayBreakevenDollars = "ON";
+					if (GetExitMode() == ExitMode.Financial && !isLockedForDay && !flattenInProgress)
+						MaintainFinancialTargetLimit();
+					PublishPanelSnapshot("BreakEvenTriggered");
+				}
 			}
 		}
 
@@ -4404,6 +4443,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 				CancelStopLoss();
 				return;
 			}
+
+			if (breakEvenActivated)
+				return;
 
 			if (EnableFinancialStop && FinancialStopUsd > 0)
 			{
@@ -4515,7 +4557,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 				cycleDirection = Regime.None;
 				_cycleRealizedAtEntry = 0;
 			}
-			breakEvenApplied = false;
+			breakEvenActivated = false;
+			entryPrice = 0.0;
 
 			for (int i = 0; i < 5; i++)
 			{
@@ -4559,7 +4602,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				cycleOpen = true;
 				cycleDirection = side;
-				breakEvenApplied = false;
+				breakEvenActivated = false;
+				entryPrice = 0.0;
 				_cycleRealizedAtEntry = GetCumProfitSafe();
 			}
 
@@ -4583,7 +4627,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 				cycleOpen = false;
 				cycleDirection = Regime.None;
-				breakEvenApplied = false;
+				breakEvenActivated = false;
+				entryPrice = 0.0;
 				_cycleRealizedAtEntry = 0;
 			}
 		}
@@ -4848,7 +4893,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 				if (Position.MarketPosition == MarketPosition.Flat)
 				{
-					breakEvenApplied = false;
+					breakEvenActivated = false;
+					entryPrice = 0.0;
+				}
+
+				if (entryPrice == 0 && Position.MarketPosition != MarketPosition.Flat)
+				{
+					entryPrice = Position.AveragePrice;
 				}
 
 				if (SupportMode && SupportDumpEveryNBars > 0 && CurrentBar >= 0 &&
@@ -4942,7 +4993,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 					dayStopDollars = $"-{DailyLossLimitUsd:0}";
 					dayTargetDollars = $"+{DailyProfitLimitUsd:0}";
-					dayBreakevenDollars = "-";
+					dayBreakevenDollars = breakEvenActivated ? "ON" : "-";
 
 					bool skipLimits = (State == State.Historical && DisableDailyLimitsInStrategyAnalyzer);
 					if (!isLockedForDay && !skipLimits)
@@ -5038,7 +5089,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 					dayStopDollars = $"-{DailyLossLimitUsd:0}";
 					dayTargetDollars = $"+{DailyProfitLimitUsd:0}";
-					dayBreakevenDollars = "-";
+					dayBreakevenDollars = breakEvenActivated ? "ON" : "-";
 
 					bool skipLimits = (State == State.Historical && DisableDailyLimitsInStrategyAnalyzer);
 					if (!isLockedForDay && !skipLimits)
@@ -5121,6 +5172,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 					CancelAllGrid("slow_stoch_mode");
 					bool hasWorkingOrders = HasAnyWorkingOrders();
+					bool isFlat = Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0;
 					double stochD = _stoch?.D[0] ?? double.NaN;
 					bool stochReady = !double.IsNaN(stochD);
 					bool canStartCycle = CanStartNewCycle(newRegime);
