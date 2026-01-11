@@ -1751,6 +1751,27 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[Display(Name = "Touch Margin (ticks)", GroupName = "Bandas", Order = 18)]
 		public int TouchMarginTicks { get; set; } = 1;
 
+		[NinjaScriptProperty, Display(Name = "Enable Slow Stoch Filter", GroupName = "Filtros", Order = 1)]
+		public bool EnableSlowStochFilter { get; set; } = false;
+
+		[NinjaScriptProperty, Display(Name = "Stoch Period K", GroupName = "Filtros", Order = 2)]
+		public int StochPeriodK { get; set; } = 14;
+
+		[NinjaScriptProperty, Display(Name = "Stoch Period D", GroupName = "Filtros", Order = 3)]
+		public int StochPeriodD { get; set; } = 3;
+
+		[NinjaScriptProperty, Display(Name = "Stoch Lower Threshold", GroupName = "Filtros", Order = 4)]
+		public double StochLowerThreshold { get; set; } = 10;
+
+		[NinjaScriptProperty, Display(Name = "Stoch Upper Threshold", GroupName = "Filtros", Order = 5)]
+		public double StochUpperThreshold { get; set; } = 90;
+
+		[NinjaScriptProperty, Display(Name = "Enable Close Bar", GroupName = "Filtros", Order = 6)]
+		public bool EnableCloseBarFilter { get; set; } = false;
+
+		[NinjaScriptProperty, Display(Name = "Close Bar Offset (ticks)", GroupName = "Filtros", Order = 7)]
+		public int CloseBarLimitOffsetTicks { get; set; } = 5;
+
 		[NinjaScriptProperty, Display(Name = "Enable Grid 1", GroupName = "Grids", Order = 1)] public bool EnableGrid1 { get; set; } = true;
 		[NinjaScriptProperty, Display(Name = "Enable Grid 2", GroupName = "Grids", Order = 2)] public bool EnableGrid2 { get; set; } = true;
 		[NinjaScriptProperty, Display(Name = "Enable Grid 3", GroupName = "Grids", Order = 3)] public bool EnableGrid3 { get; set; } = false;
@@ -1774,21 +1795,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		// true => legacy behavior (allow repeats).
 		[NinjaScriptProperty, Display(Name = "Aggressive Grid Mode (allow repeat fills per band)", GroupName = "Grids", Order = 11)]
 		public bool AggressiveGridMode { get; set; } = false;
-
-		[NinjaScriptProperty, Display(Name = "Enable Slow Stoch Filter", GroupName = "Filtros", Order = 1)]
-		public bool EnableSlowStochFilter { get; set; } = false;
-
-		[NinjaScriptProperty, Display(Name = "Stoch Period K", GroupName = "Filtros", Order = 2)]
-		public int StochPeriodK { get; set; } = 14;
-
-		[NinjaScriptProperty, Display(Name = "Stoch Period D", GroupName = "Filtros", Order = 3)]
-		public int StochPeriodD { get; set; } = 3;
-
-		[NinjaScriptProperty, Display(Name = "Stoch Lower Threshold", GroupName = "Filtros", Order = 4)]
-		public double StochLowerThreshold { get; set; } = 10;
-
-		[NinjaScriptProperty, Display(Name = "Stoch Upper Threshold", GroupName = "Filtros", Order = 5)]
-		public double StochUpperThreshold { get; set; } = 90;
 
 		[NinjaScriptProperty, Display(Name = "Meta máxima do DIA (USD)", GroupName = "Limites", Order = 1)] public double DailyProfitLimitUsd { get; set; } = 200;
 		[NinjaScriptProperty, Display(Name = "Perda máxima do DIA (USD)", GroupName = "Limites", Order = 2)] public double DailyLossLimitUsd { get; set; } = 300;
