@@ -2445,10 +2445,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 					if (PanelPnlMode == PanelPnLMode.RealtimeOnly)
 					{
-						_rtRealizedTotal = ParseDoubleFlexible(_cachedPnlTotal);
-						_rtRealizedMonth = ParseDoubleFlexible(_cachedPnlMonth);
-						_rtRealizedDay = ParseDoubleFlexible(_cachedPnlDay);
-						_rtLastProcessedTradeCount = SystemPerformance.AllTrades.Count;
+						_rtRealizedTotal = ParseDoubleFlexible(state.Snapshot.PnLTotalText ?? _cachedPnlTotal);
+						_rtRealizedMonth = ParseDoubleFlexible(state.Snapshot.PnLMesText ?? _cachedPnlMonth);
+						_rtRealizedDay = ParseDoubleFlexible(state.Snapshot.PnLDiaText ?? _cachedPnlDay);
+						_rtLastProcessedTradeCount = state.TradesCountAtSave;
 					}
 					else
 					{
