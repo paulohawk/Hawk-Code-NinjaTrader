@@ -2462,6 +2462,11 @@ namespace NinjaTrader.NinjaScript.Strategies
                 return;
             }
 
+            if (Position.MarketPosition == MarketPosition.Flat)
+            {
+                breakEvenApplied = false;
+            }
+
             // BIP principal
             if (BarsInProgress != 0) return;
             if (CurrentBars == null || CurrentBars.Length == 0) return;
