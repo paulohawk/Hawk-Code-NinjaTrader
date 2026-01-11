@@ -4939,7 +4939,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 						UpdateStreaksIfClosedTradesChanged();
 					}
 					UpdateUnrealizedTicksFromPosition();
-					ApplyBreakEvenIfTriggered();
 
 					dayStopDollars = $"-{DailyLossLimitUsd:0}";
 					dayTargetDollars = $"+{DailyProfitLimitUsd:0}";
@@ -4978,6 +4977,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 					int touched = hvb.TouchedBandIndexSeries[0];
 					var decision = EvaluateSignals(vwap, inWindow);
 					TryExecute(decision, vwap, touched, nowBrtDt, nowBrtInt, inWindow);
+
+					if (Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
+						ApplyBreakEvenIfTriggered();
 
 					PublishPanelSnapshot("OnBarUpdate");
 				}
@@ -5033,7 +5035,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 						UpdateStreaksIfClosedTradesChanged();
 					}
 					UpdateUnrealizedTicksFromPosition();
-					ApplyBreakEvenIfTriggered();
 
 					dayStopDollars = $"-{DailyLossLimitUsd:0}";
 					dayTargetDollars = $"+{DailyProfitLimitUsd:0}";
@@ -5249,6 +5250,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 							}
 						}
 					}
+
+					if (Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
+						ApplyBreakEvenIfTriggered();
 
 					CheckFlattenProgress();
 					PublishPanelSnapshot("OnBarUpdate");
