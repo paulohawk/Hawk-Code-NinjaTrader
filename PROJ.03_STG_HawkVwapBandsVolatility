@@ -2573,9 +2573,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (string.IsNullOrWhiteSpace(cacheKey))
 				return null;
 
-			if (!offSnapshot && PanelPnlMode == PanelPnLMode.ChartHistorical)
+			if (PanelPnlMode == PanelPnLMode.ChartHistorical)
 			{
-				DateTime referenceTime = CurrentBar >= 0 ? Time[0] : DateTime.UtcNow;
+				DateTime referenceTime = Time[0];
 				DateTime nowLocalBrt = ConvertToBrasilia(referenceTime).AddMinutes(UserBrtOffsetMinutes);
 				RecalcPnLIfNeeded(nowLocalBrt);
 			}
