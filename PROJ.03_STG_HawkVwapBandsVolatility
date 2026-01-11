@@ -1982,6 +1982,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private int _lastStreakTradesCount = 0;
 
 		private double _unrealizedPnlManual = 0;
+		private double _openTicksFromEntry = 0;
 		private double _totalPnlDay = 0;
 		private double _monthPnl = 0;
 		private double _overallPnl = 0;
@@ -5018,6 +5019,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 					CancelAllGrid("slow_stoch_mode");
 
 					bool isFlat = Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0;
+					double openTicksFromEntry = 0;
+					if (!isFlat && TickSize > 0)
+					{
+						if (Position.MarketPosition == MarketPosition.Long)
+							openTicksFromEntry = (Close[0] - Position.AveragePrice) / TickSize;
+						else if (Position.MarketPosition == MarketPosition.Short)
+							openTicksFromEntry = (Position.AveragePrice - Close[0]) / TickSize;
+					}
+					_openTicksFromEntry = openTicksFromEntry;
 					bool hasWorkingOrders = HasAnyWorkingOrders();
 					double stochD = _stoch?.D[0] ?? double.NaN;
 					bool stochReady = !double.IsNaN(stochD);
