@@ -2884,6 +2884,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			private void UpdateUnrealizedAndTotalPnL()
 			{
+				if (State != State.Realtime)
+					return;
+
 				try
 				{
 					double tickSize = Instrument?.MasterInstrument?.TickSize ?? 0.0;
