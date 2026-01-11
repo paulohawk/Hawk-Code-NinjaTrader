@@ -2013,6 +2013,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private DateTime tradeCountersBrtDate = DateTime.MinValue;
 		private bool cycleOpen = false;
 		private Regime cycleDirection = Regime.None;
+		private double _cycleRealizedAtEntry = 0;
 
 		private Order flattenOrder = null;
 		private bool flattenInProgress = false;
@@ -4321,17 +4322,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (TickSize <= 0)
 				return;
 
-			double unrealizedTicks = 0;
-			if (Position.MarketPosition == MarketPosition.Long)
-				unrealizedTicks = (Close[0] - Position.AveragePrice) / TickSize;
-			else if (Position.MarketPosition == MarketPosition.Short)
-				unrealizedTicks = (Position.AveragePrice - Close[0]) / TickSize;
-
-			double triggerTicks = GetBreakEvenTriggerTicks();
-			if (double.IsNaN(triggerTicks))
+			double triggerUsd = GetBreakEvenTriggerUsd();
+			if (double.IsNaN(triggerUsd))
 				return;
 
-			if (EnableBreakEven && !breakEvenApplied && unrealizedTicks >= triggerTicks)
+			double pnlUsd = GetTradeFloatingPnlUsd();
+			if (EnableBreakEven && !breakEvenApplied && pnlUsd >= triggerUsd)
 			{
 				double newStopPrice = Position.AveragePrice;
 				if (Position.MarketPosition == MarketPosition.Long)
@@ -4344,41 +4340,59 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 		}
 
-		private double GetBreakEvenTriggerTicks()
+		private double GetBreakEvenTriggerUsd()
 		{
 			if (BreakEvenTriggerRiskMultiple < 0)
 				return double.NaN;
 
-			double riskTicks = GetRiskTicksForBreakEven();
-			if (riskTicks <= 0)
+			double riskUsd = GetBreakEvenRiskUsd();
+			if (riskUsd <= 0)
 			{
 				if (BreakEvenTriggerRiskMultiple <= 0)
 					return 0;
 				return double.NaN;
 			}
 
-			return BreakEvenTriggerRiskMultiple * riskTicks;
+			return BreakEvenTriggerRiskMultiple * riskUsd;
 		}
 
-		private double GetRiskTicksForBreakEven()
+		private double GetBreakEvenRiskUsd()
 		{
-			if (FinancialStopUsd <= 0)
-				return 0;
+			if (TradeStopLossUsd > 0)
+				return TradeStopLossUsd;
+			if (EnableFinancialStop && FinancialStopUsd > 0)
+				return FinancialStopUsd;
+			return 0;
+		}
+
+		private double GetTradeFloatingPnlUsd()
+		{
 			if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
 				return 0;
-			if (TickSize <= 0)
-				return 0;
 
+			double realized = cycleOpen ? GetCumProfitSafe() - _cycleRealizedAtEntry : 0;
 			double pointValue = Instrument?.MasterInstrument?.PointValue ?? 1.0;
 			int qty = Math.Abs(Position.Quantity);
-			if (qty <= 0)
+			double unrealized = 0;
+
+			if (Position.MarketPosition == MarketPosition.Long)
+				unrealized = (Close[0] - Position.AveragePrice) * pointValue * qty;
+			else if (Position.MarketPosition == MarketPosition.Short)
+				unrealized = (Position.AveragePrice - Close[0]) * pointValue * qty;
+
+			return realized + unrealized;
+		}
+
+		private double GetCumProfitSafe()
+		{
+			try
+			{
+				return SystemPerformance?.AllTrades?.TradesPerformance?.Currency?.CumProfit ?? 0;
+			}
+			catch
+			{
 				return 0;
-
-			double riskPerContract = FinancialStopUsd / qty;
-			double points = riskPerContract / pointValue;
-			double riskTicks = points / TickSize;
-
-			return riskTicks > 0 ? riskTicks : 0;
+			}
 		}
 
 		private void MaintainStopLoss()
@@ -4491,11 +4505,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				cycleOpen = true;
 				cycleDirection = Position.MarketPosition == MarketPosition.Long ? Regime.Buy : Regime.Sell;
+				_cycleRealizedAtEntry = GetCumProfitSafe();
 			}
 			else
 			{
 				cycleOpen = false;
 				cycleDirection = Regime.None;
+				_cycleRealizedAtEntry = 0;
 			}
 			breakEvenApplied = false;
 
@@ -4542,6 +4558,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				cycleOpen = true;
 				cycleDirection = side;
 				breakEvenApplied = false;
+				_cycleRealizedAtEntry = GetCumProfitSafe();
 			}
 
 			if (cycleOpen && nowPos == MarketPosition.Flat)
@@ -4565,6 +4582,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				cycleOpen = false;
 				cycleDirection = Regime.None;
 				breakEvenApplied = false;
+				_cycleRealizedAtEntry = 0;
 			}
 		}
 		#endregion
