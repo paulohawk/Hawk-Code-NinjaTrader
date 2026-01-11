@@ -5047,8 +5047,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 						bool canSubmitAfterCancel = closeBarOrderCancelBar < 0 || CurrentBar > closeBarOrderCancelBar;
 						bool closeBarDirectionConfirmed = (closeBarOrderDirection == Regime.Buy && candlePositive) ||
 							(closeBarOrderDirection == Regime.Sell && candleNegative);
-						if (inWindow && !isLockedForDay && isFlat && !hasWorkingOrders && canStartCycle && closeInsideSecondBand && canSubmitAfterCancel &&
-							stochReady && closeBarDirectionConfirmed)
+						bool canSubmitCloseBarOrder = inWindow && !isLockedForDay && isFlat && !hasWorkingOrders && canStartCycle && canSubmitAfterCancel &&
+							stochReady && closeBarDirectionConfirmed;
+						if (canSubmitCloseBarOrder && !closeInsideSecondBand)
+						{
+							_lastBlockReason = "closebar_outside_second_band";
+						}
+						if (canSubmitCloseBarOrder && closeInsideSecondBand)
 						{
 							double offset = CloseBarLimitOffsetTicks * TickSize;
 							if (closeBarOrderDirection == Regime.Buy)
