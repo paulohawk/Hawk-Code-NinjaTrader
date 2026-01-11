@@ -1918,6 +1918,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private Order stopLossOrder = null;
 		private Order financialTargetOrder = null;
 		private Order financialTargetOrderReplace = null;
+		private bool closeBarOrderPending = false;
+		private Order closeBarOrder = null;
+		private Regime closeBarOrderDirection = Regime.None;
+		private double closeBarOrderSignalClose = double.NaN;
 
 		private DateTime lastCalendarDayBrt = DateTime.MinValue;
 		private bool isLockedForDay = false;
