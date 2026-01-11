@@ -2548,15 +2548,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 liberarShort = true;
             }
 
-            if (Position.MarketPosition != MarketPosition.Flat &&
-                riscoPrecoAtual > 0 &&
-                !breakevenAtivado &&
-                BreakEvenAtRR > 0 &&
-                BreakEvenLockRR > 0)
-            {
-                AplicarBreakEvenSeAtingiuRR();
-            }
-
             if (!tradedToday && Position.MarketPosition == MarketPosition.Flat)
             {
                 if (!Bars.IsFirstBarOfSession &&
@@ -2630,6 +2621,15 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 dayStatus = "Open";
                 dayQtyCache = Math.Abs(Position.Quantity);
+            }
+
+            if (Position.MarketPosition != MarketPosition.Flat &&
+                riscoPrecoAtual > 0 &&
+                !breakevenAtivado &&
+                BreakEvenAtRR > 0 &&
+                BreakEvenLockRR > 0)
+            {
+                AplicarBreakEvenSeAtingiuRR();
             }
 
             PublishSnapshotHeartbeat("OnBarUpdate");
