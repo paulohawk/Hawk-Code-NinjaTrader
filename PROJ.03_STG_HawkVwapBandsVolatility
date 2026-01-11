@@ -4998,15 +4998,45 @@ namespace NinjaTrader.NinjaScript.Strategies
 						{
 							if (newRegime == Regime.Buy && Close[0] <= lower[1] && stochD <= StochLowerThreshold)
 							{
-								EnterLong(0, QuantityPerGridOrder, "SlowStoch_Long");
-								_lastAction = "EnterLongMarket";
-								MarkActionExecuted();
+								if (EnableCloseBarFilter)
+								{
+									if (!closeBarOrderPending)
+									{
+										closeBarOrderPending = true;
+										closeBarOrderDirection = Regime.Buy;
+										closeBarOrderSignalClose = Close[0];
+										_lastSignal = "SlowStoch_Long_CloseBarPending";
+										_lastAction = "MarkCloseBarPendingLong";
+										MarkActionExecuted();
+									}
+								}
+								else
+								{
+									EnterLong(0, QuantityPerGridOrder, "SlowStoch_Long");
+									_lastAction = "EnterLongMarket";
+									MarkActionExecuted();
+								}
 							}
 							else if (newRegime == Regime.Sell && Close[0] >= upper[1] && stochD >= StochUpperThreshold)
 							{
-								EnterShort(0, QuantityPerGridOrder, "SlowStoch_Short");
-								_lastAction = "EnterShortMarket";
-								MarkActionExecuted();
+								if (EnableCloseBarFilter)
+								{
+									if (!closeBarOrderPending)
+									{
+										closeBarOrderPending = true;
+										closeBarOrderDirection = Regime.Sell;
+										closeBarOrderSignalClose = Close[0];
+										_lastSignal = "SlowStoch_Short_CloseBarPending";
+										_lastAction = "MarkCloseBarPendingShort";
+										MarkActionExecuted();
+									}
+								}
+								else
+								{
+									EnterShort(0, QuantityPerGridOrder, "SlowStoch_Short");
+									_lastAction = "EnterShortMarket";
+									MarkActionExecuted();
+								}
 							}
 						}
 					}
@@ -5039,6 +5069,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 				lastRegime = currentRegime;
 				currentRegime = Regime.None;
+				closeBarOrderPending = false;
+				closeBarOrder = null;
+				closeBarOrderDirection = Regime.None;
+				closeBarOrderSignalClose = double.NaN;
 
 				ResetTradeCounters(calDay);
 
