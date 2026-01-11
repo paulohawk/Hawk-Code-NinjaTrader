@@ -1827,8 +1827,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[NinjaScriptProperty, Display(Name="Enable Break Even", GroupName="Risk Management", Order=1)]
 		public bool EnableBreakEven { get; set; } = false;
 
-		[NinjaScriptProperty, Display(Name="Break Even Trigger (ticks)", GroupName="Risk Management", Order=2)]
-		public int BreakEvenTriggerTicks { get; set; } = 0;
+		[NinjaScriptProperty, Display(Name="Break Even Trigger (Risk Multiple)", GroupName="Risk Management", Order=2)]
+		public double BreakEvenTriggerRiskMultiple { get; set; } = 0;
 
 		[NinjaScriptProperty, Display(Name="Break Even Offset (ticks)", GroupName="Risk Management", Order=3)]
 		public int BreakEvenOffsetTicks { get; set; } = 10;
@@ -4327,7 +4327,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 			else if (Position.MarketPosition == MarketPosition.Short)
 				unrealizedTicks = (Position.AveragePrice - Close[0]) / TickSize;
 
-			if (EnableBreakEven && !breakEvenApplied && unrealizedTicks >= BreakEvenTriggerTicks)
+			double triggerTicks = GetBreakEvenTriggerTicks();
+			if (double.IsNaN(triggerTicks))
+				return;
+
+			if (EnableBreakEven && !breakEvenApplied && unrealizedTicks >= triggerTicks)
 			{
 				double newStopPrice = Position.AveragePrice;
 				if (Position.MarketPosition == MarketPosition.Long)
@@ -4338,6 +4342,43 @@ namespace NinjaTrader.NinjaScript.Strategies
 				SetStopLoss(CalculationMode.Price, newStopPrice);
 				breakEvenApplied = true;
 			}
+		}
+
+		private double GetBreakEvenTriggerTicks()
+		{
+			if (BreakEvenTriggerRiskMultiple < 0)
+				return double.NaN;
+
+			double riskTicks = GetRiskTicksForBreakEven();
+			if (riskTicks <= 0)
+			{
+				if (BreakEvenTriggerRiskMultiple <= 0)
+					return 0;
+				return double.NaN;
+			}
+
+			return BreakEvenTriggerRiskMultiple * riskTicks;
+		}
+
+		private double GetRiskTicksForBreakEven()
+		{
+			if (FinancialStopUsd <= 0)
+				return 0;
+			if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
+				return 0;
+			if (TickSize <= 0)
+				return 0;
+
+			double pointValue = Instrument?.MasterInstrument?.PointValue ?? 1.0;
+			int qty = Math.Abs(Position.Quantity);
+			if (qty <= 0)
+				return 0;
+
+			double riskPerContract = FinancialStopUsd / qty;
+			double points = riskPerContract / pointValue;
+			double riskTicks = points / TickSize;
+
+			return riskTicks > 0 ? riskTicks : 0;
 		}
 
 		private void MaintainStopLoss()
