@@ -2468,6 +2468,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 					if (Enum.TryParse(state.PanelPnLMode, out PanelPnLMode savedMode))
 						PanelPnlMode = savedMode;
+					if (PanelPnlMode == PanelPnLMode.ChartHistorical)
+					{
+						_cachedPnlDay = "0.00";
+						_cachedPnlMonth = "0.00";
+						_cachedPnlTotal = "0.00";
+					}
 
 					_lastSavedHistoricalTradesCount = state.TradesCountAtSave;
 
