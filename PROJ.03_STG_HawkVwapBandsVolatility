@@ -1824,14 +1824,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[NinjaScriptProperty, Display(Name = "Financial Stop (USD)", GroupName = "Stops", Order = 4)]
 		public double FinancialStopUsd { get; set; } = 500;
 
-		[NinjaScriptProperty, Display(Name="Enable Break Even", GroupName="Risk Management", Order=1)]
-		public bool EnableBreakEven { get; set; } = false;
+		[NinjaScriptProperty]
+		[Display(Name="Enable Break Even", GroupName="Risk Management", Order=1)]
+		public bool EnableBreakEven { get; set; }
 
-		[NinjaScriptProperty, Display(Name="Break Even Trigger (Risk Multiple)", GroupName="Risk Management", Order=2)]
-		public double BreakEvenTriggerRiskMultiple { get; set; } = 0;
+		[NinjaScriptProperty]
+		[Display(Name="Break Even Trigger (ticks)", GroupName="Risk Management", Order=2)]
+		public int BreakEvenTriggerTicks { get; set; }
 
-		[NinjaScriptProperty, Display(Name="Break Even Offset (ticks)", GroupName="Risk Management", Order=3)]
-		public int BreakEvenOffsetTicks { get; set; } = 10;
+		[NinjaScriptProperty]
+		[Display(Name="Break Even Offset (ticks)", GroupName="Risk Management", Order=3)]
+		public int BreakEvenOffsetTicks { get; set; }
 
 		[NinjaScriptProperty]
 		[Display(Name = "Log Level", Order = 9001, GroupName = "Diagnostics")]
