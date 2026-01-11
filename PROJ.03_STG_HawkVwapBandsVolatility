@@ -2583,13 +2583,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (string.IsNullOrWhiteSpace(cacheKey))
 				return null;
 
-			if (PanelPnlMode == PanelPnLMode.ChartHistorical)
-			{
-				DateTime referenceTime = Time[0];
-				DateTime nowLocalBrt = ConvertToBrasilia(referenceTime).AddMinutes(UserBrtOffsetMinutes);
-				RecalcPnLIfNeeded(nowLocalBrt);
-			}
-
 			var snap = new HVB_PanelStateHub.PanelSnapshot();
 			snap.LastUpdatedUtc = (State == State.Historical) ? Time[0].ToUniversalTime() : DateTime.UtcNow;
 			snap.StrategyName = PanelTitle;
@@ -2599,6 +2592,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 			var mode = GetExitMode();
 			snap.DayTradeStatus = status;
 			snap.StatusText = $"{lastEvent} | Mode={mode} | PanelPnL={PanelPnlMode} | Persist={(ShouldPersistPanelCache() ? "On" : "Off")}";
+
+			if (PanelPnlMode == PanelPnLMode.ChartHistorical)
+			{
+				DateTime referenceTime = Time[0];
+				DateTime nowLocalBrt = ConvertToBrasilia(referenceTime).AddMinutes(UserBrtOffsetMinutes);
+				RecalcPnLIfNeeded(nowLocalBrt);
+			}
 
 			snap.PnLDiaText = _cachedPnlDay;
 			snap.PnLMesText = _cachedPnlMonth;
