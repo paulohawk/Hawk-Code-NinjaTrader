@@ -2269,6 +2269,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 			Log(HawkLogLevel.Display, tag, msg);
 		}
 
+		private void LogDisplay(string tag, string msg)
+		{
+			if (!ShouldLog(HawkLogLevel.Display)) return;
+			Log(HawkLogLevel.Display, tag, msg);
+		}
+
 		private HawkLogLevel MapLogLevel(int level)
 		{
 			switch (level)
@@ -4909,6 +4915,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				{
 					breakEvenActivated = false;
 					entryPrice = 0.0;
+					dayBreakevenDollars = "-";
 					LogDisplay("BreakEvenReset", "pos=Flat reset breakEvenActivated/entryPrice");
 				}
 
