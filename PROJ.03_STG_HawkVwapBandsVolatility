@@ -2449,8 +2449,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 						_rtRealizedMonth = ParseDoubleFlexible(_cachedPnlMonth);
 						_rtRealizedDay = ParseDoubleFlexible(_cachedPnlDay);
 						_rtLastProcessedTradeCount = SystemPerformance.AllTrades.Count;
-					if (PanelPnlMode == PanelPnLMode.RealtimeOnly)
-						ClearRealtimePanelStats(resetProcessedCount: false);
+					}
+					else
+					{
+						ClearRealtimePanelStats(resetProcessedCount: true);
 					}
 
 					HVB_PanelStateHub.Set(cacheKey, state.Snapshot);
