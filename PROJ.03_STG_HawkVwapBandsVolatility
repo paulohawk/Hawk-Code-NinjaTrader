@@ -5053,7 +5053,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 							double offset = CloseBarLimitOffsetTicks * TickSize;
 							if (closeBarOrderDirection == Regime.Buy)
 							{
-								double limitPrice = Close[0] + offset;
+								double limitPrice = High[0] + offset;
 								closeBarOrder = EnterLongLimit(0, true, QuantityPerGridOrder, limitPrice, CloseBarEntryLongName);
 								closeBarOrderPending = false;
 								closeBarOrderDirection = Regime.None;
@@ -5068,7 +5068,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 							}
 							else if (closeBarOrderDirection == Regime.Sell)
 							{
-								double limitPrice = Close[0] - offset;
+								double limitPrice = Low[0] - offset;
 								closeBarOrder = EnterShortLimit(0, true, QuantityPerGridOrder, limitPrice, CloseBarEntryShortName);
 								closeBarOrderPending = false;
 								closeBarOrderDirection = Regime.None;
