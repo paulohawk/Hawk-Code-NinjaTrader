@@ -2565,6 +2565,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 			snap.PnLDiaText = _cachedPnlDay;
 			snap.PnLMesText = _cachedPnlMonth;
 			snap.PnLTotalText = _cachedPnlTotal;
+			snap.ATREnabled = EnableSlowStochFilter;
+			snap.AtrDisplayText = EnableSlowStochFilter ? "On" : "Off";
 
 			snap.DayStopDollar = dayStopDollars;
 			snap.DayTargetDollar = dayTargetDollars;
