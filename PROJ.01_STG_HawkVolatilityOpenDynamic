@@ -1725,6 +1725,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         private double precoEntradaAtual;
         private double riscoPrecoAtual;
         private bool breakevenAtivado;
+        private bool breakEvenApplied = false;
         private Order ordemStopLong;
         private Order ordemStopShort;
         private Order ordemTPLong;
