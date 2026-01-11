@@ -4395,8 +4395,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 					int qty = Math.Abs(Position.Quantity);
 					stopLossOrder = ExitLongStopMarket(0, true, qty, newStop, "BreakEvenStopL", null);
 					breakEvenActivated = true;
+					dayBreakevenDollars = "ON";
 					if (GetExitMode() == ExitMode.Financial && !isLockedForDay && !flattenInProgress)
 						MaintainFinancialTargetLimit();
+					PublishPanelSnapshot("BreakEvenTriggered");
 				}
 			}
 			else if (Position.MarketPosition == MarketPosition.Short)
@@ -4414,11 +4416,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 					int qty = Math.Abs(Position.Quantity);
 					stopLossOrder = ExitShortStopMarket(0, true, qty, newStop, "BreakEvenStopS", null);
 					breakEvenActivated = true;
+					dayBreakevenDollars = "ON";
 					if (GetExitMode() == ExitMode.Financial && !isLockedForDay && !flattenInProgress)
 						MaintainFinancialTargetLimit();
+					PublishPanelSnapshot("BreakEvenTriggered");
 				}
 			}
-		}
 
 		private double GetCumProfitSafe()
 		{
