@@ -4338,9 +4338,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (TickSize <= 0)
 				return;
 
-			double triggerUsd = GetBreakEvenTriggerUsd();
-			if (double.IsNaN(triggerUsd))
-				return;
+			double triggerUsd = TradeStopLossUsd * BreakEvenTriggerRiskMultiple;
 
 			double pnlUsd = GetTradeFloatingPnlUsd();
 			if (EnableBreakEven && !breakEvenApplied && pnlUsd >= triggerUsd)
@@ -4355,31 +4353,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				SetStopLoss(CalculationMode.Price, newStopPrice);
 				breakEvenApplied = true;
 			}
-		}
-
-		private double GetBreakEvenTriggerUsd()
-		{
-			if (BreakEvenTriggerRiskMultiple < 0)
-				return double.NaN;
-
-			double riskUsd = GetBreakEvenRiskUsd();
-			if (riskUsd <= 0)
-			{
-				if (BreakEvenTriggerRiskMultiple <= 0)
-					return 0;
-				return double.NaN;
-			}
-
-			return BreakEvenTriggerRiskMultiple * riskUsd;
-		}
-
-		private double GetBreakEvenRiskUsd()
-		{
-			if (TradeStopLossUsd > 0)
-				return TradeStopLossUsd;
-			if (EnableFinancialStop && FinancialStopUsd > 0)
-				return FinancialStopUsd;
-			return 0;
 		}
 
 		private double GetTradeFloatingPnlUsd()
