@@ -2859,14 +2859,16 @@ namespace NinjaTrader.NinjaScript.Strategies
 				realizedPnlDay = day;
 				_lastPnlCalcCount = count;
 				_lastPnlCalcUtc = DateTime.UtcNow;
-
-				_cachedPnlDay = _totalPnlDay.ToString("0.00");
-				_cachedPnlMonth = _monthPnl.ToString("0.00");
-				_cachedPnlTotal = _overallPnl.ToString("0.00");
 			}
 			catch (Exception ex)
 			{
 				LogMsg("PnLCalcError", "RecalcPnLIfNeeded ex: " + ex.Message, 1);
+			}
+			finally
+			{
+				_cachedPnlDay = _totalPnlDay.ToString("0.00");
+				_cachedPnlMonth = _monthPnl.ToString("0.00");
+				_cachedPnlTotal = _overallPnl.ToString("0.00");
 			}
 		}
 
