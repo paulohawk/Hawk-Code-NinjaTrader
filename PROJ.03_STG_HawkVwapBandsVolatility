@@ -4386,8 +4386,16 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (unrealizedUsd >= riskTriggerUsd)
 				{
 					double newStop = entryPrice + (BreakEvenOffsetTicks * TickSize);
-					SetStopLoss(CalculationMode.Price, newStop);
+					newStop = Instrument.MasterInstrument.RoundToTickSize(newStop);
+					CancelStopLoss();
+					CancelFinancialTarget();
+					if (BlockIfSameBar("BreakEven")) return;
+					if (HasWorkingOrders(stopLossOrder)) return;
+					int qty = Math.Abs(Position.Quantity);
+					stopLossOrder = ExitLongStopMarket(0, true, qty, newStop, "BreakEvenStopL", null);
 					breakEvenActivated = true;
+					if (GetExitMode() == ExitMode.Financial && !isLockedForDay && !flattenInProgress)
+						MaintainFinancialTargetLimit();
 				}
 			}
 			else if (Position.MarketPosition == MarketPosition.Short)
@@ -4397,8 +4405,16 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (unrealizedUsd >= riskTriggerUsd)
 				{
 					double newStop = entryPrice - (BreakEvenOffsetTicks * TickSize);
-					SetStopLoss(CalculationMode.Price, newStop);
+					newStop = Instrument.MasterInstrument.RoundToTickSize(newStop);
+					CancelStopLoss();
+					CancelFinancialTarget();
+					if (BlockIfSameBar("BreakEven")) return;
+					if (HasWorkingOrders(stopLossOrder)) return;
+					int qty = Math.Abs(Position.Quantity);
+					stopLossOrder = ExitShortStopMarket(0, true, qty, newStop, "BreakEvenStopS", null);
 					breakEvenActivated = true;
+					if (GetExitMode() == ExitMode.Financial && !isLockedForDay && !flattenInProgress)
+						MaintainFinancialTargetLimit();
 				}
 			}
 		}
@@ -4422,6 +4438,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 				CancelStopLoss();
 				return;
 			}
+
+			if (breakEvenActivated)
+				return;
 
 			if (EnableFinancialStop && FinancialStopUsd > 0)
 			{
