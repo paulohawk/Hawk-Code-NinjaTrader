@@ -5014,6 +5014,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 					bool stochReady = !double.IsNaN(stochD);
 					bool canStartCycle = CanStartNewCycle(newRegime);
 
+					if (!EnableCloseBarFilter)
+					{
+						ResetCloseBarState("filter_disabled");
+					}
+
 					bool hasCloseBarWorkingOrder = closeBarOrder != null && IsActiveOrSubmitted(closeBarOrder);
 					bool closeInsideSecondBand = !double.IsNaN(lower[1]) && !double.IsNaN(upper[1]) &&
 						Close[0] >= lower[1] && Close[0] <= upper[1];
@@ -5136,6 +5141,40 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				Print($"[HawkVwapBandsVolatility] OnBarUpdate exception: {ex}");
 			}
+		}
+
+		private void ResetCloseBarState(string reason)
+		{
+			bool hasState = closeBarOrderPending ||
+				closeBarOrder != null ||
+				closeBarOrderDirection != Regime.None ||
+				closeBarOrderActiveDirection != Regime.None ||
+				closeBarOrderActiveBar >= 0 ||
+				closeBarOrderCancelBar >= 0 ||
+				closeBarRearmAfterCancel;
+
+			if (!hasState)
+				return;
+
+			try
+			{
+				if (closeBarOrder != null && IsActiveOrSubmitted(closeBarOrder) && !IsCancelling(closeBarOrder))
+					CancelOrder(closeBarOrder);
+			}
+			catch { }
+
+			closeBarOrderPending = false;
+			closeBarOrderDirection = Regime.None;
+			closeBarOrderSignalClose = double.NaN;
+			closeBarOrderActiveDirection = Regime.None;
+			closeBarOrderActiveBar = -1;
+			closeBarOrderCancelBar = -1;
+			closeBarRearmAfterCancel = false;
+
+			if (IsDeadOrder(closeBarOrder))
+				closeBarOrder = null;
+
+			LogMsg("CloseBarReset", $"reason={reason}", 3);
 		}
 
 		private void ApplyDailyResetIfNeeded(DateTime calDay)
