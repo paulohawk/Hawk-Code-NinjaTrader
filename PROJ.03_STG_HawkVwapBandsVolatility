@@ -2804,6 +2804,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				var all = SystemPerformance.AllTrades;
 				int count = all.Count;
+				DateTime referenceLocal = nowLocalBrt;
+				if (State == State.Historical && CurrentBar >= 0)
+					referenceLocal = Time[0];
 				bool throttle = (DateTime.UtcNow - _lastPnlCalcUtc).TotalSeconds < Math.Max(1, PanelPublishIntervalSeconds);
 				if (count == _lastPnlCalcCount && throttle)
 					return;
@@ -2811,7 +2814,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 				double total = all.TradesPerformance.Currency.CumProfit;
 				double day = 0;
 				double month = 0;
-				DateTime today = nowLocalBrt.Date;
+				DateTime todayLocal = referenceLocal.Date;
+				DateTime monthStartLocal = new DateTime(referenceLocal.Year, referenceLocal.Month, 1);
+				DateTime nextMonthStartLocal = monthStartLocal.AddMonths(1);
 
 				for (int i = 0; i < count; i++)
 				{
@@ -2819,16 +2824,18 @@ namespace NinjaTrader.NinjaScript.Strategies
 					if (tr?.Exit == null) continue;
 					DateTime exitBrt = ConvertToBrasilia(tr.Exit.Time).AddMinutes(UserBrtOffsetMinutes);
 					DateTime exitDay = exitBrt.Date;
-					if (exitDay == today) day += tr.ProfitCurrency;
-					if (exitDay.Year == today.Year && exitDay.Month == today.Month) month += tr.ProfitCurrency;
+					if (exitDay == todayLocal) day += tr.ProfitCurrency;
+					if (exitDay >= monthStartLocal && exitDay < nextMonthStartLocal) month += tr.ProfitCurrency;
 				}
 
+				_totalPnlDay = day;
 				_overallPnl = total;
 				_monthPnl = month;
 				realizedPnlDay = day;
 				_lastPnlCalcCount = count;
 				_lastPnlCalcUtc = DateTime.UtcNow;
 
+				_cachedPnlDay = _totalPnlDay.ToString("0.00");
 				_cachedPnlMonth = _monthPnl.ToString("0.00");
 				_cachedPnlTotal = _overallPnl.ToString("0.00");
 			}
