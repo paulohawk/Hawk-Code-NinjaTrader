@@ -5011,16 +5011,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 					bool isFlat = Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0;
 					bool hasWorkingOrders = HasAnyWorkingOrders();
 					double stochD = _stoch?.D[0] ?? double.NaN;
+					bool stochReady = !double.IsNaN(stochD);
 					bool canStartCycle = CanStartNewCycle(newRegime);
 
 					bool hasCloseBarWorkingOrder = closeBarOrder != null && IsActiveOrSubmitted(closeBarOrder);
 					bool closeInsideSecondBand = !double.IsNaN(lower[1]) && !double.IsNaN(upper[1]) &&
 						Close[0] >= lower[1] && Close[0] <= upper[1];
+					bool candlePositive = Close[0] > Open[0];
+					bool candleNegative = Close[0] < Open[0];
 
 					if (hasCloseBarWorkingOrder && closeBarOrderActiveBar >= 0 && CurrentBar == closeBarOrderActiveBar + 1)
 					{
-						bool candlePositive = Close[0] > Open[0];
-						bool candleNegative = Close[0] < Open[0];
 						bool shouldCancel = (closeBarOrderActiveDirection == Regime.Buy && candleNegative) ||
 							(closeBarOrderActiveDirection == Regime.Sell && candlePositive);
 
@@ -5039,7 +5040,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 					if (closeBarOrderPending && !hasCloseBarWorkingOrder)
 					{
 						bool canSubmitAfterCancel = closeBarOrderCancelBar < 0 || CurrentBar > closeBarOrderCancelBar;
-						if (inWindow && !isLockedForDay && isFlat && !hasWorkingOrders && canStartCycle && closeInsideSecondBand && canSubmitAfterCancel)
+						bool closeBarDirectionConfirmed = (closeBarOrderDirection == Regime.Buy && candlePositive) ||
+							(closeBarOrderDirection == Regime.Sell && candleNegative);
+						if (inWindow && !isLockedForDay && isFlat && !hasWorkingOrders && canStartCycle && closeInsideSecondBand && canSubmitAfterCancel &&
+							stochReady && closeBarDirectionConfirmed)
 						{
 							double offset = CloseBarLimitOffsetTicks * TickSize;
 							if (closeBarOrderDirection == Regime.Buy)
