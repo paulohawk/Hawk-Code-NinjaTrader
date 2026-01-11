@@ -2460,20 +2460,24 @@ namespace NinjaTrader.NinjaScript.Strategies
 					var state = ser.Deserialize(fs) as HVB_PanelPersistedState;
 					if (state == null || state.Snapshot == null) return false;
 
-					_cachedPnlDay = state.Snapshot.PnLDiaText ?? _cachedPnlDay;
-					_cachedPnlMonth = state.Snapshot.PnLMesText ?? _cachedPnlMonth;
-					_cachedPnlTotal = state.Snapshot.PnLTotalText ?? _cachedPnlTotal;
-					_maxGainStreak = state.MaxGainStreak;
-					_maxLossStreak = state.MaxLossStreak;
-
 					if (Enum.TryParse(state.PanelPnLMode, out PanelPnLMode savedMode))
 						PanelPnlMode = savedMode;
+
 					if (PanelPnlMode == PanelPnLMode.ChartHistorical)
 					{
 						_cachedPnlDay = "0.00";
 						_cachedPnlMonth = "0.00";
 						_cachedPnlTotal = "0.00";
 					}
+					else
+					{
+						_cachedPnlDay = state.Snapshot.PnLDiaText ?? _cachedPnlDay;
+						_cachedPnlMonth = state.Snapshot.PnLMesText ?? _cachedPnlMonth;
+						_cachedPnlTotal = state.Snapshot.PnLTotalText ?? _cachedPnlTotal;
+					}
+
+					_maxGainStreak = state.MaxGainStreak;
+					_maxLossStreak = state.MaxLossStreak;
 
 					_lastSavedHistoricalTradesCount = state.TradesCountAtSave;
 
