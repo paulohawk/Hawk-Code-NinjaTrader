@@ -4329,11 +4329,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 			double pnlUsd = GetTradeFloatingPnlUsd();
 			if (EnableBreakEven && !breakEvenApplied && pnlUsd >= triggerUsd)
 			{
-				double newStopPrice = Position.AveragePrice;
+				double entryPrice = Position.AveragePrice;
+				double newStopPrice = entryPrice;
 				if (Position.MarketPosition == MarketPosition.Long)
-					newStopPrice = Position.AveragePrice + (BreakEvenOffsetTicks * TickSize);
+					newStopPrice = entryPrice + (BreakEvenOffsetTicks * TickSize);
 				else if (Position.MarketPosition == MarketPosition.Short)
-					newStopPrice = Position.AveragePrice - (BreakEvenOffsetTicks * TickSize);
+					newStopPrice = entryPrice - (BreakEvenOffsetTicks * TickSize);
 
 				SetStopLoss(CalculationMode.Price, newStopPrice);
 				breakEvenApplied = true;
