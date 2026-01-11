@@ -1922,6 +1922,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private Order closeBarOrder = null;
 		private Regime closeBarOrderDirection = Regime.None;
 		private double closeBarOrderSignalClose = double.NaN;
+		private Regime closeBarOrderActiveDirection = Regime.None;
+		private int closeBarOrderActiveBar = -1;
+		private int closeBarOrderCancelBar = -1;
+		private bool closeBarRearmAfterCancel = false;
 		private const string CloseBarEntryLongName = "CloseBarEntryLong";
 		private const string CloseBarEntryShortName = "CloseBarEntryShort";
 
@@ -5013,9 +5017,29 @@ namespace NinjaTrader.NinjaScript.Strategies
 					bool closeInsideSecondBand = !double.IsNaN(lower[1]) && !double.IsNaN(upper[1]) &&
 						Close[0] >= lower[1] && Close[0] <= upper[1];
 
+					if (hasCloseBarWorkingOrder && closeBarOrderActiveBar >= 0 && CurrentBar == closeBarOrderActiveBar + 1)
+					{
+						bool candlePositive = Close[0] > Open[0];
+						bool candleNegative = Close[0] < Open[0];
+						bool shouldCancel = (closeBarOrderActiveDirection == Regime.Buy && candleNegative) ||
+							(closeBarOrderActiveDirection == Regime.Sell && candlePositive);
+
+						if (shouldCancel)
+						{
+							LogMsg("CloseBarCancel", $"dir={closeBarOrderActiveDirection} candle={Close[0]:0.00}/{Open[0]:0.00} bar={CurrentBar}", 2);
+							closeBarRearmAfterCancel = true;
+							closeBarOrderPending = true;
+							closeBarOrderDirection = closeBarOrderActiveDirection;
+							closeBarOrderSignalClose = double.NaN;
+							closeBarOrderCancelBar = CurrentBar;
+							try { CancelOrder(closeBarOrder); } catch { }
+						}
+					}
+
 					if (closeBarOrderPending && !hasCloseBarWorkingOrder)
 					{
-						if (inWindow && !isLockedForDay && isFlat && !hasWorkingOrders && canStartCycle && closeInsideSecondBand)
+						bool canSubmitAfterCancel = closeBarOrderCancelBar < 0 || CurrentBar > closeBarOrderCancelBar;
+						if (inWindow && !isLockedForDay && isFlat && !hasWorkingOrders && canStartCycle && closeInsideSecondBand && canSubmitAfterCancel)
 						{
 							double offset = CloseBarLimitOffsetTicks * TickSize;
 							if (closeBarOrderDirection == Regime.Buy)
@@ -5025,6 +5049,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 								closeBarOrderPending = false;
 								closeBarOrderDirection = Regime.None;
 								closeBarOrderSignalClose = double.NaN;
+								closeBarOrderActiveDirection = Regime.Buy;
+								closeBarOrderActiveBar = CurrentBar;
+								closeBarOrderCancelBar = -1;
+								closeBarRearmAfterCancel = false;
 								_lastSignal = "CloseBar_Long_Limit";
 								_lastAction = "EnterLongLimitCloseBar";
 								MarkActionExecuted();
@@ -5036,6 +5064,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 								closeBarOrderPending = false;
 								closeBarOrderDirection = Regime.None;
 								closeBarOrderSignalClose = double.NaN;
+								closeBarOrderActiveDirection = Regime.Sell;
+								closeBarOrderActiveBar = CurrentBar;
+								closeBarOrderCancelBar = -1;
+								closeBarRearmAfterCancel = false;
 								_lastSignal = "CloseBar_Short_Limit";
 								_lastAction = "EnterShortLimitCloseBar";
 								MarkActionExecuted();
@@ -5124,6 +5156,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 				closeBarOrder = null;
 				closeBarOrderDirection = Regime.None;
 				closeBarOrderSignalClose = double.NaN;
+				closeBarOrderActiveDirection = Regime.None;
+				closeBarOrderActiveBar = -1;
+				closeBarOrderCancelBar = -1;
+				closeBarRearmAfterCancel = false;
 
 				ResetTradeCounters(calDay);
 
@@ -5291,9 +5327,19 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (flattenOrder == order) flattenOrder = null;
 				if (isCloseBarEntry)
 				{
-					closeBarOrderPending = false;
-					closeBarOrderDirection = Regime.None;
-					closeBarOrderSignalClose = double.NaN;
+					if (closeBarRearmAfterCancel)
+					{
+						closeBarRearmAfterCancel = false;
+					}
+					else
+					{
+						closeBarOrderPending = false;
+						closeBarOrderDirection = Regime.None;
+						closeBarOrderSignalClose = double.NaN;
+						closeBarOrderCancelBar = -1;
+					}
+					closeBarOrderActiveDirection = Regime.None;
+					closeBarOrderActiveBar = -1;
 				}
 				ClearOrderReference(order);
 			}
@@ -5320,6 +5366,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 					closeBarOrder = null;
 					closeBarOrderDirection = Regime.None;
 					closeBarOrderSignalClose = double.NaN;
+					closeBarOrderActiveDirection = Regime.None;
+					closeBarOrderActiveBar = -1;
+					closeBarOrderCancelBar = -1;
+					closeBarRearmAfterCancel = false;
 				}
 			}
 
