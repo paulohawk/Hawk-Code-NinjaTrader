@@ -5141,6 +5141,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 					CancelAllGrid("slow_stoch_mode");
 					bool hasWorkingOrders = HasAnyWorkingOrders();
+					bool isFlat = Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0;
 					double stochD = _stoch?.D[0] ?? double.NaN;
 					bool stochReady = !double.IsNaN(stochD);
 					bool canStartCycle = CanStartNewCycle(newRegime);
