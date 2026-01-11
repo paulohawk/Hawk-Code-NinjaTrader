@@ -2002,6 +2002,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private int _histWinningTrades = 0;
 		private int _histLosingTrades = 0;
 
+		private double unrealizedTicks = 0;
 		private string _lockReason = "";
 		private DateTime _lockedAtUtc = DateTime.MinValue;
 		private StrategySnapshot _snap;
@@ -5124,12 +5125,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 					bool isFlat = Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0;
 					double openTicksFromEntry = 0;
+					unrealizedTicks = 0;
 					if (!isFlat && TickSize > 0)
 					{
 						if (Position.MarketPosition == MarketPosition.Long)
 							openTicksFromEntry = (Close[0] - Position.AveragePrice) / TickSize;
 						else if (Position.MarketPosition == MarketPosition.Short)
 							openTicksFromEntry = (Position.AveragePrice - Close[0]) / TickSize;
+						unrealizedTicks = openTicksFromEntry;
 					}
 					_openTicksFromEntry = openTicksFromEntry;
 					bool hasWorkingOrders = HasAnyWorkingOrders();
