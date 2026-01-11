@@ -2872,30 +2872,44 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 		}
 
-		private void UpdateUnrealizedAndTotalPnL()
-		{
-			try
+			private void UpdateUnrealizedAndTotalPnL()
 			{
-				double pointValue = Instrument?.MasterInstrument?.PointValue ?? 1.0;
-				int qty = Math.Abs(Position?.Quantity ?? 0);
+				try
+				{
+					double tickSize = Instrument?.MasterInstrument?.TickSize ?? 0.0;
+					double pointValue = Instrument?.MasterInstrument?.PointValue ?? 1.0;
+					double tickValue = pointValue * tickSize;
+					int qty = Math.Abs(Position?.Quantity ?? 0);
 
-				if (Position != null && Position.MarketPosition == MarketPosition.Long && qty > 0)
-					_unrealizedPnlManual = (Close[0] - Position.AveragePrice) * pointValue * qty;
-				else if (Position != null && Position.MarketPosition == MarketPosition.Short && qty > 0)
-					_unrealizedPnlManual = (Position.AveragePrice - Close[0]) * pointValue * qty;
-				else
+					if (Position != null && tickSize > 0 && qty > 0)
+					{
+						double avgPrice = Position.AveragePrice;
+						double diffTicks;
+
+						if (Position.MarketPosition == MarketPosition.Long)
+							diffTicks = (Close[0] - avgPrice) / tickSize;
+						else if (Position.MarketPosition == MarketPosition.Short)
+							diffTicks = (avgPrice - Close[0]) / tickSize;
+						else
+							diffTicks = 0;
+
+						_unrealizedPnlManual = diffTicks * tickValue * qty;
+					}
+					else
+					{
+						_unrealizedPnlManual = 0;
+					}
+
+					_totalPnlDay = realizedPnlDay + _unrealizedPnlManual;
+
+					_cachedPnlDay = _totalPnlDay.ToString("0.00");
+				}
+				catch
+				{
 					_unrealizedPnlManual = 0;
-
-				_totalPnlDay = realizedPnlDay + _unrealizedPnlManual;
-
-				_cachedPnlDay = _totalPnlDay.ToString("0.00");
+					_totalPnlDay = realizedPnlDay;
+				}
 			}
-			catch
-			{
-				_unrealizedPnlManual = 0;
-				_totalPnlDay = realizedPnlDay;
-			}
-		}
 
 		private void UpdateStreaksIfClosedTradesChanged()
 		{
