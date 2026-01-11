@@ -5027,10 +5027,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 					if (hasCloseBarWorkingOrder && closeBarOrderActiveBar >= 0 && CurrentBar == closeBarOrderActiveBar + 1)
 					{
+						bool shouldKeep = (closeBarOrderActiveDirection == Regime.Buy && candlePositive) ||
+							(closeBarOrderActiveDirection == Regime.Sell && candleNegative);
 						bool shouldCancel = (closeBarOrderActiveDirection == Regime.Buy && candleNegative) ||
 							(closeBarOrderActiveDirection == Regime.Sell && candlePositive);
 
-						if (shouldCancel)
+						if (shouldCancel && !shouldKeep)
 						{
 							LogMsg("CloseBarCancel", $"dir={closeBarOrderActiveDirection} candle={Close[0]:0.00}/{Open[0]:0.00} bar={CurrentBar}", 2);
 							closeBarRearmAfterCancel = true;
