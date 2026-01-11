@@ -4845,6 +4845,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 				if (BarsInProgress != 0) return;
 
+				if (Position.MarketPosition == MarketPosition.Flat)
+				{
+					breakEvenApplied = false;
+				}
+
 				if (SupportMode && SupportDumpEveryNBars > 0 && CurrentBar >= 0 &&
 					(CurrentBar % SupportDumpEveryNBars) == 0)
 				{
