@@ -327,7 +327,7 @@ namespace NinjaTrader.NinjaScript
 
 			var atrRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
 			_bulletAtr = CreateBullet();
-			var atrLbl = new TextBlock { Text = "ATR", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.None };
+			var atrLbl = new TextBlock { Text = "STOCH", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.None };
 			atrRow.Children.Add(_bulletAtr);
 			atrRow.Children.Add(atrLbl);
 			main.Children.Add(atrRow);
@@ -1960,6 +1960,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private double _totalPnlDay = 0;
 		private double _monthPnl = 0;
 		private double _overallPnl = 0;
+		private double _histNetProfit = 0;
+		private double _histGrossProfit = 0;
+		private double _histGrossLoss = 0;
+		private double _histMaxDrawdown = 0;
+		private double _histWinRate = 0;
+		private double _histLossRate = 0;
+		private int _histMaxConsecutiveWins = 0;
+		private int _histMaxConsecutiveLosses = 0;
+		private int _histTotalTrades = 0;
+		private int _histWinningTrades = 0;
+		private int _histLosingTrades = 0;
 
 		private string _lockReason = "";
 		private DateTime _lockedAtUtc = DateTime.MinValue;
@@ -2534,8 +2545,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			if (!offSnapshot && _cachedPnlTotal == "-" && PanelPnlMode == PanelPnLMode.ChartHistorical)
 			{
-				var nowLocal = ConvertToBrasilia(Time[0]).AddMinutes(UserBrtOffsetMinutes);
-				RecalcPnLIfNeeded(nowLocal);
+				RebuildHistoricalStats();
 			}
 
 			var snap = new HVB_PanelStateHub.PanelSnapshot();
@@ -2664,6 +2674,125 @@ namespace NinjaTrader.NinjaScript.Strategies
 		#endregion
 
 		#region PnL + streak recalc
+		private void ResetHistoricalPanelStats()
+		{
+			_overallPnl = 0;
+			_monthPnl = 0;
+			realizedPnlDay = 0;
+			_totalPnlDay = 0;
+			_unrealizedPnlManual = 0;
+			_cachedPnlDay = "0.00";
+			_cachedPnlMonth = "0.00";
+			_cachedPnlTotal = "0.00";
+
+			_currentStreak = 0;
+			_maxGainStreak = 0;
+			_maxLossStreak = 0;
+			_lastStreakTradesCount = 0;
+
+			_histNetProfit = 0;
+			_histGrossProfit = 0;
+			_histGrossLoss = 0;
+			_histMaxDrawdown = 0;
+			_histWinRate = 0;
+			_histLossRate = 0;
+			_histMaxConsecutiveWins = 0;
+			_histMaxConsecutiveLosses = 0;
+			_histTotalTrades = 0;
+			_histWinningTrades = 0;
+			_histLosingTrades = 0;
+			_lastSavedHistoricalTradesCount = -1;
+		}
+
+		private void RebuildHistoricalStats()
+		{
+			if (PanelPnlMode != PanelPnLMode.ChartHistorical) return;
+
+			ResetHistoricalPanelStats();
+
+			var trades = SystemPerformance.AllTrades;
+			if (trades == null) return;
+
+			DateTime nowLocalBrt;
+			try
+			{
+				nowLocalBrt = ConvertToBrasilia(Time[0]).AddMinutes(UserBrtOffsetMinutes);
+			}
+			catch
+			{
+				nowLocalBrt = ConvertToBrasilia(DateTime.UtcNow).AddMinutes(UserBrtOffsetMinutes);
+			}
+
+			DateTime today = nowLocalBrt.Date;
+			double cumulative = 0;
+			double peak = 0;
+			int currentWinStreak = 0;
+			int currentLossStreak = 0;
+
+			foreach (Trade trade in trades)
+			{
+				if (trade == null) continue;
+				if (trade.Exit == null) continue;
+
+				double pnl = trade.ProfitCurrency;
+				_histTotalTrades++;
+				cumulative += pnl;
+
+				if (pnl > 0)
+				{
+					_histGrossProfit += pnl;
+					_histWinningTrades++;
+					currentWinStreak++;
+					currentLossStreak = 0;
+					_histMaxConsecutiveWins = Math.Max(_histMaxConsecutiveWins, currentWinStreak);
+				}
+				else if (pnl < 0)
+				{
+					_histGrossLoss += pnl;
+					_histLosingTrades++;
+					currentLossStreak++;
+					currentWinStreak = 0;
+					_histMaxConsecutiveLosses = Math.Max(_histMaxConsecutiveLosses, currentLossStreak);
+				}
+				else
+				{
+					currentWinStreak = 0;
+					currentLossStreak = 0;
+				}
+
+				if (cumulative > peak) peak = cumulative;
+				double drawdown = peak - cumulative;
+				if (drawdown > _histMaxDrawdown) _histMaxDrawdown = drawdown;
+
+				DateTime exitBrt = ConvertToBrasilia(trade.Exit.Time).AddMinutes(UserBrtOffsetMinutes);
+				DateTime exitDay = exitBrt.Date;
+				if (exitDay == today) realizedPnlDay += pnl;
+				if (exitDay.Year == today.Year && exitDay.Month == today.Month) _monthPnl += pnl;
+			}
+
+			_histNetProfit = _histGrossProfit + _histGrossLoss;
+			_overallPnl = _histNetProfit;
+			_totalPnlDay = realizedPnlDay;
+			_cachedPnlDay = realizedPnlDay.ToString("0.00");
+			_cachedPnlMonth = _monthPnl.ToString("0.00");
+			_cachedPnlTotal = _overallPnl.ToString("0.00");
+
+			if (_histTotalTrades > 0)
+			{
+				_histWinRate = (_histWinningTrades / (double)_histTotalTrades) * 100.0;
+				_histLossRate = (_histLosingTrades / (double)_histTotalTrades) * 100.0;
+			}
+
+			_maxGainStreak = _histMaxConsecutiveWins;
+			_maxLossStreak = _histMaxConsecutiveLosses;
+
+			if (trades.Count != _lastSavedHistoricalTradesCount)
+			{
+				_lastSavedHistoricalTradesCount = trades.Count;
+				_panelCacheSaveRequested = true;
+			}
+		}
+
 		private void RecalcPnLIfNeeded(DateTime nowLocalBrt)
 		{
 			try
@@ -4651,23 +4780,16 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 					if (PanelPnlMode == PanelPnLMode.ChartHistorical)
 					{
-						RecalcPnLIfNeeded(nowBrtDt);
-						int count = SystemPerformance.AllTrades.Count;
-						if (count != _lastSavedHistoricalTradesCount)
-						{
-							_lastSavedHistoricalTradesCount = count;
-							_panelCacheSaveRequested = true;
-						}
+						RebuildHistoricalStats();
 					}
 					else
 					{
 						realizedPnlDay = _rtRealizedDay;
 						_cachedPnlMonth = _rtRealizedMonth.ToString("0.00");
 						_cachedPnlTotal = _rtRealizedTotal.ToString("0.00");
+						UpdateUnrealizedAndTotalPnL();
+						UpdateStreaksIfClosedTradesChanged();
 					}
-
-					UpdateUnrealizedAndTotalPnL();
-					UpdateStreaksIfClosedTradesChanged();
 
 					dayStopDollars = $"-{DailyLossLimitUsd:0}";
 					dayTargetDollars = $"+{DailyProfitLimitUsd:0}";
@@ -4750,23 +4872,16 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 					if (PanelPnlMode == PanelPnLMode.ChartHistorical)
 					{
-						RecalcPnLIfNeeded(nowBrtDt);
-						int count = SystemPerformance.AllTrades.Count;
-						if (count != _lastSavedHistoricalTradesCount)
-						{
-							_lastSavedHistoricalTradesCount = count;
-							_panelCacheSaveRequested = true;
-						}
+						RebuildHistoricalStats();
 					}
 					else
 					{
 						realizedPnlDay = _rtRealizedDay;
 						_cachedPnlMonth = _rtRealizedMonth.ToString("0.00");
 						_cachedPnlTotal = _rtRealizedTotal.ToString("0.00");
+						UpdateUnrealizedAndTotalPnL();
+						UpdateStreaksIfClosedTradesChanged();
 					}
-
-					UpdateUnrealizedAndTotalPnL();
-					UpdateStreaksIfClosedTradesChanged();
 
 					dayStopDollars = $"-{DailyLossLimitUsd:0}";
 					dayTargetDollars = $"+{DailyProfitLimitUsd:0}";
