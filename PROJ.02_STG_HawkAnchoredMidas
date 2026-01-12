@@ -1814,6 +1814,11 @@ namespace NinjaTrader.NinjaScript.Strategies
         private DateTime blockedAfterCloseDate = Core.Globals.MinDate;
         private DateTime lastResetTradingDay = Core.Globals.MinDate;
         private DateTime lastResetDate = Core.Globals.MinDate;
+        private bool hasValidMidasToday = false;
+        private double lastMidasHigh = double.NaN;
+        private double lastMidasMid = double.NaN;
+        private double lastMidasLow = double.NaN;
+        private DateTime lastMidasDate = Core.Globals.MinDate;
 
         private DateTime lastSnapshotUtc = DateTime.MinValue;
         private bool initialSnapshotPublished = false;
@@ -1935,10 +1940,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             string inicioText = inicioHojeAllowed.HasValue ? inicioHojeAllowed.Value.ToString("O") : "n/a";
             string zeraText = horarioZeraDt.HasValue ? horarioZeraDt.Value.ToString("O") : "n/a";
-            string midasReady = (vwap?.IsReady ?? false) ? "1" : "0";
+            string midasReady = (vwap != null) ? "1" : "0";
             string extraText = string.IsNullOrWhiteSpace(extra) ? "" : " " + extra;
 
-            return $"barTimeVwap={barTime:O} nowPrimary={agoraPrimary:O} blockedAfterClose={(blockedAfterClose ? 1 : 0)} status=\"{statusText}\" vwapIsReady={midasReady} currentBarsVwap={cbVwap} currentBars0={cb0} inicioHojeAllowed={inicioText} horarioZeraDT={zeraText}{extraText}";
+            return $"barTimeVwap={barTime:O} nowPrimary={agoraPrimary:O} blockedAfterClose={(blockedAfterClose ? 1 : 0)} status=\"{statusText}\" vwapPresent={midasReady} currentBarsVwap={cbVwap} currentBars0={cb0} inicioHojeAllowed={inicioText} horarioZeraDT={zeraText}{extraText}";
         }
 
         private void RPLog(string msg)
@@ -2819,16 +2824,19 @@ namespace NinjaTrader.NinjaScript.Strategies
                 return;
             }
 
-            if (ExecutionMode == ExecutionModeType.RealtimePrecise && !IsFirstTickOfBar)
-            {
-                EntryDiag("GATE_NOT_FIRST_TICK", BuildEntryDiagContext(null, null, "reason=not_first_tick"));
-                return;
-            }
-
             if (CurrentBars.Length <= vwapBip || CurrentBars[vwapBip] <= 0)
             {
                 EntryDiag("GATE_VWAP_BARS", BuildEntryDiagContext(null, null, "reason=vwap_bars_not_ready"));
                 return;
+            }
+            DateTime midasDate = Times[vwapBip][0].Date;
+            if (midasDate != lastMidasDate)
+            {
+                lastMidasDate = midasDate;
+                hasValidMidasToday = false;
+                lastMidasHigh = double.NaN;
+                lastMidasMid = double.NaN;
+                lastMidasLow = double.NaN;
             }
             if (CurrentBars[0] < BarsRequiredToTrade)
             {
@@ -3610,26 +3618,40 @@ namespace NinjaTrader.NinjaScript.Strategies
                 return false;
             }
 
-            if (!vwap.IsReady)
+            try
             {
-                EntryDiag("MIDAS_NOT_READY", BuildEntryDiagContext(null, null, "reason=vwap_not_ready"));
+                vwapHigh = vwap.Values[0][0];
+                vwapMedian = vwap.Values[1][0];
+                vwapLow = vwap.Values[2][0];
+                bool valid = !(double.IsNaN(vwapHigh) || double.IsNaN(vwapMedian) || double.IsNaN(vwapLow)
+                    || double.IsInfinity(vwapHigh) || double.IsInfinity(vwapMedian) || double.IsInfinity(vwapLow));
+                if (valid)
+                {
+                    source = "MIDAS_CURRENT";
+                    DateTime midasDate = Times[vwapBip][0].Date;
+                    lastMidasDate = midasDate;
+                    hasValidMidasToday = true;
+                    lastMidasHigh = vwapHigh;
+                    lastMidasMid = vwapMedian;
+                    lastMidasLow = vwapLow;
+                    return true;
+                }
+                EntryDiag("MIDAS_NOT_READY", BuildEntryDiagContext(null, null, "reason=midas_invalid"));
+            }
+            catch
+            {
+                EntryDiag("MIDAS_NOT_READY", BuildEntryDiagContext(null, null, "reason=midas_read_error"));
             }
 
-            if (vwap.IsReady)
+            if (hasValidMidasToday && lastMidasDate == Times[vwapBip][0].Date)
             {
-                try
-                {
-                    vwapHigh = vwap.Values[0][0];
-                    vwapMedian = vwap.Values[1][0];
-                    vwapLow = vwap.Values[2][0];
-                    if (!double.IsNaN(vwapHigh) && !double.IsNaN(vwapMedian) && !double.IsNaN(vwapLow))
-                    {
-                        source = "MIDAS_CURRENT";
-                        return true;
-                    }
-                    EntryDiag("MIDAS_NAN", BuildEntryDiagContext(null, null, "reason=midas_nan"));
-                }
-                catch { }
+                vwapHigh = lastMidasHigh;
+                vwapMedian = lastMidasMid;
+                vwapLow = lastMidasLow;
+                source = "MIDAS_DAY_CACHE";
+                RPLog($"[MIDAS] source=DAY_CACHE date={Times[vwapBip][0]:yyyy-MM-dd} H={vwapHigh} M={vwapMedian} L={vwapLow}");
+                EntryDiag("MIDAS_DAY_CACHE", BuildEntryDiagContext(null, null, $"date={Times[vwapBip][0]:yyyy-MM-dd}"));
+                return true;
             }
 
             if (allowCacheFallback && vwap.TryGetLastValidValues(out vwapHigh, out vwapMedian, out vwapLow, out timestamp))
