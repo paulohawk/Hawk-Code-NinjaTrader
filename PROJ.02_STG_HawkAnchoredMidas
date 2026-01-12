@@ -2739,14 +2739,19 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             if (vwap == null) { statusText = "VWAP não pronto"; return; }
 
-            double vwapMedian, vwapHigh, vwapLow;
-            try
+            if (!TryGetMidasValues(out double vwapHigh, out double vwapMedian, out double vwapLow, out string source, out _))
             {
-                vwapMedian = vwap.Values[1][0];
-                vwapHigh = vwap.Values[0][0];
-                vwapLow = vwap.Values[2][0];
+                statusText = "MIDAS indisponível";
+                RPLog("[MIDAS] source=NONE handle=HandleMidasBar action=skip");
+                return;
             }
-            catch { statusText = "VWAP erro"; return; }
+
+            string midasTag = source == "MIDAS_CACHE" ? " (MIDAS cache)" : "";
+            if (source == "MIDAS_CACHE")
+            {
+                statusText = "MIDAS cache";
+                RPLog("[MIDAS] source=CACHE handle=HandleMidasBar action=continue");
+            }
 
             double preco = Closes[0][0];
             bool aboveBands = preco > vwapHigh && preco > vwapMedian && preco > vwapLow;
@@ -2788,19 +2793,19 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             CancelPendingLimitsIfAny();
 
-            if (sideLatched == LatchedSide.None) { statusText = "Waiting (sem contexto)"; ClearPendingSnapshot(); return; }
-            if (Position.MarketPosition != MarketPosition.Flat) { statusText = "Posição aberta"; ClearPendingSnapshot(); return; }
+            if (sideLatched == LatchedSide.None) { statusText = $"Waiting (sem contexto){midasTag}"; ClearPendingSnapshot(); return; }
+            if (Position.MarketPosition != MarketPosition.Flat) { statusText = $"Posição aberta{midasTag}"; ClearPendingSnapshot(); return; }
 
             if (sideLatched == LatchedSide.Long)
             {
                 double precoLimiteCompra = Instrument.MasterInstrument.RoundToTickSize(vwapMedian + LimitOffsetTicks * tickSize);
-                statusText = "Contexto Long (pendente)";
+                statusText = $"Contexto Long (pendente){midasTag}";
                 SubmitOrReplaceLimitOrderSafe(true, qtyCalc, precoLimiteCompra, "LongAuto");
             }
             else
             {
                 double precoLimiteVenda = Instrument.MasterInstrument.RoundToTickSize(vwapMedian - LimitOffsetTicks * tickSize);
-                statusText = "Contexto Short (pendente)";
+                statusText = $"Contexto Short (pendente){midasTag}";
                 SubmitOrReplaceLimitOrderSafe(false, qtyCalc, precoLimiteVenda, "ShortAuto");
             }
         }
@@ -3396,10 +3401,12 @@ namespace NinjaTrader.NinjaScript.Strategies
                 double protectTicks = BE_ProtectMultiple * baseStopTicks;
 
                 double entry = Position.AveragePrice;
-                double current = Close[0];
+                double probePrice = ExecutionMode == ExecutionModeType.HistoricalSafe
+                    ? (Position.MarketPosition == MarketPosition.Long ? High[0] : Low[0])
+                    : Close[0];
                 double unrealTicks = Position.MarketPosition == MarketPosition.Long
-                    ? (current - entry) / tickSize
-                    : (entry - current) / tickSize;
+                    ? (probePrice - entry) / tickSize
+                    : (entry - probePrice) / tickSize;
 
                 if (!breakevenAtivado && unrealTicks >= triggerTicks)
                 {
@@ -3414,8 +3421,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                         ExitShortStopMarket(0, true, Position.Quantity, newStop, "BE_Stop", "ShortAuto");
 
                     breakevenAtivado = true;
-                    Print($"[HawkDiag][BE_TRIGGER] time0={Time[0]:O} pos={Position.MarketPosition} entry={entry} current={current} newStop={newStop} baseStopTicks={baseStopTicks} triggerTicks={triggerTicks} protectTicks={protectTicks}");
-                    RPLog($"[BE_TRIGGER] time0={Time[0]:O} pos={Position.MarketPosition} entry={entry} current={current} newStop={newStop} baseStopTicks={baseStopTicks} triggerTicks={triggerTicks} protectTicks={protectTicks}");
+                    Print($"[HawkDiag][BE_TRIGGER] time0={Time[0]:O} pos={Position.MarketPosition} entry={entry} probePrice={probePrice} newStop={newStop} baseStopTicks={baseStopTicks} triggerTicks={triggerTicks} protectTicks={protectTicks}");
+                    RPLog($"[BE_TRIGGER] time0={Time[0]:O} pos={Position.MarketPosition} entry={entry} probePrice={probePrice} newStop={newStop} baseStopTicks={baseStopTicks} triggerTicks={triggerTicks} protectTicks={protectTicks}");
                 }
             }
             catch (Exception ex) { Log("[Strategy] BE error: " + ex.Message, LogLevel.Error); }
@@ -3557,6 +3564,20 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             if (!TryComputeStopTarget(marketPosition, entryPrice, out double stopPrice, out double targetPrice, out string source))
                 return;
+
+            bool hadConfig = stopAlvoConfigurados;
+            double? prevStop = currentPlannedStop;
+            double? prevTarget = currentPlannedTarget;
+            int prevQty = Math.Abs(lastKnownPositionQty);
+            if (prevQty == 0) prevQty = qty;
+            bool qtyChanged = hadConfig && prevQty != qty;
+            bool stopChanged = hadConfig && prevStop.HasValue && Math.Abs(prevStop.Value - stopPrice) > tickSize * 0.5;
+            bool targetChanged = hadConfig && prevTarget.HasValue && Math.Abs(prevTarget.Value - targetPrice) > tickSize * 0.5;
+
+            if (ExecutionMode == ExecutionModeType.RealtimePrecise && hadConfig && (qtyChanged || stopChanged || targetChanged))
+            {
+                RPLog($"[ENTRY_STOPS][RECONFIG] trigger={triggerTag} source={source} qtyPrev={prevQty} qtyNew={qty} stopPrev={prevStop} stopNew={stopPrice} targetPrev={prevTarget} targetNew={targetPrice}");
+            }
 
             double riscoPreco = marketPosition == MarketPosition.Long
                 ? entryPrice - stopPrice
