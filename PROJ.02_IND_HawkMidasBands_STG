@@ -58,6 +58,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private bool loggedReady = false;
         private bool loggedNotReady = false;
         private bool fallbackDisabledLogged = false;
+        private int lastCacheLogAnchorSessionIndex = int.MinValue;
 
         [XmlIgnore, Browsable(false)] public int LastRequestedTargetSessionIndex { get; private set; } = int.MinValue;
         [XmlIgnore, Browsable(false)] public int LastUsedAnchorSessionIndex { get; private set; } = int.MinValue;
@@ -65,6 +66,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         [XmlIgnore, Browsable(false)] public DateTime LastUsedAnchorTime { get; private set; } = Core.Globals.MinDate;
         [XmlIgnore, Browsable(false)] public bool IsReady { get; private set; } = false;
         [XmlIgnore, Browsable(false)] public int ClampCount { get; private set; } = 0;
+        [XmlIgnore, Browsable(false)] public double LastValidVwapHigh { get; private set; } = double.NaN;
+        [XmlIgnore, Browsable(false)] public double LastValidVwapMedian { get; private set; } = double.NaN;
+        [XmlIgnore, Browsable(false)] public double LastValidVwapLow { get; private set; } = double.NaN;
+        [XmlIgnore, Browsable(false)] public DateTime LastValidTimestamp { get; private set; } = Core.Globals.MinDate;
+        [XmlIgnore, Browsable(false)] public bool HasLastValidValues { get; private set; } = false;
 
         protected override void OnStateChange()
         {
@@ -221,6 +227,8 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 IsReady = false;
             }
+
+            UpdateLastValidCache();
 
             if (IsReady) { LogReadyOnce(); loggedNotReady = false; }
             else { LogNotReadyOnce("Anchor/values not ready"); }
@@ -410,6 +418,48 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Draw.Region(this, "VWAP_BandCloud", CurrentBar, 0, Values[0], Values[2], Brushes.Transparent, area, 100);
             }
             catch (Exception ex) { if (DebugMode) Log($"[AnchoredVWAP] DrawBandCloud error: {ex.Message}", LogLevel.Error); }
+        }
+
+        private void UpdateLastValidCache()
+        {
+            if (!IsReady) return;
+
+            double vwapHigh = Values[0].Count > 0 ? Values[0][0] : double.NaN;
+            double vwapMedian = Values[1].Count > 0 ? Values[1][0] : double.NaN;
+            double vwapLow = Values[2].Count > 0 ? Values[2][0] : double.NaN;
+
+            if (double.IsNaN(vwapHigh) || double.IsNaN(vwapMedian) || double.IsNaN(vwapLow)) return;
+
+            LastValidVwapHigh = vwapHigh;
+            LastValidVwapMedian = vwapMedian;
+            LastValidVwapLow = vwapLow;
+            LastValidTimestamp = Bars.GetTime(CurrentBar);
+
+            bool hadValidValues = HasLastValidValues;
+            HasLastValidValues = true;
+
+            if (DebugMode && (!hadValidValues || lastCacheLogAnchorSessionIndex != LastUsedAnchorSessionIndex))
+            {
+                Log($"[AnchoredVWAP] Cache updated: H={LastValidVwapHigh:F5}, M={LastValidVwapMedian:F5}, L={LastValidVwapLow:F5} @ {LastValidTimestamp:o}", LogLevel.Information);
+                lastCacheLogAnchorSessionIndex = LastUsedAnchorSessionIndex;
+            }
+        }
+
+        public bool TryGetLastValidValues(out double vwapHigh, out double vwapMedian, out double vwapLow, out DateTime timestamp)
+        {
+            vwapHigh = double.NaN;
+            vwapMedian = double.NaN;
+            vwapLow = double.NaN;
+            timestamp = Core.Globals.MinDate;
+
+            if (!HasLastValidValues) return false;
+            if (double.IsNaN(LastValidVwapHigh) || double.IsNaN(LastValidVwapMedian) || double.IsNaN(LastValidVwapLow)) return false;
+
+            vwapHigh = LastValidVwapHigh;
+            vwapMedian = LastValidVwapMedian;
+            vwapLow = LastValidVwapLow;
+            timestamp = LastValidTimestamp;
+            return true;
         }
 
         private void BuildSessionStarts()
