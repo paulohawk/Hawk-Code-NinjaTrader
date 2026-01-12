@@ -1,0 +1,3454 @@
+#region Using declarations
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.ComponentModel.DataAnnotations;
+using System.Globalization;
+using System.IO;
+using IOPath = System.IO.Path;
+using System.Linq;
+using System.Text;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Documents;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Shapes;
+using System.Windows.Threading;
+using System.Windows.Media.Effects;
+using System.Runtime.CompilerServices; // <-- para chartToken
+using NinjaTrader.Cbi;
+using NinjaTrader.Data;
+using NinjaTrader.Gui.Chart;
+using NinjaTrader.Gui.Tools;
+using NinjaTrader.NinjaScript;
+using NinjaTrader.NinjaScript.Strategies;
+using NinjaTrader.NinjaScript.Indicators;
+using NinjaTrader.NinjaScript.DrawingTools;
+// Aliases WPF
+using WpfEllipse = System.Windows.Shapes.Ellipse;
+using WpfPath = System.Windows.Shapes.Path;
+#endregion
+
+namespace NinjaTrader.NinjaScript
+{
+    public static class HawkPanelStateHub
+    {
+        public class PanelSnapshot
+        {
+            public double? EntryPrice { get; set; }
+            public double? StopChart { get; set; }
+            public double? ExitTarget { get; set; }
+            public int? Qty { get; set; }
+            public bool? BEEnabled { get; set; }
+            public bool? ATREnabled { get; set; }
+            public string FinancialStopText { get; set; }
+            public string AtrDisplayText { get; set; }
+            public string PnLDiaText { get; set; }
+            public string PnLMesText { get; set; }
+            public string PnLTotalText { get; set; }
+            public string TakeDollarText { get; set; }
+            public int? MaxGainStreak { get; set; }
+            public int? MaxLossStreak { get; set; }
+            public string EndDayText { get; set; }
+            public bool? MainEnabled { get; set; }
+
+            public string DayTradeStatus { get; set; }
+            public int? DayQuantity { get; set; }
+            public string DayStopDollar { get; set; }
+            public string DayTargetDollar { get; set; }
+            public string DayBreakevenDollar { get; set; }
+            public int? DayMaxGain { get; set; }
+            public int? DayMaxLoss { get; set; }
+
+            public DateTime LastUpdatedUtc { get; set; }
+            public string StrategyName { get; set; }
+            public string StrategyKey { get; set; }
+
+            public double? PendingEntryPrice { get; set; }
+            public double? PendingStopPrice { get; set; }
+            public double? PendingTargetPrice { get; set; }
+            public int? PendingQty { get; set; }
+            public string StatusText { get; set; }
+        }
+
+        private static readonly object _lock = new object();
+        private static readonly Dictionary<string, PanelSnapshot> _byInstrument = new Dictionary<string, PanelSnapshot>();
+
+        public static void Set(string instrumentKey, PanelSnapshot snapshot)
+        {
+            if (string.IsNullOrEmpty(instrumentKey) || snapshot == null) return;
+            lock (_lock)
+            {
+                if (snapshot.LastUpdatedUtc == default(DateTime))
+                    snapshot.LastUpdatedUtc = DateTime.UtcNow;
+
+                if (_byInstrument.TryGetValue(instrumentKey, out var existing))
+                {
+                    if (snapshot.LastUpdatedUtc < existing.LastUpdatedUtc)
+                        return;
+                }
+                _byInstrument[instrumentKey] = snapshot;
+            }
+        }
+
+        public static PanelSnapshot GetLatest(string key)
+        {
+            if (string.IsNullOrEmpty(key)) return null;
+            lock (_lock)
+            {
+                if (_byInstrument.TryGetValue(key, out var snap)) return snap;
+                return null;
+            }
+        }
+
+        // Mantido apenas para compatibilidade (não usado pelo painel)
+        public static PanelSnapshot GetLatestForInstrument(string instrumentFullName)
+        {
+            if (string.IsNullOrEmpty(instrumentFullName)) return null;
+            string prefix = instrumentFullName + "::";
+            lock (_lock)
+            {
+                return _byInstrument
+                    .Where(kvp => kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    .Select(kvp => kvp.Value)
+                    .OrderByDescending(s => s.LastUpdatedUtc)
+                    .FirstOrDefault();
+            }
+        }
+    }
+}
+
+namespace NinjaTrader.NinjaScript.Strategies
+{
+    public enum EndDayScope
+    {
+        ThisChartOnly,
+        AllNinjaTrader
+    }
+
+    #region UI Helper (igual visual)
+    public class HawkEmbeddedControl : Grid
+    {
+        private readonly HawkPanelHelper _parent;
+
+        private double CompactFontSize = 10.0;
+        private double RowSpacing = 1.0;
+
+        private readonly Brush BronzeBrush = new SolidColorBrush(Color.FromRgb(170, 120, 60));
+        private readonly Brush GraphiteBrush = new SolidColorBrush(Color.FromRgb(72, 72, 72));
+        private readonly Brush LightGrayBrush = Brushes.LightGray;
+        private readonly Brush InactiveBulletBrush = new SolidColorBrush(Color.FromRgb(150, 150, 150));
+        private readonly Brush MainOnBrush = new SolidColorBrush(Color.FromRgb(60, 200, 120));
+
+        public string PanelTitle { get; set; } = "Hawk";
+
+        private TextBlock _titleCenter;
+        private WpfEllipse _mainStateBullet;
+        private TextBlock _tbMainToggle;
+
+        private TextBlock _txtEntry;
+        private WpfEllipse _bulletBe;
+        private TextBlock _beStateText;
+
+        private WpfEllipse _bulletQty;
+        private TextBlock _txtQty;
+
+        private WpfEllipse _bulletStopFinancial;
+        private TextBlock _txtStop;
+
+        private WpfEllipse _bulletTakeFinancial;
+        private TextBlock _txtTake;
+
+        private WpfEllipse _bulletAtr;
+        private TextBlock _atrValueText;
+
+        private WpfEllipse _bulletPnlDia;
+        private TextBlock _pnlDiaText;
+
+        private WpfEllipse _bulletPnlMes;
+        private TextBlock _pnlMesText;
+
+        private WpfEllipse _bulletPnlTotal;
+        private TextBlock _pnlTotalText;
+
+        private TextBlock _txtChartStop;
+        private TextBlock _txtExit;
+
+        private WpfEllipse _bulletEndDay;
+        private TextBlock _tbEndDayValue;
+
+        private TextBlock _txtMaxGain;
+        private TextBlock _txtMaxLoss;
+
+        private TextBlock _lblDayResum;
+        private WpfEllipse _bulletDayResum;
+        private TextBlock _drSentence;
+
+        private int _qty = 1;
+        private bool _beEnabled = false;
+        private bool _mainEnabled = false;
+        private double _baseTitleSize = (10.0 + 4) * 0.9;
+
+        private double _lastResponsiveWidth = 0;
+        private DateTime _lastResponsiveUpdate = DateTime.MinValue;
+        private readonly TimeSpan _responsiveInterval = TimeSpan.FromMilliseconds(220);
+        private const double _responsiveMinDelta = 6.0;
+
+        public HawkEmbeddedControl(HawkPanelHelper parent)
+        {
+            _parent = parent;
+            BuildUi();
+            SizeChanged += SmartBoletaEmbeddedControl_SizeChanged;
+            RefreshTitleRuns();
+        }
+
+        #region UI build & helpers (sem alterações visuais)
+        private WpfEllipse CreateBullet(double size = 8) => new WpfEllipse { Width = size, Height = size, Fill = InactiveBulletBrush, Margin = new Thickness(0, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center };
+
+        private void BuildUi()
+        {
+            Background = Brushes.Transparent;
+            Margin = new Thickness(6);
+            var main = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(2) };
+            var header = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var iconHolder = new Grid { Width = 18, Height = 18, Margin = new Thickness(0, 0, 4, 0) };
+            var outer = new WpfEllipse { Width = 18, Height = 18, Stroke = new SolidColorBrush(Color.FromRgb(58, 58, 58)), StrokeThickness = 1.0, Fill = Brushes.Transparent };
+            var radial = new RadialGradientBrush { GradientOrigin = new Point(0.35, 0.25), Center = new Point(0.35, 0.25), RadiusX = 0.8, RadiusY = 0.8 };
+            radial.GradientStops.Add(new GradientStop(Color.FromRgb(170, 120, 60), 0.0));
+            radial.GradientStops.Add(new GradientStop(Color.FromRgb(130, 80, 35), 0.9));
+            var bronzeCircle = new WpfEllipse { Width = 14, Height = 14, Fill = radial, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            var star = new WpfPath
+            {
+                Fill = Brushes.Black,
+                Data = Geometry.Parse("M7 0 L8.6 4.2 L13 4.2 L9.1 6.5 L10.6 10.7 L7 8.3 L3.4 10.7 L4.9 6.5 L1 4.2 L5.4 4.2 Z"),
+                Width = 9,
+                Height = 9,
+                Stretch = System.Windows.Media.Stretch.Uniform,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            iconHolder.Children.Add(outer); iconHolder.Children.Add(bronzeCircle); iconHolder.Children.Add(star);
+
+            _titleCenter = new TextBlock { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Left, TextWrapping = TextWrapping.Wrap };
+            RefreshTitleRuns();
+
+            var leftHeaderPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
+            leftHeaderPanel.Children.Add(iconHolder);
+            leftHeaderPanel.Children.Add(_titleCenter);
+            header.Children.Add(leftHeaderPanel); Grid.SetColumn(leftHeaderPanel, 0);
+
+            var centerBulletHost = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 4, 0) };
+            _mainStateBullet = CreateBullet(12);
+            _mainStateBullet.Fill = InactiveBulletBrush;
+            centerBulletHost.Children.Add(_mainStateBullet);
+            header.Children.Add(centerBulletHost); Grid.SetColumn(centerBulletHost, 1);
+
+            var rightHeader = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
+            _tbMainToggle = new TextBlock { Text = "Off", Width = 40, TextAlignment = TextAlignment.Center, Cursor = Cursors.Hand, Foreground = Brushes.Gray, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 0, 0) };
+            _tbMainToggle.MouseLeftButtonUp += (s, e) => ToggleMain();
+            rightHeader.Children.Add(_tbMainToggle);
+            header.Children.Add(rightHeader); Grid.SetColumn(rightHeader, 2);
+
+            main.Children.Add(header);
+
+            var threeCol = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+            threeCol.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            threeCol.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            threeCol.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            var valueMargin = new Thickness(0, RowSpacing, 0, 0);
+
+            var entryCol = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Left };
+            entryCol.Children.Add(new TextBlock { Text = "Entry", Foreground = LightGrayBrush, FontSize = CompactFontSize, Margin = new Thickness(0, 0, 0, RowSpacing) });
+            _txtEntry = new TextBlock { Text = "-", Foreground = Brushes.White, FontSize = CompactFontSize, Margin = valueMargin, HorizontalAlignment = HorizontalAlignment.Left };
+            entryCol.Children.Add(_txtEntry);
+            threeCol.Children.Add(entryCol); Grid.SetColumn(entryCol, 0);
+
+            var centerCol = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Center };
+            centerCol.Children.Add(new TextBlock { Text = "Stop", Foreground = LightGrayBrush, FontSize = CompactFontSize, TextAlignment = TextAlignment.Center, Margin = new Thickness(0, 0, 0, RowSpacing) });
+            _txtChartStop = new TextBlock { Text = "-", Foreground = Brushes.White, FontSize = CompactFontSize, Margin = valueMargin, TextAlignment = TextAlignment.Center };
+            centerCol.Children.Add(_txtChartStop);
+            threeCol.Children.Add(centerCol); Grid.SetColumn(centerCol, 1);
+
+            var exitCol = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Right };
+            exitCol.Children.Add(new TextBlock { Text = "Exit", Foreground = LightGrayBrush, FontSize = CompactFontSize, TextAlignment = TextAlignment.Right, Margin = new Thickness(0, 0, 0, RowSpacing) });
+            _txtExit = new TextBlock { Text = "-", Foreground = Brushes.White, FontSize = CompactFontSize, Margin = valueMargin, TextAlignment = TextAlignment.Right };
+            exitCol.Children.Add(_txtExit);
+            threeCol.Children.Add(exitCol); Grid.SetColumn(exitCol, 2);
+
+            main.Children.Add(threeCol);
+
+            var beRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
+            _bulletBe = CreateBullet();
+            var beLabel = new TextBlock { Text = "BE", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center, Cursor = Cursors.Hand, TextTrimming = TextTrimming.None };
+            beRow.Children.Add(_bulletBe);
+            beRow.Children.Add(beLabel);
+            main.Children.Add(beRow);
+
+            _beStateText = new TextBlock { Text = "Off", FontSize = CompactFontSize, Foreground = Brushes.Gray, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 2) };
+            _beStateText.MouseLeftButtonUp += (s, e) => ToggleBE();
+            main.Children.Add(_beStateText);
+
+            var qtyRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
+            _bulletQty = CreateBullet();
+            var qtyLabel = new TextBlock { Text = "Qty", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center, Cursor = Cursors.Hand, TextTrimming = TextTrimming.None };
+            qtyRow.Children.Add(_bulletQty);
+            qtyRow.Children.Add(qtyLabel);
+            main.Children.Add(qtyRow);
+
+            _txtQty = new TextBlock { Text = _qty.ToString(), Width = 36, TextAlignment = TextAlignment.Center, Background = Brushes.Black, Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 6, 0), FontSize = CompactFontSize };
+            var qtyInline = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 2), HorizontalAlignment = HorizontalAlignment.Center };
+            qtyInline.Children.Add(_txtQty);
+            main.Children.Add(qtyInline);
+
+            var stopTakeRow = new Grid { Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 2) };
+            stopTakeRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            stopTakeRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            var stopStack = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Left };
+            var stopLabel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
+            _bulletStopFinancial = CreateBullet();
+            var stopTxt = new TextBlock { Text = "Stop ($)", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center };
+            stopLabel.Children.Add(_bulletStopFinancial); stopLabel.Children.Add(stopTxt);
+            stopStack.Children.Add(stopLabel);
+            _txtStop = new TextBlock { Text = "-", FontSize = CompactFontSize, Foreground = Brushes.White, Background = Brushes.Transparent, Margin = new Thickness(0, RowSpacing, 0, 0), Padding = new Thickness(4, 1, 4, 1), HorizontalAlignment = HorizontalAlignment.Left };
+            stopStack.Children.Add(_txtStop);
+            stopTakeRow.Children.Add(stopStack); Grid.SetColumn(stopStack, 0);
+
+            var takeStack = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Right };
+            var takeLabel = new DockPanel { LastChildFill = false, HorizontalAlignment = HorizontalAlignment.Right };
+            var takeTxt = new TextBlock { Text = "Take ($)", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0) };
+            _bulletTakeFinancial = CreateBullet();
+            DockPanel.SetDock(takeTxt, Dock.Left);
+            DockPanel.SetDock(_bulletTakeFinancial, Dock.Right);
+            takeLabel.Children.Add(takeTxt);
+            takeLabel.Children.Add(_bulletTakeFinancial);
+            takeStack.Children.Add(takeLabel);
+            _txtTake = new TextBlock { Text = "-", FontSize = CompactFontSize, Foreground = Brushes.White, Background = Brushes.Transparent, Margin = new Thickness(0, RowSpacing, 0, 0), Padding = new Thickness(4, 1, 4, 1), HorizontalAlignment = HorizontalAlignment.Right, TextAlignment = TextAlignment.Right };
+            takeStack.Children.Add(_txtTake);
+            stopTakeRow.Children.Add(takeStack); Grid.SetColumn(takeStack, 1);
+
+            main.Children.Add(stopTakeRow);
+
+            var atrRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
+            _bulletAtr = CreateBullet();
+            var atrLbl = new TextBlock { Text = "ATR", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.None };
+            atrRow.Children.Add(_bulletAtr);
+            atrRow.Children.Add(atrLbl);
+            main.Children.Add(atrRow);
+
+            _atrValueText = new TextBlock { Text = "-", Foreground = LightGrayBrush, FontSize = CompactFontSize, Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 2), HorizontalAlignment = HorizontalAlignment.Center, TextWrapping = TextWrapping.Wrap };
+            main.Children.Add(_atrValueText);
+
+            var pnlRow = new Grid { Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 2) };
+            pnlRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            pnlRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            pnlRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            var pnlDiaStack = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Left };
+            var pnlDiaLabel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
+            _bulletPnlDia = CreateBullet();
+            var pnlDiaTxt = new TextBlock { Text = "PNL dia", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center };
+            pnlDiaLabel.Children.Add(_bulletPnlDia); pnlDiaLabel.Children.Add(pnlDiaTxt);
+            pnlDiaStack.Children.Add(pnlDiaLabel);
+            _pnlDiaText = new TextBlock { Text = "-", Foreground = LightGrayBrush, FontSize = CompactFontSize, Margin = new Thickness(0, RowSpacing, 0, RowSpacing) };
+            pnlDiaStack.Children.Add(_pnlDiaText);
+            pnlRow.Children.Add(pnlDiaStack); Grid.SetColumn(pnlDiaStack, 0);
+
+            var pnlMesStack = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Center };
+            var pnlMesLabel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
+            _bulletPnlMes = CreateBullet();
+            var pnlMesTxt = new TextBlock { Text = "PNL mês", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center };
+            pnlMesLabel.Children.Add(_bulletPnlMes); pnlMesLabel.Children.Add(pnlMesTxt);
+            pnlMesStack.Children.Add(pnlMesLabel);
+            _pnlMesText = new TextBlock { Text = "-", Foreground = LightGrayBrush, FontSize = CompactFontSize, Margin = new Thickness(0, RowSpacing, 0, RowSpacing), TextAlignment = TextAlignment.Center };
+            pnlMesStack.Children.Add(_pnlMesText);
+            pnlRow.Children.Add(pnlMesStack); Grid.SetColumn(pnlMesStack, 1);
+
+            var pnlTotalStack = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Right };
+            var pnlTotalLabel = new DockPanel { LastChildFill = false, HorizontalAlignment = HorizontalAlignment.Right };
+            var pnlTotalTxt = new TextBlock { Text = "PNL total", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0) };
+            _bulletPnlTotal = CreateBullet();
+            DockPanel.SetDock(pnlTotalTxt, Dock.Left);
+            DockPanel.SetDock(_bulletPnlTotal, Dock.Right);
+            pnlTotalLabel.Children.Add(pnlTotalTxt);
+            pnlTotalLabel.Children.Add(_bulletPnlTotal);
+            pnlTotalStack.Children.Add(pnlTotalLabel);
+            _pnlTotalText = new TextBlock { Text = "-", Foreground = LightGrayBrush, FontSize = CompactFontSize, Margin = new Thickness(0, RowSpacing, 0, RowSpacing), TextAlignment = TextAlignment.Right };
+            pnlTotalStack.Children.Add(_pnlTotalText);
+            pnlRow.Children.Add(pnlTotalStack); Grid.SetColumn(pnlTotalStack, 2);
+
+            main.Children.Add(pnlRow);
+
+            var streakRow = new Grid { Margin = new Thickness(0, RowSpacing, 0, RowSpacing) };
+            streakRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            streakRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            streakRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            _txtMaxGain = new TextBlock { Text = "Max gain: -", Foreground = LightGrayBrush, FontSize = CompactFontSize, TextAlignment = TextAlignment.Right };
+            _txtMaxLoss = new TextBlock { Text = "Max loss: -", Foreground = LightGrayBrush, FontSize = CompactFontSize, TextAlignment = TextAlignment.Right, Margin = new Thickness(0, RowSpacing, 0, 0) };
+
+            streakRow.Children.Add(new TextBlock());
+            streakRow.Children.Add(new TextBlock());
+            var streakStack = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Right };
+            streakStack.Children.Add(_txtMaxGain);
+            streakStack.Children.Add(_txtMaxLoss);
+            streakRow.Children.Add(streakStack); Grid.SetColumn(streakStack, 2);
+
+            main.Children.Add(streakRow);
+
+            var endDayRow = new Grid { Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 1.5) };
+            endDayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            endDayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            endDayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            var endDayLeft = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Left };
+            var endDayLabelWithBullet = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
+            _bulletEndDay = CreateBullet();
+            var endTxt = new TextBlock { Text = "EndDay", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center };
+            endDayLabelWithBullet.Children.Add(_bulletEndDay); endDayLabelWithBullet.Children.Add(endTxt);
+            endDayLeft.Children.Add(endDayLabelWithBullet);
+            _tbEndDayValue = new TextBlock { Text = "-", Foreground = Brushes.Gray, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 6, 0) };
+            endDayLeft.Children.Add(_tbEndDayValue);
+            endDayRow.Children.Add(endDayLeft); Grid.SetColumn(endDayLeft, 0);
+            main.Children.Add(endDayRow);
+
+            var dayTitleRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, RowSpacing) };
+            _bulletDayResum = CreateBullet(8);
+            _lblDayResum = new TextBlock
+            {
+                Text = "DayResum",
+                Foreground = LightGrayBrush,
+                FontSize = CompactFontSize,
+                FontWeight = FontWeights.SemiBold,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            dayTitleRow.Children.Add(_bulletDayResum);
+            dayTitleRow.Children.Add(_lblDayResum);
+            main.Children.Add(dayTitleRow);
+
+            _drSentence = new TextBlock
+            {
+                Text = "-",
+                Foreground = Brushes.White,
+                FontSize = Math.Max(8.5, CompactFontSize - 1.0),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 2)
+            };
+            main.Children.Add(_drSentence);
+
+            var footer = new TextBlock
+            {
+                Text = "-Produto oficial Dashflix-",
+                Foreground = BronzeBrush,
+                FontSize = CompactFontSize - 1,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 4, 0, 0),
+                TextTrimming = TextTrimming.None
+            };
+            main.Children.Add(footer);
+
+            Children.Add(main);
+
+            SetEndDayLabel(null, EndDayScope.ThisChartOnly);
+            UpdateBulletsAfterStateChange();
+        }
+
+        private void SetEndDayLabel(TimeSpan? t, EndDayScope scope)
+        {
+            try
+            {
+                if (_tbEndDayValue == null) return;
+                if (t.HasValue)
+                {
+                    _tbEndDayValue.Text = t.Value.ToString(@"hh\:mm");
+                    _tbEndDayValue.Foreground = BronzeBrush;
+                }
+                else
+                {
+                    _tbEndDayValue.Text = "-";
+                    _tbEndDayValue.Foreground = Brushes.Gray;
+                }
+                UpdateBulletsAfterStateChange();
+            }
+            catch { }
+        }
+
+        private void RefreshTitleRuns()
+        {
+            if (_titleCenter == null) return;
+            _titleCenter.Inlines.Clear();
+
+            string title = string.IsNullOrEmpty(PanelTitle) ? "Hawk" : PanelTitle;
+            string goldPart = "Hawk";
+            string grayPart = "";
+
+            if (title.StartsWith("Hawk", StringComparison.OrdinalIgnoreCase))
+            {
+                goldPart = title.Substring(0, Math.Min(4, title.Length));
+                grayPart = title.Length > 4 ? title.Substring(4) : "";
+            }
+            else
+            {
+                var parts = title.Split(new[] { ' ' }, 2, StringSplitOptions.None);
+                goldPart = parts[0];
+                grayPart = parts.Length > 1 ? " " + parts[1] : "";
+            }
+
+            var runGold = new Run(goldPart) { Foreground = BronzeBrush, FontWeight = FontWeights.SemiBold };
+            var runGray = new Run(grayPart) { Foreground = GraphiteBrush, FontWeight = FontWeights.SemiBold };
+
+            _titleCenter.Inlines.Add(runGold);
+            _titleCenter.Inlines.Add(runGray);
+            _titleCenter.FontSize = _baseTitleSize;
+        }
+
+        public void ApplyPanelTitle(string title)
+        {
+            PanelTitle = string.IsNullOrEmpty(title) ? "Hawk" : title;
+            RefreshTitleRuns();
+        }
+
+        public void ApplyResponsiveLayout(double width)
+        {
+            var now = DateTime.UtcNow;
+            if (Math.Abs(width - _lastResponsiveWidth) < _responsiveMinDelta &&
+                (now - _lastResponsiveUpdate) < _responsiveInterval)
+                return;
+
+            _lastResponsiveWidth = width;
+            _lastResponsiveUpdate = now;
+
+            double titleSize = _baseTitleSize;
+            double font = CompactFontSize;
+            double row = RowSpacing;
+            double bullet = 8;
+            double toggleWidth = 40;
+            Thickness mainMargin = new Thickness(6);
+            bool wrapTitle = false;
+
+            if (width < 280)
+            {
+                titleSize = Math.Max(9.0, _baseTitleSize - 1.5);
+                font = Math.Max(9.0, CompactFontSize - 1.0);
+                row = 0.5;
+                bullet = 6;
+                toggleWidth = 32;
+                mainMargin = new Thickness(4);
+                wrapTitle = true;
+            }
+            else if (width < 320)
+            {
+                titleSize = Math.Max(9.5, _baseTitleSize - 1.0);
+                font = Math.Max(9.5, CompactFontSize - 0.5);
+                row = 0.8;
+                bullet = 7;
+                toggleWidth = 36;
+                mainMargin = new Thickness(5);
+                wrapTitle = true;
+            }
+
+            CompactFontSize = font;
+            RowSpacing = row;
+            Margin = mainMargin;
+
+            if (_titleCenter != null)
+            {
+                _titleCenter.FontSize = titleSize;
+                _titleCenter.TextWrapping = wrapTitle ? TextWrapping.Wrap : TextWrapping.NoWrap;
+            }
+
+            if (_tbMainToggle != null)
+            {
+                _tbMainToggle.Width = toggleWidth;
+                _tbMainToggle.Margin = new Thickness(6, 0, 0, 0);
+            }
+
+            Action<WpfEllipse> setBullet = b =>
+            {
+                if (b == null) return;
+                b.Width = bullet; b.Height = bullet;
+                b.Margin = new Thickness(0, 0, 4, 0);
+            };
+
+            setBullet(_mainStateBullet);
+            setBullet(_bulletBe);
+            setBullet(_bulletQty);
+            setBullet(_bulletStopFinancial);
+            setBullet(_bulletTakeFinancial);
+            setBullet(_bulletAtr);
+            setBullet(_bulletPnlDia);
+            setBullet(_bulletPnlMes);
+            setBullet(_bulletPnlTotal);
+            setBullet(_bulletEndDay);
+            setBullet(_bulletDayResum);
+
+            void setFont(TextBlock tb, double? f = null) { if (tb != null) tb.FontSize = f ?? font; }
+            setFont(_txtEntry);
+            setFont(_txtChartStop);
+            setFont(_txtExit);
+            setFont(_txtStop);
+            setFont(_txtTake);
+            setFont(_atrValueText);
+            setFont(_pnlDiaText);
+            setFont(_pnlMesText);
+            setFont(_pnlTotalText);
+            setFont(_tbEndDayValue);
+            setFont(_beStateText);
+            setFont(_txtQty);
+            setFont(_txtMaxGain);
+            setFont(_txtMaxLoss);
+            setFont(_drSentence, Math.Max(8.5, font - 1.0));
+            if (_lblDayResum != null) _lblDayResum.FontSize = font;
+        }
+
+        private void SetDayResumBulletAndTitleColor(bool hasTradeOrOpen)
+        {
+            var color = hasTradeOrOpen ? BronzeBrush : LightGrayBrush;
+            if (_bulletDayResum != null) _bulletDayResum.Fill = hasTradeOrOpen ? BronzeBrush : InactiveBulletBrush;
+            if (_lblDayResum != null) _lblDayResum.Foreground = color;
+        }
+
+        public void SetDayResum(
+            string status,
+            int? qty,
+            string stopDollar,
+            string breakevenDollar,
+            string targetDollar,
+            int? maxGain,
+            int? maxLoss
+        )
+        {
+            string sStatus = string.IsNullOrEmpty(status) ? "Waiting (aguardando)" : status;
+            string sQty = qty.HasValue ? qty.Value.ToString() : "-";
+            string sTarget = string.IsNullOrEmpty(targetDollar) ? "-" : targetDollar;
+            string sBE = string.IsNullOrEmpty(breakevenDollar) ? "-" : breakevenDollar;
+            string sStop = string.IsNullOrEmpty(stopDollar) ? "-" : stopDollar;
+            string sMaxGain = maxGain.HasValue ? maxGain.Value.ToString() : "-";
+            string sMaxLoss = maxLoss.HasValue ? maxLoss.Value.ToString() : "-";
+
+            _drSentence.Text =
+                $"Status: {sStatus} | Qty: {sQty} | Target$: {sTarget} | BE$: {sBE} | Stop$: {sStop} | MaxGain: {sMaxGain} | MaxLoss: {sMaxLoss}";
+
+            bool hasTrade = !string.IsNullOrEmpty(status) &&
+                            !status.Trim().Equals("Waiting", StringComparison.OrdinalIgnoreCase) &&
+                            !status.Trim().StartsWith("Waiting (aguardando)", StringComparison.OrdinalIgnoreCase) &&
+                            status.Trim() != "-";
+            SetDayResumBulletAndTitleColor(hasTrade);
+        }
+
+        private void ToggleMain()
+        {
+            _mainEnabled = !_mainEnabled;
+            _tbMainToggle.Text = _mainEnabled ? "On" : "Off";
+            _tbMainToggle.Foreground = _mainEnabled ? BronzeBrush : Brushes.Gray;
+            _mainStateBullet.Fill = _mainEnabled ? MainOnBrush : InactiveBulletBrush;
+            _parent.SafePrint($"Main toggled {(_mainEnabled ? "On" : "Off")}");
+            if (!_mainEnabled) ResetAllToDefaults();
+            UpdateBulletsAfterStateChange();
+        }
+
+        private void ResetAllToDefaults()
+        {
+            try
+            {
+                _beEnabled = false;
+                if (_bulletBe != null) _bulletBe.Fill = InactiveBulletBrush;
+                if (_beStateText != null) { _beStateText.Text = "Off"; _beStateText.Foreground = Brushes.Gray; }
+
+                _qty = 1; if (_txtQty != null) _txtQty.Text = "1";
+                if (_txtStop != null) { _txtStop.Text = "-"; _txtStop.Foreground = Brushes.White; }
+                if (_txtTake != null) { _txtTake.Text = "-"; _txtTake.Foreground = Brushes.White; }
+                _atrValueText.Text = "-";
+                _pnlDiaText.Text = "-";
+                _pnlMesText.Text = "-";
+                _pnlTotalText.Text = "-";
+                _txtEntry.Text = "-";
+                _txtChartStop.Text = "-";
+                _txtExit.Text = "-";
+                _txtMaxGain.Text = "Max gain: -";
+                _txtMaxLoss.Text = "Max loss: -";
+
+                SetDayResum(null, null, null, null, null, null, null);
+            }
+            catch { }
+        }
+
+        private void ToggleBE()
+        {
+            _beEnabled = !_beEnabled;
+            if (_bulletBe != null) _bulletBe.Fill = _beEnabled ? BronzeBrush : InactiveBulletBrush;
+            if (_beStateText != null) { _beStateText.Text = _beEnabled ? "On" : "Off"; _beStateText.Foreground = _beEnabled ? BronzeBrush : Brushes.Gray; }
+            _parent.SafePrint($"BE toggled {(_beEnabled ? "On" : "Off")}");
+            UpdateBulletsAfterStateChange();
+        }
+
+        public void UpdateBulletsAfterStateChange()
+        {
+            try
+            {
+                if (_bulletBe != null) _bulletBe.Fill = _beEnabled ? BronzeBrush : InactiveBulletBrush;
+                if (_bulletQty != null) _bulletQty.Fill = (_txtQty != null && int.TryParse(_txtQty.Text, out int q) && q > 0) ? BronzeBrush : InactiveBulletBrush;
+                if (_bulletStopFinancial != null) _bulletStopFinancial.Fill = (_txtStop != null && _txtStop.Text != "-" ? BronzeBrush : InactiveBulletBrush);
+                if (_bulletTakeFinancial != null) _bulletTakeFinancial.Fill = (_txtTake != null && _txtTake.Text != "-" ? BronzeBrush : InactiveBulletBrush);
+                if (_bulletAtr != null) _bulletAtr.Fill = (!string.IsNullOrEmpty(_atrValueText.Text) && _atrValueText.Text != "-" ? BronzeBrush : InactiveBulletBrush);
+                if (_bulletPnlDia != null) _bulletPnlDia.Fill = (_pnlDiaText != null && _pnlDiaText.Text != "-" ? BronzeBrush : InactiveBulletBrush);
+                if (_bulletPnlMes != null) _bulletPnlMes.Fill = (_pnlMesText != null && _pnlMesText.Text != "-" ? BronzeBrush : InactiveBulletBrush);
+                if (_bulletPnlTotal != null) _bulletPnlTotal.Fill = (_pnlTotalText != null && _pnlTotalText.Text != "-" ? BronzeBrush : InactiveBulletBrush);
+                if (_bulletEndDay != null) _bulletEndDay.Fill = (_tbEndDayValue != null && _tbEndDayValue.Text != "-" ? BronzeBrush : InactiveBulletBrush);
+            }
+            catch { }
+        }
+
+        public void SetEntryFromPosition(double avgPrice)
+        {
+            try { _txtEntry.Text = avgPrice.ToString("N2", CultureInfo.CurrentCulture); _txtEntry.Foreground = BronzeBrush; } catch { }
+        }
+
+        public void SetEntryFromPending(double price)
+        {
+            try { _txtEntry.Text = price.ToString("N2", CultureInfo.CurrentCulture); _txtEntry.Foreground = Brushes.White; } catch { }
+        }
+
+        public void ClearEntry()
+        {
+            try { _txtEntry.Text = "-"; _txtEntry.Foreground = Brushes.White; } catch { }
+        }
+
+        public void SetChartStop(double price, bool highlight = true)
+        {
+            try { _txtChartStop.Text = price.ToString("N2", CultureInfo.CurrentCulture); _txtChartStop.Foreground = highlight ? BronzeBrush : Brushes.White; } catch { }
+        }
+
+        public void ClearChartStop()
+        {
+            try { _txtChartStop.Text = "-"; _txtChartStop.Foreground = Brushes.White; } catch { }
+        }
+
+        public void SetExitFromOrder(double price, bool highlight = true)
+        {
+            try { _txtExit.Text = price.ToString("N2", CultureInfo.CurrentCulture); _txtExit.Foreground = highlight ? BronzeBrush : Brushes.White; } catch { }
+        }
+
+        public void ClearExit()
+        {
+            try { _txtExit.Text = "-"; _txtExit.Foreground = Brushes.White; } catch { }
+        }
+
+        public void SetAtrValue(string display)
+        {
+            try { _atrValueText.Text = string.IsNullOrEmpty(display) ? "-" : display; } catch { }
+        }
+
+        public void SetQty(int q, bool highlight = true)
+        {
+            try { _qty = Math.Max(0, q); _txtQty.Text = _qty.ToString(); _txtQty.Foreground = highlight ? BronzeBrush : Brushes.White; UpdateBulletsAfterStateChange(); } catch { }
+        }
+
+        public void SetStopFinancial(string display)
+        {
+            try { _txtStop.Text = string.IsNullOrEmpty(display) ? "-" : display; UpdateBulletsAfterStateChange(); } catch { }
+        }
+
+        public void SetTakeFinancial(string display)
+        {
+            try { _txtTake.Text = string.IsNullOrEmpty(display) ? "-" : display; UpdateBulletsAfterStateChange(); } catch { }
+        }
+
+        public void SetPnLDia(string info)
+        {
+            try
+            {
+                _pnlDiaText.Text = string.IsNullOrEmpty(info) ? "-" : info;
+                ColorPnL(_pnlDiaText, info);
+            }
+            catch { }
+        }
+
+        public void SetPnLMes(string info)
+        {
+            try
+            {
+                _pnlMesText.Text = string.IsNullOrEmpty(info) ? "-" : info;
+                ColorPnL(_pnlMesText, info);
+            }
+            catch { }
+        }
+
+        public void SetPnLTotal(string info)
+        {
+            try
+            {
+                _pnlTotalText.Text = string.IsNullOrEmpty(info) ? "-" : info;
+                ColorPnL(_pnlTotalText, info, rightAlign: true);
+            }
+            catch { }
+        }
+
+        private void ColorPnL(TextBlock tb, string text, bool rightAlign = false)
+        {
+            if (tb == null) return;
+            if (string.IsNullOrEmpty(text) || text.Trim() == "-")
+            {
+                tb.Foreground = LightGrayBrush;
+                return;
+            }
+            if (double.TryParse(text, NumberStyles.Any, CultureInfo.CurrentCulture, out double v) ||
+                double.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out v))
+            {
+                if (v > 0) tb.Foreground = Brushes.LightGreen;
+                else if (v < 0) tb.Foreground = Brushes.OrangeRed;
+                else tb.Foreground = LightGrayBrush;
+            }
+            else
+            {
+                tb.Foreground = LightGrayBrush;
+            }
+            if (rightAlign) tb.TextAlignment = TextAlignment.Right;
+        }
+
+        public void SetStreaks(int? maxGain, int? maxLoss)
+        {
+            try
+            {
+                _txtMaxGain.Text = $"Max gain: {(maxGain.HasValue ? maxGain.Value.ToString() : "-")}";
+                _txtMaxLoss.Text = $"Max loss: {(maxLoss.HasValue ? maxLoss.Value.ToString() : "-")}";
+            }
+            catch { }
+        }
+
+        public void SetEndDayText(string txt)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(txt))
+                {
+                    _tbEndDayValue.Text = "-";
+                    _tbEndDayValue.Foreground = Brushes.Gray;
+                }
+                else
+                {
+                    _tbEndDayValue.Text = txt;
+                    _tbEndDayValue.Foreground = BronzeBrush;
+                }
+                UpdateBulletsAfterStateChange();
+            }
+            catch { }
+        }
+
+        public void ForceSetBEEnabled(bool value)
+        {
+            _beEnabled = value;
+            if (_bulletBe != null) _bulletBe.Fill = value ? BronzeBrush : InactiveBulletBrush;
+            if (_beStateText != null) { _beStateText.Text = value ? "On" : "Off"; _beStateText.Foreground = value ? BronzeBrush : Brushes.Gray; }
+        }
+
+        public void ForceSetATREnabled(bool value)
+        {
+            if (_bulletAtr != null) _bulletAtr.Fill = value ? BronzeBrush : InactiveBulletBrush;
+            if (_atrValueText != null) _atrValueText.Foreground = value ? BronzeBrush : LightGrayBrush;
+        }
+
+        public void ForceSetMainEnabled(bool value)
+        {
+            _mainEnabled = value;
+            if (_tbMainToggle != null)
+            {
+                _tbMainToggle.Text = value ? "On" : "Off";
+                _tbMainToggle.Foreground = value ? BronzeBrush : Brushes.Gray;
+            }
+            if (_mainStateBullet != null)
+                _mainStateBullet.Fill = value ? MainOnBrush : InactiveBulletBrush;
+        }
+
+        private void SmartBoletaEmbeddedControl_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            try
+            {
+                double w = e.NewSize.Width;
+                ApplyResponsiveLayout(w);
+            }
+            catch { }
+        }
+
+        public void UpdateForChart(ChartControl chartControl)
+        {
+            try
+            {
+                string inst = chartControl?.Instrument?.FullName ?? "unknown";
+                _parent.SafePrint($"Embedded: UpdateForChart instrument={inst}");
+            }
+            catch (Exception ex) { _parent.SafePrint("Embedded UpdateForChart ex: " + ex.Message); }
+        }
+        #endregion
+    }
+
+    public class HawkPanelHelper
+    {
+        private const int AttachPollMs = 1000;
+        private const double EmbedHeightPx = 370.0;
+
+        private ChartControl chartControl;
+        private Gui.Chart.Chart chartWindow;
+        private Gui.Chart.ChartTrader chartTrader;
+        private Grid chartTraderGrid;
+        private Border embeddedWrapper;
+        private RowDefinition addedRow;
+        private SelectionChangedEventHandler tabHandler;
+        private DispatcherTimer attachTimer;
+        private DispatcherTimer refreshTimer;
+        private readonly TimeSpan refreshInterval = TimeSpan.FromSeconds(3);
+
+        private bool panelActive = false;
+        private HawkEmbeddedControl embeddedControl;
+        private readonly string embeddedTag;
+        private readonly bool enableDiagnosticLogging;
+        private readonly string logPath;
+
+        private string instrumentName;
+        private string cacheKey; // chave exata inst::acc::instanceId
+
+        public Action<string> LogAction { get; set; }
+        public string CacheKey { get => cacheKey; set => cacheKey = value; }
+
+        public HawkPanelHelper(bool enableDiagLog = false)
+        {
+            embeddedTag = "HawkPanelDefault_UI_" + Guid.NewGuid().ToString("N");
+            enableDiagnosticLogging = enableDiagLog;
+            logPath = IOPath.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "NinjaTrader 8", "logs", "hawkpanel_strategy.log");
+        }
+
+        public void SafePrint(string message)
+        {
+            try
+            {
+                if (LogAction != null) LogAction($"[HawkPanelHelper] {message}");
+                else System.Diagnostics.Debug.WriteLine($"[HawkPanelHelper] {message}");
+                // desabilitado log em arquivo por padrão (enableDiagnosticLogging == false)
+                if (!enableDiagnosticLogging) return;
+                try
+                {
+                    string line = $"[HawkPanelHelper] {DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} - {message}";
+                    Directory.CreateDirectory(IOPath.GetDirectoryName(logPath));
+                    File.AppendAllText(logPath, line + Environment.NewLine);
+                }
+                catch { }
+            }
+            catch { }
+        }
+
+        public void Init(ChartControl cc)
+        {
+            chartControl = cc;
+            if (chartControl == null)
+            {
+                SafePrint("Init: ChartControl is null; UI not created (headless/backtest).");
+                return;
+            }
+            instrumentName = chartControl.Instrument?.FullName ?? "";
+            chartControl.Dispatcher.InvokeAsync(HookChartTraderAndInsert, DispatcherPriority.Background);
+            StartAttachTimer();
+            StartRefreshTimer();
+            ForceRefreshOnce();
+            SafePrint("Init: timers started.");
+        }
+
+        public void Dispose()
+        {
+            StopAttachTimer();
+            StopRefreshTimer();
+            RemoveEmbedded();
+            ForceFullCleanup();
+        }
+
+        #region internal attach/show
+        private void StartAttachTimer()
+        {
+            if (attachTimer != null) return;
+            attachTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(AttachPollMs) };
+            attachTimer.Tick += (s, e) =>
+            {
+                try { HookChartTraderAndInsert(); } catch (Exception ex) { SafePrint("attachTimer tick ex: " + ex.Message); }
+            };
+            attachTimer.Start();
+        }
+
+        private void StopAttachTimer()
+        {
+            try { if (attachTimer == null) return; attachTimer.Stop(); attachTimer = null; } catch { }
+        }
+
+        private void HookChartTraderAndInsert()
+        {
+            try
+            {
+                if (chartControl == null) { SafePrint("Hook: ChartControl null"); return; }
+
+                chartWindow = Window.GetWindow(chartControl.Parent) as Gui.Chart.Chart;
+                if (chartWindow == null) { SafePrint("Hook: chartWindow null"); return; }
+
+                chartTrader = FindVisualChildren<Gui.Chart.ChartTrader>(chartWindow).FirstOrDefault();
+
+                var content = chartTrader?.Content as DependencyObject;
+                if (content != null)
+                {
+                    chartTraderGrid = content as Grid;
+                    if (chartTraderGrid == null)
+                        chartTraderGrid = FindVisualChildren<Grid>(content).FirstOrDefault();
+                }
+
+                RegisterTabHandler();
+
+                if (TabSelected())
+                    EnsureEmbeddedVisible();
+                else
+                    EnsureEmbeddedHidden();
+            }
+            catch (Exception ex) { SafePrint("HookChartTraderAndInsert ex: " + ex.Message); }
+        }
+
+        private bool TabSelected()
+        {
+            try
+            {
+                if (chartControl == null || chartWindow == null || chartWindow.MainTabControl == null) return false;
+                foreach (TabItem tab in chartWindow.MainTabControl.Items)
+                    if ((tab.Content as Gui.Chart.ChartTab)?.ChartControl == chartControl && tab == chartWindow.MainTabControl.SelectedItem)
+                        return true;
+            }
+            catch { }
+            return false;
+        }
+
+        private void RegisterTabHandler()
+        {
+            try
+            {
+                if (chartWindow?.MainTabControl != null && tabHandler == null)
+                {
+                    tabHandler = (s, e) =>
+                    {
+                        try
+                        {
+                            if (TabSelected()) { EnsureEmbeddedVisible(); }
+                            else { EnsureEmbeddedHidden(); }
+                        }
+                        catch (Exception ex) { SafePrint("TabHandler ex: " + ex.Message); }
+                    };
+                    chartWindow.MainTabControl.SelectionChanged += tabHandler;
+                }
+            }
+            catch (Exception ex) { SafePrint("RegisterTabHandler ex: " + ex.Message); }
+        }
+
+        private void EnsureEmbeddedVisible()
+        {
+            try
+            {
+                if (embeddedWrapper == null || embeddedControl == null)
+                {
+                    InsertEmbedded();
+                }
+                else
+                {
+                    embeddedWrapper.Visibility = Visibility.Visible;
+                    panelActive = true;
+                    RepositionEmbedded();
+                    embeddedControl.UpdateBulletsAfterStateChange();
+                }
+            }
+            catch (Exception ex) { SafePrint("EnsureEmbeddedVisible ex: " + ex.Message); }
+        }
+
+        private void EnsureEmbeddedHidden()
+        {
+            try
+            {
+                if (embeddedWrapper != null)
+                {
+                    embeddedWrapper.Visibility = Visibility.Collapsed;
+                    panelActive = false;
+                }
+            }
+            catch (Exception ex) { SafePrint("EnsureEmbeddedHidden ex: " + ex.Message); }
+        }
+
+        private void InsertEmbedded()
+        {
+            try
+            {
+                embeddedControl = new HawkEmbeddedControl(this);
+
+                var outer = new Border
+                {
+                    BorderThickness = new Thickness(1),
+                    BorderBrush = new SolidColorBrush(Color.FromArgb(220, 90, 65, 35)),
+                    CornerRadius = new CornerRadius(3),
+                    SnapsToDevicePixels = true,
+                    VerticalAlignment = VerticalAlignment.Top,
+                    MaxHeight = EmbedHeightPx + 8,
+                    Margin = new Thickness(0, 0, 0, 4),
+                    Background = new LinearGradientBrush(
+                        new GradientStopCollection {
+                            new GradientStop(Color.FromRgb(14,14,14), 0.0),
+                            new GradientStop(Color.FromRgb(24,24,26), 0.35),
+                            new GradientStop(Color.FromRgb(12,12,14), 1.0)
+                        },
+                        new Point(0,0),
+                        new Point(1,1))
+                };
+                outer.Effect = new DropShadowEffect
+                {
+                    Color = Color.FromArgb(180, 0, 0, 0),
+                    BlurRadius = 14,
+                    ShadowDepth = 2,
+                    Opacity = 0.55,
+                    Direction = 270
+                };
+
+                var inner = new Border
+                {
+                    Background = new LinearGradientBrush(
+                        new GradientStopCollection {
+                            new GradientStop(Color.FromArgb(220, 22,22,24), 0.0),
+                            new GradientStop(Color.FromArgb(220, 28,28,30), 0.45),
+                            new GradientStop(Color.FromArgb(220, 18,18,20), 1.0)
+                        },
+                        new Point(0,0),
+                        new Point(0,1)),
+                    BorderBrush = new SolidColorBrush(Color.FromArgb(180, 170, 120, 60)),
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(2),
+                    SnapsToDevicePixels = true,
+                    Margin = new Thickness(3)
+                };
+
+                inner.Child = embeddedControl;
+                outer.Child = inner;
+
+                try { outer.Tag = embeddedTag; inner.Tag = embeddedTag; embeddedControl.Tag = embeddedTag; } catch { }
+
+                embeddedWrapper = outer;
+
+                bool addedToChartPanel = false;
+                try
+                {
+                    FrameworkElement chartParent = chartControl as FrameworkElement;
+                    Panel panelHost = null;
+
+                    if (chartParent != null && chartParent.Parent is Panel p) panelHost = p;
+                    else
+                    {
+                        DependencyObject node = chartControl as DependencyObject;
+                        while (node != null && panelHost == null)
+                        {
+                            node = VisualTreeHelper.GetParent(node);
+                            if (node is Panel foundPanel) panelHost = foundPanel;
+                        }
+                    }
+
+                    if (panelHost != null)
+                    {
+                        panelHost.Children.Add(embeddedWrapper);
+                        System.Windows.Controls.Panel.SetZIndex(embeddedWrapper, 9999);
+                        addedToChartPanel = true;
+                    }
+                }
+                catch { addedToChartPanel = false; }
+
+                if (!addedToChartPanel)
+                {
+                    int idx = (chartTraderGrid != null) ? chartTraderGrid.RowDefinitions.Count : 0;
+                    if (chartTraderGrid != null)
+                    {
+                        addedRow = new RowDefinition { Height = GridLength.Auto };
+                        chartTraderGrid.RowDefinitions.Add(addedRow);
+                        Grid.SetRow(embeddedWrapper, idx);
+                        chartTraderGrid.Children.Add(embeddedWrapper);
+                    }
+                    else
+                    {
+                        var parent = chartControl.Parent as Panel;
+                        if (parent != null)
+                        {
+                            parent.Children.Add(embeddedWrapper);
+                            try { embeddedWrapper.Tag = embeddedTag; } catch { }
+                        }
+                    }
+                }
+
+                panelActive = true;
+                embeddedWrapper.Visibility = Visibility.Visible;
+
+                HookResizeHandlersForEmbedded();
+                RepositionEmbedded();
+
+                RegisterTabHandler();
+                UpdateEmbeddedForSelectedTab();
+                try { if (attachTimer != null) { attachTimer.Stop(); attachTimer = null; SafePrint("Stopped attach timer after attach."); } } catch { }
+
+                ForceRefreshOnce();
+            }
+            catch (Exception ex) { SafePrint("InsertEmbedded ex: " + ex.Message); }
+        }
+
+        private void RemoveEmbedded()
+        {
+            try
+            {
+                UnhookResizeHandlersForEmbedded();
+
+                if (chartWindow?.MainTabControl != null && tabHandler != null)
+                {
+                    try { chartWindow.MainTabControl.SelectionChanged -= tabHandler; } catch { }
+                    tabHandler = null;
+                }
+
+            } catch { }
+            tryRemoveTaggedFromParents();
+            tryRemoveTaggedFromChartControl();
+
+            embeddedWrapper = null;
+            addedRow = null;
+            panelActive = false;
+            SafePrint("RemoveEmbedded: removed embedded UI and frame (cleanup attempted).");
+        }
+
+        private void tryRemoveTaggedFromParents()
+        {
+            try
+            {
+                Panel parentPanel = null;
+                DependencyObject node = chartControl as DependencyObject;
+                while (node != null && parentPanel == null)
+                {
+                    node = VisualTreeHelper.GetParent(node);
+                    if (node is Panel p) parentPanel = p;
+                }
+
+                if (parentPanel != null)
+                {
+                    var toRemove = new List<UIElement>();
+                    foreach (UIElement child in parentPanel.Children)
+                    {
+                        try
+                        {
+                            if (child is FrameworkElement fe)
+                            {
+                                var tag = fe.Tag as string;
+                                if (!string.IsNullOrEmpty(tag) && tag == embeddedTag) toRemove.Add(child);
+                                else if (!string.IsNullOrEmpty(fe.Name) && fe.Name.StartsWith("HawkPanel")) toRemove.Add(child);
+                            }
+                        }
+                        catch { }
+                    }
+                    foreach (var c in toRemove)
+                    {
+                        try { parentPanel.Children.Remove(c); } catch { }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private void tryRemoveTaggedFromChartControl()
+        {
+            try
+            {
+                if (chartControl == null) return;
+
+                var visuals = FindVisualChildren<FrameworkElement>(chartControl as DependencyObject).Where(fe =>
+                {
+                    try
+                    {
+                        var tag = fe.Tag as string;
+                        if (!string.IsNullOrEmpty(tag) && tag == embeddedTag) return true;
+                        if (!string.IsNullOrEmpty(fe.Name) && fe.Name.StartsWith("HawkPanel")) return true;
+                    }
+                    catch { }
+                    return false;
+                }).ToList();
+
+                foreach (var v in visuals)
+                {
+                    try
+                    {
+                        var parent = VisualTreeHelper.GetParent(v);
+                        if (parent is Panel pp) pp.Children.Remove(v);
+                        else if (parent is ContentControl cc && ReferenceEquals(cc.Content, v)) cc.Content = null;
+                        else if (parent is Decorator dec && ReferenceEquals(dec.Child, v)) dec.Child = null;
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+        }
+
+        private void ForceFullCleanup()
+        {
+            try
+            {
+                Action<DependencyObject> sweep = (root) =>
+                {
+                    try { RemoveTaggedAndNamedVisuals(root, embeddedTag); } catch { }
+                };
+
+            try { if (chartControl != null) sweep(chartControl as DependencyObject); } catch { }
+            try { if (chartWindow != null) sweep(chartWindow as DependencyObject); } catch { }
+            try { if (chartTrader != null) sweep(chartTrader as DependencyObject); } catch { }
+            }
+            catch { }
+        }
+
+        private void RemoveTaggedAndNamedVisuals(DependencyObject root, string tagToRemove)
+        {
+            try
+            {
+                if (root == null) return;
+                var stack = new Stack<DependencyObject>();
+                stack.Push(root);
+
+                while (stack.Count > 0)
+                {
+                    var node = stack.Pop();
+                    int count = VisualTreeHelper.GetChildrenCount(node);
+                    for (int i = 0; i < count; i++)
+                    {
+                        var child = VisualTreeHelper.GetChild(node, i);
+                        bool match = false;
+                        if (child is FrameworkElement fe)
+                        {
+                            try
+                            {
+                                var t = fe.Tag as string;
+                                if (!string.IsNullOrEmpty(t) && t == tagToRemove) match = true;
+                                if (!match && !string.IsNullOrEmpty(fe.Name) && fe.Name.StartsWith("HawkPanel")) match = true;
+                            }
+                            catch { }
+
+                            if (match)
+                            {
+                                var parent = VisualTreeHelper.GetParent(fe);
+                                if (parent is Panel pp)
+                                {
+                                    try { pp.Children.Remove(fe); } catch { }
+                                }
+                                else if (parent is ContentControl cc && ReferenceEquals(cc.Content, fe))
+                                {
+                                    try { cc.Content = null; } catch { }
+                                }
+                                else if (parent is Decorator dec && ReferenceEquals(dec.Child, fe))
+                                {
+                                    try { dec.Child = null; } catch { }
+                                }
+                                continue;
+                            }
+                        }
+                        stack.Push(child);
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private void UpdateEmbeddedForSelectedTab()
+        {
+            try
+            {
+                if (chartWindow == null || embeddedControl == null) return;
+                var selected = chartWindow.MainTabControl?.SelectedItem as TabItem;
+                if (selected == null) return;
+                var chartTab = selected.Content as Gui.Chart.ChartTab;
+                if (chartTab == null) return;
+                var cc = chartTab.ChartControl;
+                if (cc == null) return;
+
+                embeddedControl.UpdateForChart(cc);
+                embeddedControl.UpdateBulletsAfterStateChange();
+                RepositionEmbedded();
+            }
+            catch (Exception ex) { SafePrint("UpdateEmbeddedForSelectedTab ex: " + ex.Message); }
+        }
+
+        public void ApplySnapshot(HawkPanelStateHub.PanelSnapshot snap)
+        {
+            try
+            {
+                if (snap == null || embeddedControl == null) return;
+                ChartControlDispatcher(() =>
+                {
+                    ApplySnapshotToUi(snap);
+                });
+            }
+            catch (Exception ex) { SafePrint("ApplySnapshot ex: " + ex.Message); }
+        }
+
+        private void ApplySnapshotToUi(HawkPanelStateHub.PanelSnapshot snap)
+        {
+            try
+            {
+                string titleFromSnap = SanitizeStrategyName(!string.IsNullOrEmpty(snap.StrategyName) ? snap.StrategyName : (instrumentName ?? "Hawk"));
+                embeddedControl.ApplyPanelTitle($"Hawk - {titleFromSnap}");
+
+                if (snap.EntryPrice.HasValue)
+                    embeddedControl.SetEntryFromPosition(snap.EntryPrice.Value);
+                else if (snap.PendingEntryPrice.HasValue)
+                    embeddedControl.SetEntryFromPending(snap.PendingEntryPrice.Value);
+                else
+                    embeddedControl.ClearEntry();
+
+                if (snap.StopChart.HasValue)
+                    embeddedControl.SetChartStop(snap.StopChart.Value, highlight: snap.EntryPrice.HasValue);
+                else if (snap.PendingStopPrice.HasValue)
+                    embeddedControl.SetChartStop(snap.PendingStopPrice.Value, highlight: false);
+                else
+                    embeddedControl.ClearChartStop();
+
+                if (snap.ExitTarget.HasValue)
+                    embeddedControl.SetExitFromOrder(snap.ExitTarget.Value, highlight: snap.EntryPrice.HasValue);
+                else if (snap.PendingTargetPrice.HasValue)
+                    embeddedControl.SetExitFromOrder(snap.PendingTargetPrice.Value, highlight: false);
+                else
+                    embeddedControl.ClearExit();
+
+                if (snap.Qty.HasValue && snap.Qty.Value > 0)
+                    embeddedControl.SetQty(snap.Qty.Value, highlight: snap.EntryPrice.HasValue);
+                else if (snap.PendingQty.HasValue && snap.PendingQty.Value > 0)
+                    embeddedControl.SetQty(snap.PendingQty.Value, highlight: false);
+                else
+                    embeddedControl.SetQty(0, highlight: false);
+
+                embeddedControl.SetStopFinancial(string.IsNullOrEmpty(snap.FinancialStopText) ? "-" : snap.FinancialStopText);
+                embeddedControl.SetTakeFinancial(string.IsNullOrEmpty(snap.TakeDollarText) ? "-" : snap.TakeDollarText);
+
+                string atrDisplay = snap.AtrDisplayText;
+                embeddedControl.SetAtrValue(string.IsNullOrEmpty(atrDisplay) ? "-" : atrDisplay);
+
+                embeddedControl.SetPnLDia(string.IsNullOrEmpty(snap.PnLDiaText) ? "-" : snap.PnLDiaText);
+                embeddedControl.SetPnLMes(string.IsNullOrEmpty(snap.PnLMesText) ? "-" : snap.PnLMesText);
+                embeddedControl.SetPnLTotal(string.IsNullOrEmpty(snap.PnLTotalText) ? "-" : snap.PnLTotalText);
+
+                int? maxGain = snap.DayMaxGain ?? snap.MaxGainStreak;
+                int? maxLoss = snap.DayMaxLoss ?? snap.MaxLossStreak;
+
+                if (!string.IsNullOrEmpty(snap.EndDayText))
+                    embeddedControl.SetEndDayText(snap.EndDayText);
+                else
+                    embeddedControl.SetEndDayText("-");
+
+                embeddedControl.SetDayResum(
+                    snap.StatusText ?? snap.DayTradeStatus,
+                    snap.DayQuantity ?? snap.Qty ?? snap.PendingQty,
+                    snap.DayStopDollar ?? snap.FinancialStopText,
+                    snap.DayBreakevenDollar ?? (snap.BEEnabled == true ? "ON" : "-"),
+                    snap.DayTargetDollar ?? snap.TakeDollarText,
+                    maxGain,
+                    maxLoss
+                );
+
+                embeddedControl.SetStreaks(maxGain, maxLoss);
+
+                embeddedControl.ForceSetBEEnabled(snap.BEEnabled ?? false);
+                embeddedControl.ForceSetATREnabled(snap.ATREnabled ?? false);
+                embeddedControl.ForceSetMainEnabled(snap.MainEnabled ?? false);
+
+                embeddedControl.UpdateBulletsAfterStateChange();
+            }
+            catch (Exception ex) { SafePrint("ApplySnapshotToUi ex: " + ex.Message); }
+        }
+
+        private string SanitizeStrategyName(string raw)
+        {
+            if (string.IsNullOrEmpty(raw)) return "Hawk";
+            var trimmed = raw.Trim();
+            if (trimmed.StartsWith("Hawk", StringComparison.OrdinalIgnoreCase))
+            {
+                trimmed = trimmed.Substring(4).TrimStart('-', ' ');
+                if (string.IsNullOrEmpty(trimmed)) trimmed = "Hawk";
+            }
+            return trimmed;
+        }
+
+        private void StartRefreshTimer()
+        {
+            if (refreshTimer != null) return;
+            refreshTimer = new DispatcherTimer { Interval = refreshInterval };
+            refreshTimer.Tick += (s, e) =>
+            {
+                try
+                {
+                    var snap = HawkPanelStateHub.GetLatest(cacheKey);
+                    if (snap != null && embeddedControl != null)
+                    {
+                        ChartControlDispatcher(() =>
+                        {
+                            ApplySnapshotToUi(snap);
+                        });
+                    }
+                }
+                catch (Exception ex) { SafePrint("refreshTimer tick ex: " + ex.Message); }
+            };
+            refreshTimer.Start();
+        }
+
+        private void StopRefreshTimer()
+        {
+            try { if (refreshTimer == null) return; refreshTimer.Stop(); refreshTimer = null; } catch { }
+        }
+
+        private void ForceRefreshOnce()
+        {
+            try
+            {
+                var snap = HawkPanelStateHub.GetLatest(cacheKey);
+                if (snap != null && embeddedControl != null)
+                {
+                    ApplySnapshotToUi(snap);
+                }
+            }
+            catch (Exception ex) { SafePrint("ForceRefreshOnce ex: " + ex.Message); }
+        }
+
+        private void RepositionEmbedded()
+        {
+            try
+            {
+                if (embeddedWrapper == null || chartControl == null) return;
+
+                Panel parentPanel = embeddedWrapper.Parent as Panel;
+                if (parentPanel == null)
+                {
+                    DependencyObject node = chartControl as DependencyObject;
+                    while (node != null && parentPanel == null)
+                    {
+                        node = VisualTreeHelper.GetParent(node);
+                        if (node is Panel found) parentPanel = found;
+                    }
+                }
+
+                if (parentPanel == null) return;
+
+                Point chartTopLeft;
+                try { chartTopLeft = chartControl.TransformToVisual(parentPanel).Transform(new Point(0, 0)); }
+                catch { chartTopLeft = new Point(0, 0); }
+
+                double left = chartTopLeft.X + 8.0;
+                double top = chartTopLeft.Y + 20.0;
+
+                embeddedWrapper.HorizontalAlignment = HorizontalAlignment.Left;
+                embeddedWrapper.VerticalAlignment = VerticalAlignment.Top;
+                embeddedWrapper.Margin = new Thickness(left, top, 0, 0);
+
+                double fallbackWidth = 260.0;
+                try
+                {
+                    if (chartControl.ChartPanels != null && chartControl.ChartPanels.Count > 0)
+                    {
+                        var cp = chartControl.ChartPanels[0];
+                        if (cp != null && cp.W > 0)
+                            fallbackWidth = Math.Min(cp.W * 0.26, 280.0);
+                    }
+                    else if (parentPanel.ActualWidth > 0)
+                        fallbackWidth = Math.Min(parentPanel.ActualWidth * 0.26, 280.0);
+                }
+                catch { fallbackWidth = 260.0; }
+
+                double finalWidth = Math.Min(Math.Max(190.0, fallbackWidth), 280.0);
+
+                try { embeddedWrapper.Width = finalWidth; } catch { }
+                try { embeddedWrapper.MaxHeight = EmbedHeightPx; } catch { }
+                try { System.Windows.Controls.Panel.SetZIndex(embeddedWrapper, 9999); } catch { }
+
+                try { embeddedControl?.ApplyResponsiveLayout(finalWidth); } catch { }
+            }
+            catch (Exception ex)
+            {
+                SafePrint("RepositionEmbedded ex: " + ex.Message);
+            }
+        }
+
+        private void HookResizeHandlersForEmbedded()
+        {
+            try
+            {
+                try { if (chartControl != null) chartControl.SizeChanged -= ChartControl_SizeChanged; } catch { }
+                try { if (chartControl != null) chartControl.SizeChanged += ChartControl_SizeChanged; } catch { }
+            }
+            catch { }
+        }
+
+        private void UnhookResizeHandlersForEmbedded()
+        {
+            try
+            {
+                try { if (chartControl != null) chartControl.SizeChanged -= ChartControl_SizeChanged; } catch { }
+            }
+            catch { }
+        }
+
+        private void ChartControl_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            try
+            {
+                ChartControlDispatcher(() => RepositionEmbedded());
+            }
+            catch { }
+        }
+
+        private static IEnumerable<T> FindVisualChildren<T>(DependencyObject depObj) where T : DependencyObject
+        {
+            if (depObj == null) yield break;
+            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(depObj); i++)
+            {
+                var child = VisualTreeHelper.GetChild(depObj, i);
+                if (child is T t) yield return t;
+                foreach (var c in FindVisualChildren<T>(child)) yield return c;
+            }
+        }
+
+        private void ChartControlDispatcher(Action a)
+        {
+            try
+            {
+                if (chartControl?.Dispatcher != null)
+                {
+                    chartControl.Dispatcher.BeginInvoke(a);
+                }
+                else
+                {
+                    a();
+                }
+            }
+            catch { }
+        }
+        #endregion
+    }
+    #endregion // fecha UI Helper
+
+    public class HawkAnchoredMidas : Strategy
+    {
+        #region Parâmetros
+        [NinjaScriptProperty, Display(Name = "Contratos", GroupName = "Configuração", Order = 100)]
+        public int Contratos { get; set; } = 1;
+        [NinjaScriptProperty, Display(Name = "Horário Início Normal (HH:mm)", GroupName = "Configuração", Order = 110)]
+        public string HorarioInicioNormal { get; set; } = "11:00";
+        [NinjaScriptProperty, Display(Name = "Horário Início DST EUA (HH:mm)", GroupName = "Configuração", Order = 120)]
+        public string HorarioInicioDstUsa { get; set; } = "10:00";
+        [NinjaScriptProperty, Display(Name = "Horário Encerramento (HH:mm)", GroupName = "Configuração", Order = 130)]
+        public string HorarioEncerramento { get; set; } = "17:00";
+        [NinjaScriptProperty, Display(Name = "Offset p/ Encerramento (min)", GroupName = "Configuração", Order = 140)]
+        public int EncerramentoOffsetMin { get; set; } = 15;
+
+        [NinjaScriptProperty, Display(Name = "Barra Âncora (nº da sessão)", GroupName = "VWAP", Order = 200)]
+        public int AnchorBarIndex { get; set; } = 1;
+        [NinjaScriptProperty, Display(Name = "VWAP Timeframe (min)", GroupName = "VWAP", Order = 220)]
+        public int VWAPTimeFrameMin { get; set; } = 60;
+
+        [NinjaScriptProperty, Display(Name = "Offset Limite (ticks)", GroupName = "Execução", Order = 300)]
+        public int LimitOffsetTicks { get; set; } = 10;
+
+        [NinjaScriptProperty, Display(Name = "Cancelar Limites às (HH:mm)", GroupName = "Execução", Order = 310)]
+        public string CancelLimitsAtHHmm { get; set; } = "16:45";
+
+        [NinjaScriptProperty, Display(Name = "Fechar Posições às (HH:mm)", GroupName = "Execução", Order = 320)]
+        public string ClosePositionsAtHHmm { get; set; } = "17:00";
+
+        [NinjaScriptProperty, Display(Name = "Stop por ATR?", GroupName = "Risco", Order = 400)]
+        public bool StopTypeIsATR { get; set; } = true;
+
+        [NinjaScriptProperty, Display(Name = "Período ATR", GroupName = "Risco", Order = 410)]
+        public int ATRPeriod { get; set; } = 14;
+
+        [NinjaScriptProperty, Display(Name = "ATR Timeframe (min)", GroupName = "Risco", Order = 420)]
+        public int ATRTimeFrameMin { get; set; } = 5;
+
+        [NinjaScriptProperty, Display(Name = "Multiplicador ATR", GroupName = "Risco", Order = 430)]
+        public double ATRMultiplier { get; set; } = 1.0;
+
+        [NinjaScriptProperty, Display(Name = "Stop Fixo (ticks)", GroupName = "Risco", Order = 440)]
+        public int FixedStopTicks { get; set; } = 100;
+
+        [NinjaScriptProperty, Display(Name = "Quantidade Fixa", GroupName = "Risco", Order = 450)]
+        public int FixedQuantity { get; set; } = 1;
+
+        [NinjaScriptProperty, Display(Name = "Risco Máx por Trade (moeda)", GroupName = "Risco", Order = 460)]
+        public double MaxRiskPerTradeCurrency { get; set; } = 200.0;
+
+        [NinjaScriptProperty, Display(Name = "Fator TP", GroupName = "Risco", Order = 470)]
+        public double TPFactor { get; set; } = 3.0;
+
+        [NinjaScriptProperty, Display(Name = "BE Trigger (multiplicador)", GroupName = "Risco", Order = 480)]
+        public double BE_TriggerMultiple { get; set; } = 4.0;
+
+        [NinjaScriptProperty, Display(Name = "BE Proteção (multiplicador)", GroupName = "Risco", Order = 490)]
+        public double BE_ProtectMultiple { get; set; } = 1.0;
+
+        [NinjaScriptProperty, Display(Name = "Permitir Long", GroupName = "Geral", Order = 500)]
+        public bool AllowLong { get; set; } = true;
+        [NinjaScriptProperty, Display(Name = "Permitir Short", GroupName = "Geral", Order = 510)]
+        public bool AllowShort { get; set; } = true;
+
+        [NinjaScriptProperty, Display(Name = "Modo Debug", GroupName = "Geral", Order = 520)]
+        public bool DebugMode { get; set; } = true;
+
+        [NinjaScriptProperty, Display(Name = "Throttle Máx Submissões", GroupName = "Execução", Order = 330)]
+        public int ThrottleMaxSubs { get; set; } = 8;
+        [NinjaScriptProperty, Display(Name = "Throttle Janela (s)", GroupName = "Execução", Order = 331)]
+        public int ThrottleWindowSec { get; set; } = 60;
+        [NinjaScriptProperty, Display(Name = "Delta mín. preço limite (ticks)", GroupName = "Execução", Order = 332)]
+        public int MinLimitPriceDeltaTicks { get; set; } = 1;
+
+        [NinjaScriptProperty, Display(Name = "Colchão slippage p/ sizing (ticks)", GroupName = "Risco", Order = 491)]
+        public int SlippageCushionTicksForRisk { get; set; } = 0;
+
+        [NinjaScriptProperty, Display(Name = "Usar filtro SuperTrend", GroupName = "Filtros", Order = 600)]
+        public bool UseSuperTrendFilter { get; set; } = false;
+        [NinjaScriptProperty, Display(Name = "SuperTrend Mode", GroupName = "Filtros", Order = 605)]
+        public SuperTrendMode ST_Mode { get; set; } = SuperTrendMode.ATR;
+        [NinjaScriptProperty, Display(Name = "ST Length", GroupName = "Filtros", Order = 610)]
+        public int ST_Length { get; set; } = 14;
+        [NinjaScriptProperty, Display(Name = "ST Multiplier", GroupName = "Filtros", Order = 615)]
+        public double ST_Multiplier { get; set; } = 2.618;
+        [NinjaScriptProperty, Display(Name = "ST MA Type", GroupName = "Filtros", Order = 620)]
+        public MovingAverageType ST_MAType { get; set; } = MovingAverageType.HMA;
+        [NinjaScriptProperty, Display(Name = "ST Smooth", GroupName = "Filtros", Order = 625)]
+        public int ST_Smooth { get; set; } = 14;
+        [NinjaScriptProperty, Display(Name = "ST Timeframe (min)", GroupName = "Filtros", Order = 626)]
+        public int ST_TimeFrameMin { get; set; } = 5;
+        [NinjaScriptProperty, Display(Name = "SuperTrend Invertido", GroupName = "Filtros", Order = 630)]
+        public bool ST_InvertSignal { get; set; } = false;
+        [NinjaScriptProperty, Display(Name = "Usar Hedge SuperTrend", GroupName = "Filtros", Order = 635)]
+        public bool UseHedgeSuperTrend { get; set; } = false;
+
+        [NinjaScriptProperty, Display(Name = "Plotar linhas de SL/BE/TP", GroupName = "Visual", Order = 700)]
+        public bool PlotExitLines { get; set; } = true;
+
+        [NinjaScriptProperty, Display(Name = "LineLengthBars", GroupName = "Visual", Order = 701)]
+        public int LineLengthBars { get; set; } = 30;
+
+        // ------------------- Diagnóstico painel -------------------
+        [NinjaScriptProperty, Display(Name = "Enable Panel Diagnostics", GroupName = "Diagnóstico", Order = 800)]
+        public bool EnablePanelDiagnostics { get; set; } = true;
+
+        [NinjaScriptProperty, Display(Name = "Panel Diag Interval (s)", GroupName = "Diagnóstico", Order = 810)]
+        public int PanelDiagIntervalSeconds { get; set; } = 1;
+
+        [NinjaScriptProperty, Display(Name = "InstanceTag (optional)", GroupName = "Diagnóstico", Order = 820)]
+        public string InstanceTag { get; set; } = "";
+        // ----------------------------------------------------------
+        #endregion
+
+        #region Variáveis e Ledger/Cache
+        // BIPs: 0 = primário; 1 = scheduler 1min; 2 = vwap TF; 3 = atr TF; 4 = supertrend TF (opcional)
+        private int schedulerBip = 1;
+        private int vwapBip = 2;
+        private int atrBip = 3;
+        private int stBip = 4;
+
+        private AnchoredMidasIndicator vwap;
+        private Indicators.ATR atrInd;
+        private TSSuperTrend st;
+        private double tickSize;
+        private double pontoValor;
+        private DateTime horarioInicioNormalDT;
+        private DateTime horarioInicioDstUsaDT;
+        private DateTime horarioFimSessaoDT;
+        private DateTime horarioZeraDT;
+
+        private Order ordemLimiteCompra = null;
+        private Order ordemLimiteVenda = null;
+        private Order ordemStopLong = null;
+        private Order ordemStopShort = null;
+        private Order ordemTargetLong = null;
+        private Order ordemTargetShort = null;
+
+        private Order ordemHedgeBuyStop = null;
+        private Order ordemHedgeSellStop = null;
+
+        private double lastLongLimit = double.NaN;
+        private double lastShortLimit = double.NaN;
+        private double lastBuyStop = double.NaN;
+        private double lastSellStop = double.NaN;
+
+        private Dictionary<string, DateTime> lastSubmissionTime = new Dictionary<string, DateTime>();
+        private Dictionary<string, int> submissionAttemptsWindow = new Dictionary<string, int>();
+
+        private double precoEntradaAtual = 0;
+        private double riscoPrecoAtual = 0;
+        private bool breakevenAtivado = false;
+        private bool stopAlvoConfigurados = false;
+        private bool longTradedToday = false;
+        private bool shortTradedToday = false;
+        private bool compraFeitaNaSessao = false;
+        private bool vendaFeitaNaSessao = false;
+        private DateTime lastTradingDay = Core.Globals.MinDate;
+        private bool cancelExecutedToday = false;
+        private bool closeExecutedToday = false;
+
+        private Dictionary<string, int> orderSubmissionAttempts = new Dictionary<string, int>();
+
+        private int lastKnownPositionQty = 0;
+        private int entryStopTicksUsed = 0;
+        private HashSet<string> plottedExecutions = new HashSet<string>();
+        private double lastAtrVal = 0.0;
+
+        private DateTime lastSnapshotUtc = DateTime.MinValue;
+        private bool initialSnapshotPublished = false;
+
+        private enum LatchedSide { None, Long, Short }
+        private LatchedSide sideLatched = LatchedSide.None;
+        private int qtyLatched = 0;
+
+        private HawkPanelHelper panelHelper;
+
+        private double? pendingEntryPrice = null;
+        private double? pendingStopPrice = null;
+        private double? pendingTargetPrice = null;
+        private int? pendingQty = null;
+        private double? pendingRiskCurrency = null;
+        private double? pendingRiskTicks = null;
+        private string statusText = "Waiting (aguardando)";
+
+        private int? lastTradeQty = null;
+        private double? lastTradeEntry = null;
+        private double? lastTradeStop = null;
+        private double? lastTradeTarget = null;
+        private string lastTradeStatus = "Waiting (aguardando)";
+        private double? currentPlannedStop = null;
+        private double? currentPlannedTarget = null;
+        private double? currentEntryPrice = null;
+
+        private class LedgerItem
+        {
+            public DateTime ExitTime;
+            public DateTime TradingDay;
+            public int Qty;
+            public double EntryPrice;
+            public double ExitPrice;
+            public double Profit;
+            public bool IsLong;
+            public double? PlannedStop;
+            public double? PlannedTarget;
+            public bool BEApplied;
+        }
+
+        private class DailyContext
+        {
+            public DateTime TradingDay;
+            public int? LastQty;
+            public double? LastEntry;
+            public double? LastStop;
+            public double? LastTarget;
+            public double PnlDia;
+            public string Status;
+        }
+
+        private class AggregateContext
+        {
+            public double PnlMes;
+            public double PnlTotal;
+            public int? MaxGainStreak;
+            public int? MaxLossStreak;
+        }
+
+        private class SnapshotCache
+        {
+            public int LastAllTradesCount;
+            public DailyContext Daily;
+            public AggregateContext Aggregate;
+            public DateTime LastTradingDaySeen;
+            public List<LedgerItem> Ledger = new List<LedgerItem>();
+        }
+
+        private static readonly Dictionary<string, SnapshotCache> cacheByInstrument = new Dictionary<string, SnapshotCache>();
+        private bool initialConsolidationDone = false;
+        private bool performanceFinalizedForThisLoad = false;
+        private string instanceId;
+
+        private DateTime tradingDayAnchor = Core.Globals.MinDate;
+        private bool tradingDayAnchorSet = false;
+
+        private string CacheDir => IOPath.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "NinjaTrader 8", "logs", "hawk_cache");
+        private string CacheFileSnapshot => IOPath.Combine(CacheDir, $"{SanitizeFileName(Instrument?.FullName)}_{SanitizeFileName(Account?.Name ?? "Sim")}_snapshot.csv");
+        private string CacheFileLedger => IOPath.Combine(CacheDir, $"{SanitizeFileName(Instrument?.FullName)}_{SanitizeFileName(Account?.Name ?? "Sim")}_ledger.csv");
+
+        private const bool EnableDiskCache = true; // reativado para preservar métricas entre reloads
+
+        private string chartToken = "HEADLESS";
+
+        private string SanitizeFileName(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "unknown";
+            foreach (var c in IOPath.GetInvalidFileNameChars())
+                s = s.Replace(c, '_');
+            return s;
+        }
+
+        private void DPrint(string msg)
+        {
+            if (DebugMode) Print("[Hawk] " + msg);
+        }
+        private void DLog(string msg)
+        {
+            if (DebugMode) Log(msg, LogLevel.Information);
+        }
+        #endregion
+
+        #region State
+        protected override void OnStateChange()
+        {
+            if (State == State.SetDefaults)
+            {
+                Name = "HawkAnchoredMidas";
+                Calculate = Calculate.OnBarClose;
+                EntriesPerDirection = 1;
+                EntryHandling = EntryHandling.AllEntries;
+                IsExitOnSessionCloseStrategy = false;
+                ExitOnSessionCloseSeconds = 0;
+                Slippage = 0;
+                StartBehavior = StartBehavior.WaitUntilFlat;
+                TraceOrders = true;
+            }
+            else if (State == State.Configure)
+            {
+                instanceId = Guid.NewGuid().ToString("N");
+
+                AddDataSeries(BarsPeriodType.Minute, 1); // scheduler 1m
+                AddDataSeries(BarsPeriodType.Minute, VWAPTimeFrameMin);
+                AddDataSeries(BarsPeriodType.Minute, ATRTimeFrameMin);
+                if (UseSuperTrendFilter && ST_TimeFrameMin > 0)
+                    AddDataSeries(BarsPeriodType.Minute, ST_TimeFrameMin);
+            }
+            else if (State == State.DataLoaded)
+            {
+                tickSize = Instrument.MasterInstrument.TickSize;
+                pontoValor = Instrument.MasterInstrument.PointValue;
+
+                horarioInicioNormalDT = DateTime.ParseExact(HorarioInicioNormal, "HH:mm", CultureInfo.InvariantCulture);
+                horarioInicioDstUsaDT = DateTime.ParseExact(HorarioInicioDstUsa, "HH:mm", CultureInfo.InvariantCulture);
+                horarioFimSessaoDT = DateTime.ParseExact(HorarioEncerramento, "HH:mm", CultureInfo.InvariantCulture);
+
+                if (ChartControl != null)
+                    chartToken = RuntimeHelpers.GetHashCode(ChartControl).ToString("X");
+                else
+                    chartToken = "HEADLESS";
+
+                Print($"[HawkDiag][KEY] cacheKey={GetCacheKey()} instanceId={instanceId} chartToken={chartToken} InstanceTag={InstanceTag}");
+
+                try
+                {
+                    vwap = AnchoredMidasIndicator(
+                        Closes[vwapBip],
+                        0,
+                        AnchorBarIndex,
+                        true,
+                        true,
+                        DebugMode,
+                        false,
+                        true,
+                        false,
+                        VWAPTimeFrameMin,
+                        "",
+                        true,
+                        false,
+                        20.0
+                    );
+                }
+                catch (Exception ex) { Log("[Strategy] VWAP init error: " + ex.Message, LogLevel.Warning); }
+
+                try { atrInd = ATR(BarsArray[atrBip], ATRPeriod); }
+                catch (Exception ex) { Log("[Strategy] ATR init error: " + ex.Message, LogLevel.Warning); }
+
+                try
+                {
+                    if (UseSuperTrendFilter)
+                    {
+                        st = TSSuperTrend(
+                            Closes[stBip],
+                            ST_Mode,
+                            ST_Length,
+                            ST_Multiplier,
+                            ST_MAType,
+                            ST_Smooth,
+                            false,
+                            false,
+                            false
+                        );
+                    }
+                }
+                catch (Exception ex) { Log("[Strategy] ST init error: " + ex.Message, LogLevel.Warning); }
+
+                var cache = GetOrCreateCache();
+                if (EnableDiskCache)
+                {
+                    TryLoadSnapshot(cache);
+                }
+
+                try
+                {
+                    if (ChartControl != null)
+                    {
+                        panelHelper = new HawkPanelHelper(false) { LogAction = msg => Print(msg), CacheKey = GetCacheKey() };
+                        panelHelper.Init(ChartControl);
+                    }
+                    else
+                    {
+                        DPrint("DataLoaded: ChartControl null, painel não criado (headless).");
+                    }
+                }
+                catch (Exception ex) { Log("[Strategy] Painel init error: " + ex.Message, LogLevel.Warning); }
+
+                Log("[Strategy] DataLoaded complete", LogLevel.Information);
+            }
+            else if (State == State.Realtime)
+            {
+                try
+                {
+                    Print($"[HawkDiag][STATE] Entered Realtime inst={Instrument?.FullName} acc={Account?.Name} key={GetCacheKey()}");
+                    ConsolidatePerformanceIfNeeded(force: true);
+                    performanceFinalizedForThisLoad = true;
+                    if (!tradingDayAnchorSet)
+                    {
+                        tradingDayAnchor = GetTradingDayFromTime(Time[0]);
+                        tradingDayAnchorSet = true;
+                    }
+                    lastSnapshotUtc = DateTime.MinValue;
+                    PublishSnapshotHeartbeat();
+                }
+                catch (Exception ex)
+                {
+                    Print("[HawkDiag][STATE][ERROR] " + ex.Message);
+                }
+            }
+            else if (State == State.Terminated)
+            {
+                try { panelHelper?.Dispose(); panelHelper = null; } catch { }
+            }
+        }
+        #endregion
+
+        #region Core OnBarUpdate
+        protected override void OnBarUpdate()
+        {
+            if (!Bars.BarsType.IsIntraday) return;
+
+            if (BarsInProgress == schedulerBip)
+            {
+                HandleScheduler();
+                return;
+            }
+
+            if (BarsInProgress == vwapBip)
+            {
+                HandleMidasBar();
+                return;
+            }
+
+            if (BarsInProgress != 0) return;
+
+            HandlePrimarySeries();
+
+            if (State == State.Realtime)
+            {
+                if (!performanceFinalizedForThisLoad)
+                {
+                    ConsolidatePerformanceIfNeeded(force: true);
+
+                    if (!tradingDayAnchorSet)
+                    {
+                        tradingDayAnchor = GetTradingDayFromTime(Time[0]);
+                        tradingDayAnchorSet = true;
+                    }
+
+                    performanceFinalizedForThisLoad = true;
+                    lastSnapshotUtc = DateTime.MinValue; // força snapshot imediato
+                }
+                else
+                {
+                    ConsolidatePerformanceIfNeeded(force: false);
+                }
+            }
+
+            PublishSnapshotHeartbeat();
+        }
+        #endregion
+
+        #region Snapshot/Cache/Diag
+        private string SnapshotToLine(HawkPanelStateHub.PanelSnapshot s, string reason)
+        {
+            if (s == null) return "[null snapshot]";
+            string fmt(double? v) => v.HasValue ? v.Value.ToString("N2", CultureInfo.InvariantCulture) : "null";
+            string fmtI(int? v) => v.HasValue ? v.Value.ToString() : "null";
+            string fmtS(string v) => string.IsNullOrEmpty(v) ? "null" : v.Replace('\n', ' ').Replace('\r', ' ');
+            string time0 = "n/a";
+            try { time0 = Time[0].ToString("O"); } catch { }
+            return
+                $"reason={reason}" +
+                $" | state={State}" +
+                $" | bip={BarsInProgress}" +
+                $" | cb={CurrentBar}" +
+                $" | time0={time0}" +
+                $" | isFirstTick={IsFirstTickOfBar}" +
+                $" | calc={Calculate}" +
+                $" | inst={Instrument?.FullName}" +
+                $" | acc={Account?.Name}" +
+                $" | instanceId={instanceId}" +
+                $" | cacheKey={GetCacheKey()}" +
+                $" | finalized={performanceFinalizedForThisLoad}" +
+                $" | anchorSet={tradingDayAnchorSet}" +
+                $" | anchor={tradingDayAnchor:O}" +
+                $" | pos={Position?.MarketPosition}" +
+                $" | posQty={Position?.Quantity}" +
+                $" | posAvg={Position?.AveragePrice}" +
+                $" | EntryPrice={fmt(s.EntryPrice)}" +
+                $" | StopChart={fmt(s.StopChart)}" +
+                $" | ExitTarget={fmt(s.ExitTarget)}" +
+                $" | Qty={fmtI(s.Qty)}" +
+                $" | PendingEntryPrice={fmt(s.PendingEntryPrice)}" +
+                $" | PendingStopPrice={fmt(s.PendingStopPrice)}" +
+                $" | PendingTargetPrice={fmt(s.PendingTargetPrice)}" +
+                $" | PendingQty={fmtI(s.PendingQty)}" +
+                $" | BEEnabled={s.BEEnabled}" +
+                $" | ATREnabled={s.ATREnabled}" +
+                $" | MainEnabled={s.MainEnabled}" +
+                $" | FinancialStopText={fmtS(s.FinancialStopText)}" +
+                $" | TakeDollarText={fmtS(s.TakeDollarText)}" +
+                $" | AtrDisplayText={fmtS(s.AtrDisplayText)}" +
+                $" | PnLDiaText={fmtS(s.PnLDiaText)}" +
+                $" | PnLMesText={fmtS(s.PnLMesText)}" +
+                $" | PnLTotalText={fmtS(s.PnLTotalText)}" +
+                $" | MaxGainStreak={fmtI(s.MaxGainStreak)}" +
+                $" | MaxLossStreak={fmtI(s.MaxLossStreak)}" +
+                $" | DayMaxGain={fmtI(s.DayMaxGain)}" +
+                $" | DayMaxLoss={fmtI(s.DayMaxLoss)}" +
+                $" | EndDayText={fmtS(s.EndDayText)}" +
+                $" | StatusText={fmtS(s.StatusText)}" +
+                $" | DayTradeStatus={fmtS(s.DayTradeStatus)}" +
+                $" | DayQuantity={fmtI(s.DayQuantity)}" +
+                $" | DayStopDollar={fmtS(s.DayStopDollar)}" +
+                $" | DayTargetDollar={fmtS(s.DayTargetDollar)}" +
+                $" | DayBreakevenDollar={fmtS(s.DayBreakevenDollar)}" +
+                $" | LastUpdatedUtc={s.LastUpdatedUtc:O}";
+        }
+
+        private void PublishSnapshotHeartbeat()
+        {
+            double intervalSec = Math.Max(0.2, PanelDiagIntervalSeconds);
+            var now = DateTime.UtcNow;
+            if ((now - lastSnapshotUtc).TotalSeconds < intervalSec && initialSnapshotPublished)
+                return;
+
+            initialSnapshotPublished = true;
+            lastSnapshotUtc = now;
+
+            var snap = BuildSnapshot();
+            var key = GetCacheKey();
+            HawkPanelStateHub.Set(key, snap);
+
+            if ((snap.StopChart.HasValue || snap.ExitTarget.HasValue) && EnablePanelDiagnostics)
+            {
+                try { Print("[HawkDiag][SNAP_STOPS_TARGETS] " + SnapshotToLine(snap, "StopsTargetsPresent")); } catch { }
+            }
+            if ((snap.PendingStopPrice.HasValue || snap.PendingTargetPrice.HasValue) && EnablePanelDiagnostics)
+            {
+                try { Print("[HawkDiag][SNAP_PENDING] " + SnapshotToLine(snap, "PendingPresent")); } catch { }
+            }
+
+            if (panelHelper != null && ChartControl != null)
+                panelHelper.ApplySnapshot(snap);
+
+            if (EnablePanelDiagnostics)
+            {
+                try { Print("[HawkDiag][SNAP] " + SnapshotToLine(snap, "PublishSnapshotHeartbeat")); }
+                catch (Exception ex) { Print("[HawkDiag][SNAP][ERROR] " + ex.Message); }
+            }
+        }
+
+        // cacheKey agora estável e discriminado por instância
+        private string GetCacheKey()
+        {
+            var acc = Account?.Name ?? "Sim";
+            var inst = Instrument?.FullName ?? "Unknown";
+            var strat = Name ?? "Strategy";
+
+            var discriminator = !string.IsNullOrWhiteSpace(InstanceTag)
+                ? InstanceTag.Trim()
+                : $"chart={chartToken}";
+
+            return $"{inst}::{acc}::{strat}::{discriminator}";
+        }
+
+        private HawkPanelStateHub.PanelSnapshot BuildSnapshot()
+        {
+            var snap = new HawkPanelStateHub.PanelSnapshot();
+            snap.StrategyName = Name;
+            snap.StrategyKey = Name + "_" + (Instrument?.FullName ?? "");
+
+            if (Position.MarketPosition != MarketPosition.Flat)
+            {
+                snap.EntryPrice = Position.AveragePrice;
+                snap.Qty = Math.Abs(Position.Quantity);
+
+                if (Position.MarketPosition == MarketPosition.Long && ordemStopLong != null)
+                    snap.StopChart = ordemStopLong.StopPrice;
+                else if (Position.MarketPosition == MarketPosition.Short && ordemStopShort != null)
+                    snap.StopChart = ordemStopShort.StopPrice;
+
+                if (Position.MarketPosition == MarketPosition.Long && ordemTargetLong != null)
+                    snap.ExitTarget = ordemTargetLong.LimitPrice;
+                else if (Position.MarketPosition == MarketPosition.Short && ordemTargetShort != null)
+                    snap.ExitTarget = ordemTargetShort.LimitPrice;
+
+                snap.FinancialStopText = riscoPrecoAtual > 0
+                    ? (riscoPrecoAtual * pontoValor).ToString("N2", CultureInfo.CurrentCulture)
+                    : "-";
+                snap.TakeDollarText = riscoPrecoAtual > 0
+                    ? (riscoPrecoAtual * pontoValor * TPFactor).ToString("N2", CultureInfo.CurrentCulture)
+                    : "-";
+            }
+            else
+            {
+                snap.EntryPrice = null;
+                snap.Qty = null;
+                snap.StopChart = null;
+                snap.ExitTarget = null;
+
+                snap.PendingEntryPrice = pendingEntryPrice;
+                snap.PendingStopPrice = pendingStopPrice;
+                snap.PendingTargetPrice = pendingTargetPrice;
+                snap.PendingQty = pendingQty;
+
+                snap.FinancialStopText = pendingRiskCurrency.HasValue
+                    ? pendingRiskCurrency.Value.ToString("N2", CultureInfo.CurrentCulture)
+                    : "-";
+                snap.TakeDollarText = (pendingRiskCurrency.HasValue)
+                    ? (pendingRiskCurrency.Value * TPFactor).ToString("N2", CultureInfo.CurrentCulture)
+                    : "-";
+            }
+
+            snap.BEEnabled = breakevenAtivado;
+            snap.ATREnabled = StopTypeIsATR;
+            snap.MainEnabled = true;
+            snap.AtrDisplayText = FormatAtrDisplay();
+
+            var cache = GetOrCreateCache();
+            var agg = cache.Aggregate;
+            var daily = cache.Daily;
+
+            bool showMetrics = State == State.Realtime && performanceFinalizedForThisLoad;
+
+            if (showMetrics)
+            {
+                snap.PnLDiaText = daily != null ? daily.PnlDia.ToString("N2", CultureInfo.CurrentCulture) : "-";
+                snap.PnLMesText = agg != null ? agg.PnlMes.ToString("N2", CultureInfo.CurrentCulture) : "-";
+                snap.PnLTotalText = agg != null ? agg.PnlTotal.ToString("N2", CultureInfo.CurrentCulture) : "-";
+                snap.MaxGainStreak = agg?.MaxGainStreak;
+                snap.MaxLossStreak = agg?.MaxLossStreak;
+                snap.DayMaxGain = agg?.MaxGainStreak;
+                snap.DayMaxLoss = agg?.MaxLossStreak;
+            }
+            else
+            {
+                snap.PnLDiaText = "-";
+                snap.PnLMesText = "-";
+                snap.PnLTotalText = "-";
+                snap.MaxGainStreak = null;
+                snap.MaxLossStreak = null;
+                snap.DayMaxGain = null;
+                snap.DayMaxLoss = null;
+            }
+
+            snap.EndDayText = ClosePositionsAtHHmm;
+
+            var dayStatus = statusText;
+            var dayQty = snap.Qty ?? snap.PendingQty ?? daily?.LastQty;
+            var dayStop = snap.FinancialStopText;
+            var dayTarget = snap.TakeDollarText;
+            var dayBE = snap.BEEnabled == true ? "ON" : "-";
+
+            if (snap.EntryPrice == null && snap.PendingEntryPrice == null && daily != null && daily.LastQty.HasValue)
+            {
+                dayStatus = "Closed";
+                dayQty = daily.LastQty;
+                dayStop = FormatPrice(daily.LastStop);
+                dayTarget = FormatPrice(daily.LastTarget);
+                dayBE = "-";
+            }
+
+            snap.StatusText = dayStatus;
+            snap.DayTradeStatus = dayStatus;
+            snap.DayQuantity = dayQty;
+            snap.DayStopDollar = dayStop;
+            snap.DayTargetDollar = dayTarget;
+            snap.DayBreakevenDollar = dayBE;
+
+            snap.LastUpdatedUtc = DateTime.UtcNow;
+            return snap;
+        }
+
+        private string FormatPrice(double? price) => price.HasValue ? price.Value.ToString("N2", CultureInfo.CurrentCulture) : "-";
+
+        private string FormatAtrDisplay()
+        {
+            try
+            {
+                if (atrInd == null || CurrentBars.Length <= atrBip || CurrentBars[atrBip] <= ATRPeriod)
+                    return "-";
+                double atrVal = atrInd[0] * ATRMultiplier;
+                if (double.IsNaN(atrVal) || atrVal <= 0) return "-";
+                double atrTicks = atrVal / tickSize;
+                double atrUsdPerC = atrVal * pontoValor;
+                return $"{Math.Round(atrTicks, 1)}t (${atrUsdPerC.ToString("N2", CultureInfo.CurrentCulture)}/1C)";
+            }
+            catch { return "-"; }
+        }
+        #endregion
+
+        #region Cache / Ledger Persistence + Diag
+        private SnapshotCache GetOrCreateCache()
+        {
+            var key = GetCacheKey();
+            if (!cacheByInstrument.TryGetValue(key, out var c))
+            {
+                c = new SnapshotCache
+                {
+                    LastAllTradesCount = 0,
+                    Daily = new DailyContext { TradingDay = Core.Globals.MinDate, Status = "Waiting (aguardando)" },
+                    Aggregate = new AggregateContext(),
+                    Ledger = new List<LedgerItem>()
+                };
+                cacheByInstrument[key] = c;
+            }
+            return c;
+        }
+
+        private DateTime GetTradingDayFromTime(DateTime time)
+        {
+            var si = new SessionIterator(Bars);
+            return si.GetTradingDay(time);
+        }
+
+        private void ConsolidatePerformanceIfNeeded(bool force = false)
+        {
+            try
+            {
+                if (State == State.Historical) return;
+
+                var cache = GetOrCreateCache();
+                int sysCount = SystemPerformance.AllTrades.Count;
+
+                if (EnablePanelDiagnostics)
+                {
+                    try
+                    {
+                        Print($"[HawkDiag][CONSOL] state={State} force={force} sysCount={sysCount} lastCached={cache.LastAllTradesCount} finalized={performanceFinalizedForThisLoad} anchorSet={tradingDayAnchorSet} anchor={tradingDayAnchor:O}");
+                        if (sysCount > 0)
+                        {
+                            var t = SystemPerformance.AllTrades[sysCount - 1];
+                            Print($"[HawkDiag][CONSOL][LAST] exit={t.Exit.Time:O} profit={t.ProfitCurrency} qty={t.Quantity} entryPx={t.Entry?.Price} exitPx={t.Exit.Price}");
+                        }
+                    }
+                    catch { }
+                }
+
+                if (!force && sysCount == cache.LastAllTradesCount)
+                {
+                    initialConsolidationDone = true;
+                    return;
+                }
+
+                cache.Ledger.Clear();
+                foreach (var t in SystemPerformance.AllTrades)
+                {
+                    if (t.Exit == null) continue;
+                    var td = GetTradingDayFromTime(t.Exit.Time);
+
+                    cache.Ledger.Add(new LedgerItem
+                    {
+                        ExitTime = t.Exit.Time,
+                        TradingDay = td,
+                        Qty = Math.Abs(t.Quantity),
+                        EntryPrice = t.Entry?.Price ?? 0,
+                        ExitPrice = t.Exit.Price,
+                        Profit = t.ProfitCurrency,
+                        IsLong = t.Quantity > 0,
+                        PlannedStop = null,
+                        PlannedTarget = null,
+                        BEApplied = false
+                    });
+                }
+
+                RecalcFromLedger(cache);
+                cache.LastAllTradesCount = sysCount;
+                initialConsolidationDone = true;
+                if (performanceFinalizedForThisLoad && EnableDiskCache)
+                    SaveSnapshot(cache);
+            }
+            catch (Exception ex)
+            {
+                DPrint("[Consolidate] erro: " + ex.Message);
+            }
+        }
+
+        private void RecalcFromLedger(SnapshotCache cache)
+        {
+            DateTime currentTD = tradingDayAnchorSet ? tradingDayAnchor : GetTradingDayFromTime(Time[0]);
+            cache.LastTradingDaySeen = currentTD;
+
+            double pnlDia = 0;
+            double pnlMes = 0;
+            double pnlTotal = 0;
+            int? maxGain = null, maxLoss = null;
+            int curGain = 0, curLoss = 0, bestGain = 0, bestLoss = 0;
+
+            LedgerItem lastTradeToday = null;
+
+            foreach (var li in cache.Ledger)
+            {
+                pnlTotal += li.Profit;
+                if (li.TradingDay.Year == currentTD.Year && li.TradingDay.Month == currentTD.Month)
+                    pnlMes += li.Profit;
+                if (li.TradingDay == currentTD)
+                {
+                    pnlDia += li.Profit;
+                    if (lastTradeToday == null || li.ExitTime > lastTradeToday.ExitTime)
+                        lastTradeToday = li;
+                }
+
+                double p = li.Profit;
+                if (p > 0)
+                {
+                    curGain++; bestGain = Math.Max(bestGain, curGain);
+                    curLoss = 0;
+                }
+                else if (p < 0)
+                {
+                    curLoss++; bestLoss = Math.Max(bestLoss, curLoss);
+                    curGain = 0;
+                }
+                else
+                {
+                    curGain = 0; curLoss = 0;
+                }
+            }
+
+            if (bestGain > 0) maxGain = bestGain;
+            if (bestLoss > 0) maxLoss = bestLoss;
+
+            cache.Aggregate.PnlMes = pnlMes;
+            cache.Aggregate.PnlTotal = pnlTotal;
+            cache.Aggregate.MaxGainStreak = maxGain;
+            cache.Aggregate.MaxLossStreak = maxLoss;
+
+            cache.Daily = cache.Daily ?? new DailyContext();
+            cache.Daily.TradingDay = currentTD;
+            cache.Daily.PnlDia = pnlDia;
+            cache.Daily.Status = (lastTradeToday != null) ? "Closed" : "Waiting (aguardando)";
+
+            if (lastTradeToday != null)
+            {
+                cache.Daily.LastQty = lastTradeToday.Qty;
+                cache.Daily.LastEntry = lastTradeToday.EntryPrice;
+                cache.Daily.LastStop = lastTradeToday.PlannedStop;
+                cache.Daily.LastTarget = lastTradeToday.PlannedTarget;
+            }
+            else
+            {
+                cache.Daily.LastQty = null;
+            }
+        }
+
+        private void SaveSnapshot(SnapshotCache cache)
+        {
+            try
+            {
+                if (!performanceFinalizedForThisLoad) return;
+
+                Directory.CreateDirectory(CacheDir);
+
+                var sbLed = new StringBuilder();
+                sbLed.AppendLine("ExitTime,TradingDay,Qty,EntryPrice,ExitPrice,Profit,IsLong,PlannedStop,PlannedTarget,BEApplied");
+                foreach (var li in cache.Ledger)
+                {
+                    sbLed.AppendLine(string.Join(",",
+                        li.ExitTime.ToString("O"),
+                        li.TradingDay.ToString("O"),
+                        li.Qty,
+                        li.EntryPrice.ToString(CultureInfo.InvariantCulture),
+                        li.ExitPrice.ToString(CultureInfo.InvariantCulture),
+                        li.Profit.ToString(CultureInfo.InvariantCulture),
+                        li.IsLong ? "1" : "0",
+                        li.PlannedStop.HasValue ? li.PlannedStop.Value.ToString(CultureInfo.InvariantCulture) : "",
+                        li.PlannedTarget.HasValue ? li.PlannedTarget.Value.ToString(CultureInfo.InvariantCulture) : "",
+                        li.BEApplied ? "1" : "0"
+                    ));
+                }
+                File.WriteAllText(CacheFileLedger, sbLed.ToString());
+
+                var sb = new StringBuilder();
+                sb.AppendLine($"LastAllTradesCount={cache.LastAllTradesCount}");
+                sb.AppendLine($"LastTradingDaySeen={cache.LastTradingDaySeen:O}");
+                sb.AppendLine($"PnlMes={cache.Aggregate.PnlMes.ToString(CultureInfo.InvariantCulture)}");
+                sb.AppendLine($"PnlTotal={cache.Aggregate.PnlTotal.ToString(CultureInfo.InvariantCulture)}");
+                sb.AppendLine($"MaxGainStreak={(cache.Aggregate.MaxGainStreak.HasValue ? cache.Aggregate.MaxGainStreak.Value.ToString() : "")}");
+                sb.AppendLine($"MaxLossStreak={(cache.Aggregate.MaxLossStreak.HasValue ? cache.Aggregate.MaxLossStreak.Value.ToString() : "")}");
+                sb.AppendLine($"Daily.TradingDay={cache.Daily.TradingDay:O}");
+                sb.AppendLine($"Daily.PnlDia={cache.Daily.PnlDia.ToString(CultureInfo.InvariantCulture)}");
+                sb.AppendLine($"Daily.Status={cache.Daily.Status}");
+                sb.AppendLine($"Daily.LastQty={(cache.Daily.LastQty.HasValue ? cache.Daily.LastQty.Value.ToString() : "")}");
+                sb.AppendLine($"Daily.LastEntry={(cache.Daily.LastEntry.HasValue ? cache.Daily.LastEntry.Value.ToString(CultureInfo.InvariantCulture) : "")}");
+                sb.AppendLine($"Daily.LastStop={(cache.Daily.LastStop.HasValue ? cache.Daily.LastStop.Value.ToString(CultureInfo.InvariantCulture) : "")}");
+                sb.AppendLine($"Daily.LastTarget={(cache.Daily.LastTarget.HasValue ? cache.Daily.LastTarget.Value.ToString(CultureInfo.InvariantCulture) : "")}");
+                File.WriteAllText(CacheFileSnapshot, sb.ToString());
+
+                DPrint($"[Cache] salvo snapshot {CacheFileSnapshot} e ledger {CacheFileLedger}");
+            }
+            catch (Exception ex)
+            {
+                DPrint("[Cache] erro ao salvar: " + ex.Message);
+            }
+        }
+
+        private bool TryLoadSnapshot(SnapshotCache cache)
+        {
+            if (!EnableDiskCache) return false;
+
+            try
+            {
+                if (!File.Exists(CacheFileSnapshot) || !File.Exists(CacheFileLedger)) return false;
+
+                cache.Ledger.Clear();
+                var lines = File.ReadAllLines(CacheFileLedger).Skip(1);
+                foreach (var line in lines)
+                {
+                    if (string.IsNullOrWhiteSpace(line)) continue;
+                    var parts = line.Split(',');
+                    if (parts.Length < 10) continue;
+                    DateTime exitT, td;
+                    if (!DateTime.TryParse(parts[0], null, DateTimeStyles.RoundtripKind, out exitT)) continue;
+                    if (!DateTime.TryParse(parts[1], null, DateTimeStyles.RoundtripKind, out td)) continue;
+                    int qty; if (!int.TryParse(parts[2], out qty)) qty = 0;
+                    double entry = ParseD(parts[3]);
+                    double exit = ParseD(parts[4]);
+                    double prof = ParseD(parts[5]);
+                    bool isLong = parts[6] == "1";
+                    double? pst = string.IsNullOrEmpty(parts[7]) ? (double?)null : ParseD(parts[7]);
+                    double? ptg = string.IsNullOrEmpty(parts[8]) ? (double?)null : ParseD(parts[8]);
+                    bool be = parts[9] == "1";
+                    cache.Ledger.Add(new LedgerItem
+                    {
+                        ExitTime = exitT,
+                        TradingDay = td,
+                        Qty = qty,
+                        EntryPrice = entry,
+                        ExitPrice = exit,
+                        Profit = prof,
+                        IsLong = isLong,
+                        PlannedStop = pst,
+                        PlannedTarget = ptg,
+                        BEApplied = be
+                    });
+                }
+
+                var snapLines = File.ReadAllLines(CacheFileSnapshot);
+                var dict = new Dictionary<string, string>();
+                foreach (var l in snapLines)
+                {
+                    var idx = l.IndexOf('=');
+                    if (idx <= 0) continue;
+                    var k = l.Substring(0, idx);
+                    var v = l.Substring(idx + 1);
+                    dict[k] = v;
+                }
+
+                cache.LastAllTradesCount = ParseI(dict, "LastAllTradesCount", 0);
+                cache.LastTradingDaySeen = ParseDT(dict, "LastTradingDaySeen");
+                cache.Aggregate.PnlMes = ParseD(dict, "PnlMes");
+                cache.Aggregate.PnlTotal = ParseD(dict, "PnlTotal");
+                cache.Aggregate.MaxGainStreak = ParseNullableI(dict, "MaxGainStreak");
+                cache.Aggregate.MaxLossStreak = ParseNullableI(dict, "MaxLossStreak");
+
+                cache.Daily = cache.Daily ?? new DailyContext();
+                cache.Daily.TradingDay = ParseDT(dict, "Daily.TradingDay");
+                cache.Daily.PnlDia = ParseD(dict, "Daily.PnlDia");
+                cache.Daily.Status = dict.ContainsKey("Daily.Status") ? dict["Daily.Status"] : "Waiting (aguardando)";
+                cache.Daily.LastQty = ParseNullableI(dict, "Daily.LastQty");
+                cache.Daily.LastEntry = ParseNullableD(dict, "Daily.LastEntry");
+                cache.Daily.LastStop = ParseNullableD(dict, "Daily.LastStop");
+                cache.Daily.LastTarget = ParseNullableD(dict, "Daily.LastTarget");
+
+                DPrint($"[Cache] carregado snapshot {CacheFileSnapshot} e ledger {CacheFileLedger}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                DPrint("[Cache] erro ao ler: " + ex.Message);
+                return false;
+            }
+        }
+
+        private double ParseD(string s) { double d; if (double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out d)) return d; return 0; }
+        private int ParseI(Dictionary<string, string> d, string key, int def) { if (!d.ContainsKey(key)) return def; int v; if (int.TryParse(d[key], out v)) return v; return def; }
+        private double ParseD(Dictionary<string, string> d, string key) { if (!d.ContainsKey(key)) return 0; double v; if (double.TryParse(d[key], NumberStyles.Any, CultureInfo.InvariantCulture, out v)) return v; return 0; }
+        private int? ParseNullableI(Dictionary<string, string> d, string key) { if (!d.ContainsKey(key)) return null; int v; if (int.TryParse(d[key], out v)) return v; return null; }
+        private double? ParseNullableD(Dictionary<string, string> d, string key) { if (!d.ContainsKey(key)) return null; double v; if (double.TryParse(d[key], NumberStyles.Any, CultureInfo.InvariantCulture, out v)) return v; return null; }
+        private DateTime ParseDT(Dictionary<string, string> d, string key) { if (!d.ContainsKey(key)) return Core.Globals.MinDate; DateTime v; if (DateTime.TryParse(d[key], null, DateTimeStyles.RoundtripKind, out v)) return v; return Core.Globals.MinDate; }
+        private DateTime ParseDT(string s) { DateTime v; if (DateTime.TryParse(s, null, DateTimeStyles.RoundtripKind, out v)) return v; return Core.Globals.MinDate; }
+        #endregion
+
+        #region Scheduler (fechamento/cancelamento por horário, 1min, histórico+realtime, timezone do gráfico)
+        private void HandleScheduler()
+        {
+            try
+            {
+                DateTime barTime = Times[schedulerBip][0];
+                string thName = Bars?.TradingHours != null ? Bars.TradingHours.Name : "unknownTH";
+
+                // Cancelar limites no horário programado
+                if (!cancelExecutedToday && !string.IsNullOrWhiteSpace(CancelLimitsAtHHmm) && TimeSpan.TryParse(CancelLimitsAtHHmm, out var cancelT))
+                {
+                    if (barTime.TimeOfDay >= cancelT)
+                    {
+                        Print($"[HawkDiag][CANCEL_WINDOW_SCHED] barTime={barTime:O} TH={thName} CancelAt={CancelLimitsAtHHmm}");
+                        cancelExecutedToday = true;
+                        CancelPendingLimitsIfAny();
+                        PrintCurrentOrdersState("AFTER_CANCEL_WINDOW_SCHED");
+                    }
+                }
+
+                // Fechar posição / encerrar no horário programado
+                if (!closeExecutedToday && !string.IsNullOrWhiteSpace(ClosePositionsAtHHmm) && TimeSpan.TryParse(ClosePositionsAtHHmm, out var closeT))
+                {
+                    if (barTime.TimeOfDay >= closeT)
+                    {
+                        Print($"[HawkDiag][CLOSE_WINDOW_SCHED] barTime={barTime:O} TH={thName} CloseAt={ClosePositionsAtHHmm} pos={Position.MarketPosition} qty={Position.Quantity}");
+                        closeExecutedToday = true;
+                        cancelExecutedToday = true; // já cancelamos tudo junto
+                        CancelPendingLimitsIfAny();
+                        CloseAllAndCancel();
+                        sideLatched = LatchedSide.None;
+                        qtyLatched = 0;
+                        statusText = "Blocked (fechar posições)";
+                        ClearPendingSnapshot();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Print("[HawkDiag][CLOSE_WINDOW_SCHED][ERROR] " + ex.Message);
+            }
+        }
+        #endregion
+
+        #region Trading logic core (com horário somente via scheduler)
+        private void HandleMidasBar()
+        {
+            if (CurrentBars.Length <= vwapBip || CurrentBars[vwapBip] <= 0) return;
+            if (CurrentBars[0] < BarsRequiredToTrade) return;
+
+            DateTime agoraPrimary = Times[0][0];
+            DateTime inicioHojeAllowed = IsUsaDst(agoraPrimary)
+                ? new DateTime(agoraPrimary.Year, agoraPrimary.Month, agoraPrimary.Day, horarioInicioDstUsaDT.Hour, horarioInicioDstUsaDT.Minute, 0)
+                : new DateTime(agoraPrimary.Year, agoraPrimary.Month, agoraPrimary.Day, horarioInicioNormalDT.Hour, horarioInicioNormalDT.Minute, 0);
+
+            DateTime fimSessaoAllowed = new DateTime(agoraPrimary.Year, agoraPrimary.Month, agoraPrimary.Day, horarioFimSessaoDT.Hour, horarioFimSessaoDT.Minute, 0);
+            horarioZeraDT = fimSessaoAllowed.AddMinutes(-EncerramentoOffsetMin);
+
+            if (agoraPrimary < inicioHojeAllowed) { statusText = "Waiting (aguardando)"; return; }
+            if (agoraPrimary >= horarioZeraDT)
+            {
+                statusText = "Blocked (após zera)";
+                CancelAndClearWorkingOrders();
+                sideLatched = LatchedSide.None; qtyLatched = 0;
+                return;
+            }
+
+            if (vwap == null) { statusText = "VWAP não pronto"; return; }
+
+            double vwapMedian, vwapHigh, vwapLow;
+            try
+            {
+                vwapMedian = vwap.Values[1][0];
+                vwapHigh = vwap.Values[0][0];
+                vwapLow = vwap.Values[2][0];
+            }
+            catch { statusText = "VWAP erro"; return; }
+
+            double preco = Closes[0][0];
+            bool aboveBands = preco > vwapHigh && preco > vwapMedian && preco > vwapLow;
+            bool belowBands = preco < vwapHigh && preco < vwapMedian && preco < vwapLow;
+
+            bool stReady = true, stBull = true, stBear = true;
+            if (UseSuperTrendFilter)
+            {
+                if (st == null) { statusText = "ST null"; return; }
+                if (CurrentBars.Length <= stBip || CurrentBars[stBip] < Math.Max(ST_Length, ST_Smooth) + 2)
+                { statusText = "ST não pronto"; return; }
+
+                double stDn = st.DownTrend[0];
+                double stUp = st.UpTrend[0];
+                double stClose = Closes[stBip][0];
+
+                stBull = (stDn == 0 && stUp > 0) || (stDn > 0 && stClose >= stDn);
+                stBear = (stUp == 0 && stDn > 0) || (stUp > 0 && stClose <= stUp);
+                if (ST_InvertSignal) { var tmp = stBull; stBull = stBear; stBear = tmp; }
+                stReady = stBull || stBear;
+            }
+
+            bool contextoCompra = AllowLong && aboveBands && stReady && (!UseSuperTrendFilter || stBull);
+            bool contextoVenda = AllowShort && belowBands && stReady && (!UseSuperTrendFilter || stBear);
+
+            if (sideLatched == LatchedSide.None)
+            {
+                if (contextoCompra) sideLatched = LatchedSide.Long;
+                else if (contextoVenda) sideLatched = LatchedSide.Short;
+            }
+
+            double riscoPrecoEstimado = 0.0, riscoPorContrato = 0.0;
+            int qtyCalc = CalcQtyByRiskLatched(sideLatched, vwapMedian, vwapHigh, vwapLow, out riscoPrecoEstimado, out riscoPorContrato);
+            if (qtyCalc < 1) qtyCalc = 1;
+            qtyLatched = qtyCalc;
+
+            pendingRiskCurrency = riscoPorContrato;
+            pendingRiskTicks = riscoPrecoEstimado / tickSize;
+
+            CancelPendingLimitsIfAny();
+
+            if (sideLatched == LatchedSide.None) { statusText = "Waiting (sem contexto)"; ClearPendingSnapshot(); return; }
+            if (Position.MarketPosition != MarketPosition.Flat) { statusText = "Posição aberta"; ClearPendingSnapshot(); return; }
+
+            if (sideLatched == LatchedSide.Long)
+            {
+                double precoLimiteCompra = Instrument.MasterInstrument.RoundToTickSize(vwapMedian + LimitOffsetTicks * tickSize);
+                statusText = "Contexto Long (pendente)";
+                SubmitOrReplaceLimitOrderSafe(true, qtyCalc, precoLimiteCompra, "LongAuto");
+            }
+            else
+            {
+                double precoLimiteVenda = Instrument.MasterInstrument.RoundToTickSize(vwapMedian - LimitOffsetTicks * tickSize);
+                statusText = "Contexto Short (pendente)";
+                SubmitOrReplaceLimitOrderSafe(false, qtyCalc, precoLimiteVenda, "ShortAuto");
+            }
+        }
+
+        private void ClearPendingSnapshot()
+        {
+            pendingEntryPrice = null;
+            pendingStopPrice = null;
+            pendingTargetPrice = null;
+            pendingQty = null;
+        }
+
+        private int CalcQtyByRiskLatched(LatchedSide side, double vwapMedian, double vwapHigh, double vwapLow, out double riscoPrecoEstimado, out double riscoPorContrato)
+        {
+            riscoPrecoEstimado = 0.0;
+            riscoPorContrato = 0.0;
+
+            if (!StopTypeIsATR || MaxRiskPerTradeCurrency <= 0 || atrInd == null || CurrentBars.Length <= atrBip || CurrentBars[atrBip] <= ATRPeriod || side == LatchedSide.None)
+                return Math.Max(1, FixedQuantity);
+
+            double atrVal = atrInd[0] * ATRMultiplier;
+            lastAtrVal = atrVal;
+            if (atrVal <= 0)
+                return Math.Max(1, FixedQuantity);
+
+            double cushion = SlippageCushionTicksForRisk * tickSize;
+
+            if (side == LatchedSide.Long)
+            {
+                double precoLimite = vwapMedian + LimitOffsetTicks * tickSize;
+                double precoLimiteCushioned = precoLimite + cushion;
+                double stopEstimado = vwapLow - atrVal - cushion;
+                riscoPrecoEstimado = precoLimiteCushioned - stopEstimado;
+
+                pendingEntryPrice = precoLimite;
+                pendingStopPrice = stopEstimado;
+                pendingTargetPrice = precoLimite + (riscoPrecoEstimado * TPFactor);
+                pendingQty = qtyLatched;
+            }
+            else if (side == LatchedSide.Short)
+            {
+                double precoLimite = vwapMedian - LimitOffsetTicks * tickSize;
+                double precoLimiteCushioned = precoLimite - cushion;
+                double stopEstimado = vwapHigh + atrVal + cushion;
+                riscoPrecoEstimado = stopEstimado - precoLimiteCushioned;
+
+                pendingEntryPrice = precoLimite;
+                pendingStopPrice = stopEstimado;
+                pendingTargetPrice = precoLimite - (riscoPrecoEstimado * TPFactor);
+                pendingQty = qtyLatched;
+            }
+
+            if (riscoPrecoEstimado <= 0) return Math.Max(1, FixedQuantity);
+
+            riscoPorContrato = riscoPrecoEstimado * pontoValor;
+            if (riscoPorContrato <= 0) return Math.Max(1, FixedQuantity);
+
+            int qtyCalc = (int)Math.Floor(MaxRiskPerTradeCurrency / riscoPorContrato);
+            if (qtyCalc < 1) qtyCalc = 1;
+            if (qtyCalc > Contratos) qtyCalc = Contratos;
+            return qtyCalc;
+        }
+
+        private void HandlePrimarySeries()
+        {
+            DateTime agoraPrimary2 = Times[0][0];
+            DateTime tradingDayPrimary = new SessionIterator(Bars).GetTradingDay(agoraPrimary2);
+            if (tradingDayPrimary != lastTradingDay)
+            {
+                lastTradingDay = tradingDayPrimary;
+                tradingDayAnchor = tradingDayPrimary;
+                tradingDayAnchorSet = true;
+
+                longTradedToday = false; shortTradedToday = false;
+                compraFeitaNaSessao = false; vendaFeitaNaSessao = false;
+                cancelExecutedToday = false; closeExecutedToday = false;
+                orderSubmissionAttempts.Clear();
+                lastSubmissionTime.Clear();
+                submissionAttemptsWindow.Clear();
+                breakevenAtivado = false;
+                stopAlvoConfigurados = false;
+                lastKnownPositionQty = 0;
+                entryStopTicksUsed = 0;
+                plottedExecutions.Clear();
+                sideLatched = LatchedSide.None;
+                qtyLatched = 0;
+                ClearPendingSnapshot();
+                lastTradeQty = null; lastTradeEntry = null; lastTradeStop = null; lastTradeTarget = null; lastTradeStatus = "Waiting (aguardando)";
+                currentPlannedStop = null; currentPlannedTarget = null; currentEntryPrice = null;
+            }
+
+            DateTime inicioHoje = IsUsaDst(agoraPrimary2)
+                ? new DateTime(agoraPrimary2.Year, agoraPrimary2.Month, agoraPrimary2.Day, horarioInicioDstUsaDT.Hour, horarioInicioDstUsaDT.Minute, 0)
+                : new DateTime(agoraPrimary2.Year, agoraPrimary2.Month, agoraPrimary2.Day, horarioInicioNormalDT.Hour, horarioInicioNormalDT.Minute, 0);
+            DateTime fimSessaoHoje = new DateTime(agoraPrimary2.Year, agoraPrimary2.Month, agoraPrimary2.Day, horarioFimSessaoDT.Hour, horarioFimSessaoDT.Minute, 0);
+            horarioZeraDT = fimSessaoHoje.AddMinutes(-EncerramentoOffsetMin);
+
+            if (agoraPrimary2 >= horarioZeraDT)
+            {
+                statusText = "Blocked (após zera)";
+                CloseAllAndCancel();
+                sideLatched = LatchedSide.None; qtyLatched = 0;
+                ClearPendingSnapshot();
+                return;
+            }
+
+            if (agoraPrimary2 < inicioHoje) { statusText = "Waiting (aguardando)"; return; }
+
+            if (CurrentBars[0] < BarsRequiredToTrade) { statusText = "Waiting (poucas barras)"; return; }
+            if (vwap == null) { statusText = "VWAP null"; return; }
+            if (atrInd == null && StopTypeIsATR) { statusText = "ATR null"; return; }
+
+            if (Position.MarketPosition != MarketPosition.Flat)
+            {
+                statusText = "Posição aberta";
+                if (ordemLimiteCompra != null) CancelOrder(ordemLimiteCompra);
+                if (ordemLimiteVenda != null) CancelOrder(ordemLimiteVenda);
+                if (ordemHedgeBuyStop != null) CancelOrder(ordemHedgeBuyStop);
+                if (ordemHedgeSellStop != null) CancelOrder(ordemHedgeSellStop);
+                if (!breakevenAtivado && stopAlvoConfigurados)
+                    AplicarBreakEvenSeAtingiuRR();
+            }
+            else
+            {
+                statusText = lastTradeQty.HasValue ? "Closed" : "Waiting (aguardando)";
+            }
+        }
+        #endregion
+
+        #region Safe Submit / Replace (corrigido roundedLimit)
+        private void SubmitOrReplaceLimitOrderSafe(bool isBuy, int qty, double limitPrice, string signalName)
+        {
+            int maxSubs = Math.Max(1, ThrottleMaxSubs);
+            int windowSec = Math.Max(1, ThrottleWindowSec);
+            double minDelta = Math.Max(0, MinLimitPriceDeltaTicks) * tickSize;
+
+            if (!lastSubmissionTime.ContainsKey(signalName)) lastSubmissionTime[signalName] = Core.Globals.MinDate;
+            if (!submissionAttemptsWindow.ContainsKey(signalName)) submissionAttemptsWindow[signalName] = 0;
+            var now = Time[0];
+            if ((now - lastSubmissionTime[signalName]).TotalSeconds > windowSec) submissionAttemptsWindow[signalName] = 0;
+            if (submissionAttemptsWindow[signalName] >= maxSubs)
+            {
+                DPrint($"[SUB] throttle hit for {signalName}");
+                return;
+            }
+
+            submissionAttemptsWindow[signalName]++;
+            lastSubmissionTime[signalName] = now;
+
+            if (isBuy)
+            {
+                if (!double.IsNaN(lastLongLimit) && Math.Abs(lastLongLimit - limitPrice) < minDelta)
+                {
+                    pendingEntryPrice = lastLongLimit; pendingQty = qty;
+                    return;
+                }
+            }
+            else
+            {
+                if (!double.IsNaN(lastShortLimit) && Math.Abs(lastShortLimit - limitPrice) < minDelta)
+                {
+                    pendingEntryPrice = lastShortLimit; pendingQty = qty;
+                    return;
+                }
+            }
+
+            if (isBuy)
+                SafeSubmitOrChangeLimit(ref ordemLimiteCompra, true, qty, limitPrice, signalName, ref lastLongLimit);
+            else
+                SafeSubmitOrChangeLimit(ref ordemLimiteVenda, false, qty, limitPrice, signalName, ref lastShortLimit);
+        }
+
+        private void SafeSubmitOrChangeLimit(ref Order ordemRef, bool isBuy, int qty, double limitPrice, string signalName, ref double lastLimitStored)
+        {
+            double roundedLimit;
+            try
+            {
+                roundedLimit = Instrument.MasterInstrument.RoundToTickSize(limitPrice);
+            }
+            catch (Exception ex)
+            {
+                Log($"[ERROR] SafeSubmitOrChange round: {ex.Message}", LogLevel.Error);
+                return;
+            }
+
+            try
+            {
+                bool canChange = ordemRef != null && (ordemRef.OrderState == OrderState.Working || ordemRef.OrderState == OrderState.Accepted);
+                if (canChange)
+                {
+                    try
+                    {
+                        ChangeOrder(ordemRef, qty, roundedLimit, 0);
+                        lastLimitStored = roundedLimit;
+                        pendingEntryPrice = roundedLimit;
+                        pendingQty = qty;
+                        return;
+                    }
+                    catch
+                    {
+                        ordemRef = null;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"[ERROR] SafeSubmitOrChange change: {ex.Message}", LogLevel.Error);
+            }
+
+            try
+            {
+                if (isBuy)
+                    ordemRef = EnterLongLimit(0, true, qty, roundedLimit, signalName);
+                else
+                    ordemRef = EnterShortLimit(0, true, qty, roundedLimit, signalName);
+
+                lastLimitStored = roundedLimit;
+                pendingEntryPrice = roundedLimit;
+                pendingQty = qty;
+            }
+            catch (Exception ex)
+            {
+                Log($"[ERROR] SafeSubmitOrChange submit: {ex.Message}", LogLevel.Error);
+            }
+        }
+
+        private void SubmitStopSafe(bool isBuyStop, int qty, double stopPrice, string signalName)
+        {
+            int maxSubs = Math.Max(1, ThrottleMaxSubs);
+            int windowSec = Math.Max(1, ThrottleWindowSec);
+            double minDelta = Math.Max(0, MinLimitPriceDeltaTicks) * tickSize;
+
+            if (!lastSubmissionTime.ContainsKey(signalName)) lastSubmissionTime[signalName] = Core.Globals.MinDate;
+            if (!submissionAttemptsWindow.ContainsKey(signalName)) submissionAttemptsWindow[signalName] = 0;
+            var now = Time[0];
+            if ((now - lastSubmissionTime[signalName]).TotalSeconds > windowSec) submissionAttemptsWindow[signalName] = 0;
+            if (submissionAttemptsWindow[signalName] >= maxSubs)
+            {
+                DPrint($"[SUB STOP] throttle hit for {signalName}");
+                return;
+            }
+
+            submissionAttemptsWindow[signalName]++;
+            lastSubmissionTime[signalName] = now;
+
+            double lastStored = isBuyStop ? lastBuyStop : lastSellStop;
+            if (!double.IsNaN(lastStored) && Math.Abs(lastStored - stopPrice) < minDelta)
+            {
+                return;
+            }
+
+            if (isBuyStop)
+                SafeSubmitOrChangeStop(ref ordemHedgeBuyStop, true, qty, stopPrice, signalName, ref lastBuyStop);
+            else
+                SafeSubmitOrChangeStop(ref ordemHedgeSellStop, false, qty, stopPrice, signalName, ref lastSellStop);
+        }
+
+        private void SafeSubmitOrChangeStop(ref Order ordemRef, bool isBuyStop, int qty, double stopPrice, string signalName, ref double lastStopStored)
+        {
+            try
+            {
+                double roundedStop = Instrument.MasterInstrument.RoundToTickSize(stopPrice);
+                bool canChange = ordemRef != null && (ordemRef.OrderState == OrderState.Working || ordemRef.OrderState == OrderState.Accepted);
+
+                if (canChange)
+                {
+                    try
+                    {
+                        ChangeOrder(ordemRef, qty, 0, roundedStop);
+                        lastStopStored = roundedStop;
+                        return;
+                    }
+                    catch { ordemRef = null; }
+                }
+
+                if (isBuyStop)
+                    ordemRef = EnterLongStopMarket(0, true, qty, roundedStop, signalName);
+                else
+                    ordemRef = EnterShortStopMarket(0, true, qty, roundedStop, signalName);
+
+                lastStopStored = roundedStop;
+            }
+            catch (Exception ex)
+            {
+                Log($"[ERROR] SafeSubmitOrChangeStop: {ex.Message}", LogLevel.Error);
+            }
+        }
+        #endregion
+
+        #region Position/Execution + Diagnóstico
+        private string OrderToShort(NinjaTrader.Cbi.Order o)
+        {
+            if (o == null) return "null";
+            return $"name={o.Name} id={o.OrderId} state={o.OrderState} action={o.OrderAction} type={o.OrderType} qty={o.Quantity} filled={o.Filled} avgFill={o.AverageFillPrice} limit={o.LimitPrice} stop={o.StopPrice} tif={o.TimeInForce} oco={o.Oco}";
+        }
+
+        private void PrintCurrentOrdersState(string tag)
+        {
+            try
+            {
+                Print($"[HawkDiag][ORDERS][{tag}] buyLmt={OrderToShort(ordemLimiteCompra)} sellLmt={OrderToShort(ordemLimiteVenda)} hedgeBuy={OrderToShort(ordemHedgeBuyStop)} hedgeSell={OrderToShort(ordemHedgeSellStop)} stopL={OrderToShort(ordemStopLong)} stopS={OrderToShort(ordemStopShort)} tgtL={OrderToShort(ordemTargetLong)} tgtS={OrderToShort(ordemTargetShort)}");
+            }
+            catch { }
+        }
+
+        protected override void OnOrderUpdate(
+            NinjaTrader.Cbi.Order order,
+            double limitPrice,
+            double stopPrice,
+            int quantity,
+            int filled,
+            double averageFillPrice,
+            OrderState orderState,
+            DateTime time,
+            ErrorCode error,
+            string nativeError)
+        {
+            try
+            {
+                if (order == null) return;
+                if (orderState == OrderState.Filled || orderState == OrderState.Cancelled || orderState == OrderState.Rejected)
+                {
+                    Print($"[HawkDiag][ORDER] stateChange name={order.Name} id={order.OrderId} state={orderState} action={order.OrderAction} type={order.OrderType} qty={order.Quantity} filled={order.Filled} avgFill={order.AverageFillPrice} limit={order.LimitPrice} stop={order.StopPrice} oco={order.Oco} time={time:O} error={error} nativeError={nativeError}");
+                }
+            }
+            catch { }
+        }
+
+        protected override void OnPositionUpdate(Position position, double averagePrice, int quantity, MarketPosition marketPosition)
+        {
+            try
+            {
+                if (position.Account != Account || position.Instrument != Instrument) return;
+
+                if (marketPosition == MarketPosition.Flat)
+                {
+                    if (lastKnownPositionQty != 0 && currentEntryPrice.HasValue)
+                    {
+                        lastTradeQty = Math.Abs(lastKnownPositionQty);
+                        lastTradeEntry = currentEntryPrice;
+                        lastTradeStop = currentPlannedStop;
+                        lastTradeTarget = currentPlannedTarget;
+                        lastTradeStatus = "Closed";
+
+                        AddLedgerItem(currentEntryPrice.Value, averagePrice, lastKnownPositionQty > 0, currentPlannedStop, currentPlannedTarget);
+                    }
+
+                    CancelAndClearWorkingOrders();
+                    stopAlvoConfigurados = false;
+                    riscoPrecoAtual = 0;
+                    ordemStopLong = null; ordemStopShort = null;
+                    ordemTargetLong = null; ordemTargetShort = null;
+                    breakevenAtivado = false;
+                    lastKnownPositionQty = 0;
+                    entryStopTicksUsed = 0;
+                    sideLatched = LatchedSide.None;
+                    qtyLatched = 0;
+                    currentPlannedStop = null;
+                    currentPlannedTarget = null;
+                    currentEntryPrice = null;
+                    statusText = lastTradeQty.HasValue ? "Closed" : "Waiting (aguardando)";
+
+                    ConsolidatePerformanceIfNeeded(force: true);
+                    return;
+                }
+
+                if (ordemHedgeBuyStop != null) CancelOrder(ordemHedgeBuyStop);
+                if (ordemHedgeSellStop != null) CancelOrder(ordemHedgeSellStop);
+                ordemHedgeBuyStop = null; ordemHedgeSellStop = null;
+
+                int desiredQty = Math.Abs(position.Quantity);
+                lastKnownPositionQty = position.Quantity;
+
+                double vwapHigh = double.NaN, vwapLow = double.NaN;
+                try { vwapHigh = vwap.Values[0][0]; vwapLow = vwap.Values[2][0]; } catch { }
+
+                double atrVal = (atrInd != null) ? atrInd[0] * ATRMultiplier : 0.0;
+                double cushion = SlippageCushionTicksForRisk * tickSize;
+
+                if (marketPosition == MarketPosition.Long)
+                {
+                    double stopBase = StopTypeIsATR ? vwapLow - atrVal : averagePrice - FixedStopTicks * tickSize;
+                    double stopPrice = Instrument.MasterInstrument.RoundToTickSize(stopBase - cushion);
+                    double riscoPreco = averagePrice - stopPrice;
+                    double alvoPrice = Instrument.MasterInstrument.RoundToTickSize(averagePrice + riscoPreco * TPFactor);
+
+                    precoEntradaAtual = averagePrice; riscoPrecoAtual = riscoPreco; breakevenAtivado = false;
+                    entryStopTicksUsed = Math.Max(1, (int)Math.Round((precoEntradaAtual - stopPrice) / tickSize));
+
+                    EnsureLongStopsTargets(desiredQty, stopPrice, alvoPrice);
+                    currentPlannedStop = stopPrice;
+                    currentPlannedTarget = alvoPrice;
+                    currentEntryPrice = averagePrice;
+                    stopAlvoConfigurados = true; ordemLimiteCompra = null; compraFeitaNaSessao = true;
+
+                    statusText = "Posição Long";
+                    ClearPendingSnapshot();
+                }
+                else if (marketPosition == MarketPosition.Short)
+                {
+                    double stopBase = StopTypeIsATR ? vwapHigh + atrVal : averagePrice + FixedStopTicks * tickSize;
+                    double stopPrice = Instrument.MasterInstrument.RoundToTickSize(stopBase + cushion);
+                    double riscoPreco = stopPrice - averagePrice;
+                    double alvoPrice = Instrument.MasterInstrument.RoundToTickSize(averagePrice - riscoPreco * TPFactor);
+
+                    precoEntradaAtual = averagePrice; riscoPrecoAtual = riscoPreco; breakevenAtivado = false;
+                    entryStopTicksUsed = Math.Max(1, (int)Math.Round((stopPrice - precoEntradaAtual) / tickSize));
+
+                    EnsureShortStopsTargets(desiredQty, stopPrice, alvoPrice);
+                    currentPlannedStop = stopPrice;
+                    currentPlannedTarget = alvoPrice;
+                    currentEntryPrice = averagePrice;
+                    stopAlvoConfigurados = true; ordemLimiteVenda = null; vendaFeitaNaSessao = true;
+
+                    statusText = "Posição Short";
+                    ClearPendingSnapshot();
+                }
+            }
+            catch (Exception ex) { Log("[Strategy] OnPositionUpdate error: " + ex.Message, LogLevel.Error); }
+        }
+
+        private void AddLedgerItem(double entryPrice, double exitPrice, bool isLong, double? plannedStop, double? plannedTarget)
+        {
+            try
+            {
+                var cache = GetOrCreateCache();
+                double profit = (exitPrice - entryPrice) * pontoValor * (isLong ? 1 : -1) * Math.Abs(lastKnownPositionQty);
+                var li = new LedgerItem
+                {
+                    ExitTime = Time[0],
+                    TradingDay = GetTradingDayFromTime(Time[0]),
+                    Qty = Math.Abs(lastKnownPositionQty),
+                    EntryPrice = entryPrice,
+                    ExitPrice = exitPrice,
+                    Profit = profit,
+                    IsLong = isLong,
+                    PlannedStop = plannedStop,
+                    PlannedTarget = plannedTarget,
+                    BEApplied = breakevenAtivado
+                };
+                cache.Ledger.Add(li);
+                if (EnableDiskCache)
+                    SaveSnapshot(cache);
+            }
+            catch (Exception ex)
+            {
+                DPrint("[Ledger] erro: " + ex.Message);
+            }
+        }
+
+        protected override void OnExecutionUpdate(Execution execution, string executionId, double price, int quantity, MarketPosition marketPosition, string orderId, DateTime time)
+        {
+            try
+            {
+                if (execution == null) return;
+                if (execution.Order != null)
+                {
+                    if (execution.Order.OrderAction == OrderAction.Buy) longTradedToday = true;
+                    else if (execution.Order.OrderAction == OrderAction.SellShort) shortTradedToday = true;
+                }
+
+                // Log de execução preenchida
+                if (execution.Order != null && execution.Order.OrderState == OrderState.Filled)
+                {
+                    Print($"[HawkDiag][EXEC] time={execution.Time:O} name={execution.Order.Name} action={execution.Order.OrderAction} qty={quantity} price={price} mp={marketPosition}");
+                }
+
+                if (!PlotExitLines) return;
+                if (execution.Order != null)
+                {
+                    string execKey = execution.Order.OrderId + "_" + execution.ExecutionId;
+                    if (!plottedExecutions.Contains(execKey))
+                    {
+                        TryDrawExitFromExecution(execution);
+                        plottedExecutions.Add(execKey);
+                    }
+                }
+            }
+            catch (Exception ex) { Log("[Strategy] OnExecutionUpdate error: " + ex.Message, LogLevel.Error); }
+        }
+
+        private void TryDrawExitFromExecution(Execution execution)
+        {
+            try
+            {
+                if (execution.Order == null) return;
+                string name = execution.Order.Name ?? "";
+                double px = execution.Price;
+                DateTime execTime = execution.Time;
+
+                bool isTP = name.IndexOf("TakeProfit", StringComparison.OrdinalIgnoreCase) >= 0 || name.IndexOf("TARGET", StringComparison.OrdinalIgnoreCase) >= 0;
+                bool isSL = name.IndexOf("StopLoss", StringComparison.OrdinalIgnoreCase) >= 0 || name.IndexOf("STOP", StringComparison.OrdinalIgnoreCase) >= 0;
+                bool isBE = name.IndexOf("BE", StringComparison.OrdinalIgnoreCase) >= 0 || name.IndexOf("BreakEven", StringComparison.OrdinalIgnoreCase) >= 0;
+                bool isEND = name.IndexOf("CloseByTime", StringComparison.OrdinalIgnoreCase) >= 0 || name.IndexOf("SaidaAutomatica", StringComparison.OrdinalIgnoreCase) >= 0;
+
+                if (!isTP && !isSL && !isBE && !isEND)
+                    return;
+
+                string label = isTP ? "TP" : isBE ? "BR" : isSL ? "SL" : "END";
+                Brush brush = isTP ? Brushes.Green : isBE ? Brushes.DodgerBlue : isSL ? Brushes.Red : Brushes.Gold;
+                DrawExitWithSessionLimit(execTime, px, label, brush);
+            }
+            catch { }
+        }
+
+        private void DrawExitWithSessionLimit(DateTime execTime, double price, string label, Brush brush)
+        {
+            int barIdx = Bars.GetBar(execTime);
+            if (barIdx < 0) return;
+
+            SessionIterator si = new SessionIterator(Bars);
+            si.GetNextSession(Times[0][0], true);
+            DateTime sessStart = si.ActualSessionBegin;
+            int barSessStart = Bars.GetBar(sessStart);
+            if (barSessStart < 0) barSessStart = 0;
+
+            int barsIntoSession = barIdx - barSessStart;
+            if (barsIntoSession < 1) barsIntoSession = 1;
+
+            int sessionLenEstimate = Math.Max(1, barsIntoSession + 1);
+            int halfSession = Math.Max(1, sessionLenEstimate / 2);
+            int L = Math.Min(Math.Max(1, LineLengthBars), halfSession);
+            L = Math.Min(L, barsIntoSession);
+            if (L < 1) L = 1;
+
+            int arrowBarsAgo = -(L + 1);
+            int labelBarsAgo = -(L + 2);
+
+            double tick = Instrument.MasterInstrument.TickSize;
+            double lineY = price + 2 * tick;
+            double arrowY = lineY - 0.5 * tick;
+            double labelY = lineY + 0.5 * tick;
+
+            string arrowGlyph = label.Equals("SL", StringComparison.OrdinalIgnoreCase) ? "▼" : "▲";
+
+            Draw.Line(this, $"exit_{label}_{execTime:HHmmss}_{CurrentBar}_line", 0, lineY, -L, lineY, brush);
+            Draw.Text(this, $"exit_{label}_{execTime:HHmmss}_{CurrentBar}_arrow", arrowGlyph, arrowBarsAgo, arrowY, brush);
+            Draw.Text(this, $"exit_{label}_{execTime:HHmmss}_{CurrentBar}_lbl", label, labelBarsAgo, labelY, brush);
+        }
+        #endregion
+
+        #region BreakEven (com log padronizado)
+        private void AplicarBreakEvenSeAtingiuRR()
+        {
+            try
+            {
+                if (BE_TriggerMultiple <= 0 || BE_ProtectMultiple <= 0) return;
+                if (Position.MarketPosition == MarketPosition.Flat) return;
+
+                int baseStopTicks = entryStopTicksUsed;
+                if (baseStopTicks <= 0)
+                    baseStopTicks = StopTypeIsATR ? CalculateStopTicksByATR() : FixedStopTicks;
+
+                double triggerTicks = BE_TriggerMultiple * baseStopTicks;
+                double protectTicks = BE_ProtectMultiple * baseStopTicks;
+
+                double entry = Position.AveragePrice;
+                double current = Close[0];
+                double unrealTicks = Position.MarketPosition == MarketPosition.Long
+                    ? (current - entry) / tickSize
+                    : (entry - current) / tickSize;
+
+                if (!breakevenAtivado && unrealTicks >= triggerTicks)
+                {
+                    double newStop = Position.MarketPosition == MarketPosition.Long
+                        ? entry + protectTicks * tickSize
+                        : entry - protectTicks * tickSize;
+                    newStop = Instrument.MasterInstrument.RoundToTickSize(newStop);
+
+                    if (Position.MarketPosition == MarketPosition.Long)
+                        ExitLongStopMarket(0, true, Position.Quantity, newStop, "BE_Stop", "LongAuto");
+                    else
+                        ExitShortStopMarket(0, true, Position.Quantity, newStop, "BE_Stop", "ShortAuto");
+
+                    breakevenAtivado = true;
+                    Print($"[HawkDiag][BE_TRIGGER] time0={Time[0]:O} pos={Position.MarketPosition} entry={entry} current={current} newStop={newStop} baseStopTicks={baseStopTicks} triggerTicks={triggerTicks} protectTicks={protectTicks}");
+                }
+            }
+            catch (Exception ex) { Log("[Strategy] BE error: " + ex.Message, LogLevel.Error); }
+        }
+
+        private int CalculateStopTicksByATR()
+        {
+            try
+            {
+                double atrVal = (atrInd != null) ? atrInd[0] * ATRMultiplier : 0;
+                if (atrVal <= 0) return FixedStopTicks;
+                int ticks = (int)Math.Max(1, Math.Round(atrVal / tickSize));
+                return ticks;
+            }
+            catch { return FixedStopTicks; }
+        }
+        #endregion
+
+        #region Helpers (inalterado)
+        private void CancelPendingLimitsIfAny()
+        {
+            try
+            {
+                if (ordemLimiteCompra != null && (ordemLimiteCompra.OrderState == OrderState.Working || ordemLimiteCompra.OrderState == OrderState.Accepted))
+                    CancelOrder(ordemLimiteCompra);
+                if (ordemLimiteVenda != null && (ordemLimiteVenda.OrderState == OrderState.Working || ordemLimiteVenda.OrderState == OrderState.Accepted))
+                    CancelOrder(ordemLimiteVenda);
+                if (ordemHedgeBuyStop != null && (ordemHedgeBuyStop.OrderState == OrderState.Working || ordemHedgeBuyStop.OrderState == OrderState.Accepted))
+                    CancelOrder(ordemHedgeBuyStop);
+                if (ordemHedgeSellStop != null && (ordemHedgeSellStop.OrderState == OrderState.Working || ordemHedgeSellStop.OrderState == OrderState.Accepted))
+                    CancelOrder(ordemHedgeSellStop);
+            }
+            catch (Exception ex) { Log("[Strategy] CancelPendingLimitsIfAny error: " + ex.Message, LogLevel.Error); }
+        }
+
+        private void CancelAndClearWorkingOrders()
+        {
+            CancelPendingLimitsIfAny();
+            ordemLimiteCompra = null;
+            ordemLimiteVenda = null;
+            ordemHedgeBuyStop = null;
+            ordemHedgeSellStop = null;
+            lastLongLimit = double.NaN;
+            lastShortLimit = double.NaN;
+            lastBuyStop = double.NaN;
+            lastSellStop = double.NaN;
+        }
+
+        private void CloseAllAndCancel()
+        {
+            try
+            {
+                if (Position.MarketPosition == MarketPosition.Long) ExitLong("CloseByTime", "LongAuto");
+                if (Position.MarketPosition == MarketPosition.Short) ExitShort("CloseByTime", "ShortAuto");
+                CancelPendingLimitsIfAny();
+            }
+            catch (Exception ex) { Log("[Strategy] CloseAllAndCancel error: " + ex.Message, LogLevel.Error); }
+        }
+
+        private bool IsUsaDst(DateTime dataBrasilia)
+        {
+            int ano = dataBrasilia.Year;
+            (DateTime inicioDst, DateTime fimDst) = GetUsaDstRange(ano);
+            return dataBrasilia.Date >= inicioDst && dataBrasilia.Date < fimDst;
+        }
+
+        private (DateTime inicio, DateTime fim) GetUsaDstRange(int year)
+        {
+            DateTime firstMarch = new DateTime(year, 3, 1);
+            int daysToSundayMarch = ((int)DayOfWeek.Sunday - (int)firstMarch.DayOfWeek + 7) % 7;
+            DateTime firstSundayMarch = firstMarch.AddDays(daysToSundayMarch);
+            DateTime secondSundayMarch = firstSundayMarch.AddDays(7);
+
+            DateTime firstNov = new DateTime(year, 11, 1);
+            int daysToSundayNov = ((int)DayOfWeek.Sunday - (int)firstNov.DayOfWeek + 7) % 7;
+            DateTime firstSundayNov = firstNov.AddDays(daysToSundayNov);
+
+            return (secondSundayMarch, firstSundayNov);
+        }
+
+        private bool IsTimeAtOrAfter(string hhmm)
+        {
+            if (string.IsNullOrEmpty(hhmm)) return false;
+            if (!TimeSpan.TryParse(hhmm, out var target)) return false;
+            return Time[0].TimeOfDay >= target;
+        }
+
+        private bool IsTimeAtOrAfterMachine(string hhmm)
+        {
+            if (string.IsNullOrEmpty(hhmm)) return false;
+            if (!TimeSpan.TryParse(hhmm, out var target)) return false;
+            return DateTime.Now.TimeOfDay >= target;
+        }
+
+        private bool NeedsUpdate(Order ord, int desiredQty, double desiredPrice, bool isStop)
+        {
+            if (ord == null) return true;
+            if (ord.Quantity != desiredQty) return true;
+
+            double currentPrice = isStop ? ord.StopPrice : ord.LimitPrice;
+            if (double.IsNaN(currentPrice)) return true;
+
+            double diff = Math.Abs(currentPrice - desiredPrice);
+            if (diff > tickSize * 0.5) return true;
+
+            return !(ord.OrderState == OrderState.Working || ord.OrderState == OrderState.Accepted || ord.OrderState == OrderState.Submitted);
+        }
+
+        private void EnsureLongStopsTargets(int qty, double stopPrice, double targetPrice)
+        {
+            stopPrice = Instrument.MasterInstrument.RoundToTickSize(stopPrice);
+            targetPrice = Instrument.MasterInstrument.RoundToTickSize(targetPrice);
+
+            bool needStop = NeedsUpdate(ordemStopLong, qty, stopPrice, isStop: true);
+            bool needTarget = NeedsUpdate(ordemTargetLong, qty, targetPrice, isStop: false);
+
+            if (needStop && ordemStopLong != null) CancelOrder(ordemStopLong);
+            if (needTarget && ordemTargetLong != null) CancelOrder(ordemTargetLong);
+
+            if (needStop)
+                ordemStopLong = ExitLongStopMarket(0, true, qty, stopPrice, "StopLoss", "LongAuto");
+            if (needTarget)
+                ordemTargetLong = ExitLongLimit(0, true, qty, targetPrice, "TakeProfit", "LongAuto");
+        }
+
+        private void EnsureShortStopsTargets(int qty, double stopPrice, double targetPrice)
+        {
+            stopPrice = Instrument.MasterInstrument.RoundToTickSize(stopPrice);
+            targetPrice = Instrument.MasterInstrument.RoundToTickSize(targetPrice);
+
+            bool needStop = NeedsUpdate(ordemStopShort, qty, stopPrice, isStop: true);
+            bool needTarget = NeedsUpdate(ordemTargetShort, qty, targetPrice, isStop: false);
+
+            if (needStop && ordemStopShort != null) CancelOrder(ordemStopShort);
+            if (needTarget && ordemTargetShort != null) CancelOrder(ordemTargetShort);
+
+            if (needStop)
+                ordemStopShort = ExitShortStopMarket(0, true, qty, stopPrice, "StopLoss", "ShortAuto");
+            if (needTarget)
+                ordemTargetShort = ExitShortLimit(0, true, qty, targetPrice, "TakeProfit", "ShortAuto");
+        }
+        #endregion
+    }
+}
