@@ -3173,6 +3173,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                         lastLimitStored = roundedLimit;
                         pendingEntryPrice = roundedLimit;
                         pendingQty = qty;
+                        PrintCurrentOrdersState("AFTER_ENTRY_SUBMIT");
                         return;
                     }
                     catch
@@ -3196,6 +3197,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 lastLimitStored = roundedLimit;
                 pendingEntryPrice = roundedLimit;
                 pendingQty = qty;
+                PrintCurrentOrdersState("AFTER_ENTRY_SUBMIT");
             }
             catch (Exception ex)
             {
@@ -3247,6 +3249,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     {
                         ChangeOrder(ordemRef, qty, 0, roundedStop);
                         lastStopStored = roundedStop;
+                        LogStopEvent(ordemRef?.Name ?? signalName, roundedStop, ordemRef?.FromEntrySignal ?? string.Empty);
                         return;
                     }
                     catch { ordemRef = null; }
@@ -3258,6 +3261,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     ordemRef = EnterShortStopMarket(0, true, qty, roundedStop, signalName);
 
                 lastStopStored = roundedStop;
+                LogStopEvent(ordemRef?.Name ?? signalName, roundedStop, ordemRef?.FromEntrySignal ?? string.Empty);
             }
             catch (Exception ex)
             {
@@ -3277,9 +3281,34 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             try
             {
-                Print($"[HawkDiag][ORDERS][{tag}] buyLmt={OrderToShort(ordemLimiteCompra)} sellLmt={OrderToShort(ordemLimiteVenda)} hedgeBuy={OrderToShort(ordemHedgeBuyStop)} hedgeSell={OrderToShort(ordemHedgeSellStop)} stopL={OrderToShort(ordemStopLong)} stopS={OrderToShort(ordemStopShort)} tgtL={OrderToShort(ordemTargetLong)} tgtS={OrderToShort(ordemTargetShort)}");
+                Print($"[HawkOrders][{tag}] buyLmt={OrderToShort(ordemLimiteCompra)} sellLmt={OrderToShort(ordemLimiteVenda)} hedgeBuy={OrderToShort(ordemHedgeBuyStop)} hedgeSell={OrderToShort(ordemHedgeSellStop)} stopL={OrderToShort(ordemStopLong)} stopS={OrderToShort(ordemStopShort)} tgtL={OrderToShort(ordemTargetLong)} tgtS={OrderToShort(ordemTargetShort)}");
             }
             catch { }
+        }
+
+        private string GetStopTypeFromName(string orderName)
+        {
+            if (string.IsNullOrWhiteSpace(orderName)) return "STOPLOSS";
+            return orderName.IndexOf("BE", StringComparison.OrdinalIgnoreCase) >= 0
+                || orderName.IndexOf("BreakEven", StringComparison.OrdinalIgnoreCase) >= 0
+                ? "BREAKEVEN"
+                : "STOPLOSS";
+        }
+
+        private bool IsStopOrder(NinjaTrader.Cbi.Order order)
+        {
+            if (order == null) return false;
+            if (order.OrderType == OrderType.StopMarket || order.OrderType == OrderType.StopLimit) return true;
+            string name = order.Name ?? string.Empty;
+            return name.IndexOf("Stop", StringComparison.OrdinalIgnoreCase) >= 0
+                || name.IndexOf("BE", StringComparison.OrdinalIgnoreCase) >= 0
+                || name.IndexOf("BreakEven", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private void LogStopEvent(string orderName, double stopPrice, string fromSignal)
+        {
+            string stopType = GetStopTypeFromName(orderName);
+            Print($"[HawkSTOP] type={stopType} orderName={orderName} price={stopPrice} fromSignal={fromSignal}");
         }
 
         protected override void OnOrderUpdate(
@@ -3388,6 +3417,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     stopAlvoConfigurados = true; ordemLimiteCompra = null; compraFeitaNaSessao = true;
 
                     statusText = "Posição Long";
+                    PrintCurrentOrdersState("AFTER_STOP_TARGET_SETUP");
                     ClearPendingSnapshot();
                 }
                 else if (marketPosition == MarketPosition.Short)
@@ -3407,6 +3437,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     stopAlvoConfigurados = true; ordemLimiteVenda = null; vendaFeitaNaSessao = true;
 
                     statusText = "Posição Short";
+                    PrintCurrentOrdersState("AFTER_STOP_TARGET_SETUP");
                     ClearPendingSnapshot();
                 }
             }
@@ -3454,9 +3485,13 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }
 
                 // Log de execução preenchida
-                if (execution.Order != null && execution.Order.OrderState == OrderState.Filled)
+                if (execution.Order != null && (execution.Order.OrderState == OrderState.Filled || execution.Order.OrderState == OrderState.PartFilled))
                 {
-                    Print($"[HawkDiag][EXEC] time={execution.Time:O} name={execution.Order.Name} action={execution.Order.OrderAction} qty={quantity} price={price} mp={marketPosition}");
+                    Print($"[HawkExec] event=ExecutionUpdate time={time:O} orderName={execution.Order.Name} orderAction={execution.Order.OrderAction} orderType={execution.Order.OrderType} filledQty={quantity} fillPrice={price} mpArg={marketPosition} posNow={Position.MarketPosition} posQty={Position.Quantity} posAvg={Position.AveragePrice} oco={execution.Order.Oco} fromSignal={execution.Order.FromEntrySignal}");
+                    if (IsStopOrder(execution.Order))
+                    {
+                        LogStopEvent(execution.Order.Name, price, execution.Order.FromEntrySignal);
+                    }
                 }
 
                 if (ExecutionMode == ExecutionModeType.RealtimePrecise && execution.Order != null)
@@ -3574,17 +3609,30 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 if (!breakevenAtivado && unrealTicks >= triggerTicks)
                 {
+                    string side = Position.MarketPosition == MarketPosition.Long ? "Long" : "Short";
+                    string prevStopText = currentPlannedStop.HasValue ? currentPlannedStop.Value.ToString(CultureInfo.InvariantCulture) : "null";
+                    string prevTargetText = currentPlannedTarget.HasValue ? currentPlannedTarget.Value.ToString(CultureInfo.InvariantCulture) : "null";
+                    Print($"[HawkBE][ARM] time={Time[0]:O} side={side} entryPrice={entry} baseStopTicks={baseStopTicks} triggerMultiple={BE_TriggerMultiple} protectMultiple={BE_ProtectMultiple} prevStop={prevStopText} prevTarget={prevTargetText} posQty={Position.Quantity}");
+
                     double newStop = Position.MarketPosition == MarketPosition.Long
                         ? entry + protectTicks * tickSize
                         : entry - protectTicks * tickSize;
                     newStop = Instrument.MasterInstrument.RoundToTickSize(newStop);
 
+                    Order beOrder;
                     if (Position.MarketPosition == MarketPosition.Long)
-                        ExitLongStopMarket(0, true, Position.Quantity, newStop, "BE_Stop", "LongAuto");
+                        beOrder = ExitLongStopMarket(0, true, Position.Quantity, newStop, "BE_Stop", "LongAuto");
                     else
-                        ExitShortStopMarket(0, true, Position.Quantity, newStop, "BE_Stop", "ShortAuto");
+                        beOrder = ExitShortStopMarket(0, true, Position.Quantity, newStop, "BE_Stop", "ShortAuto");
+
+                    LogStopEvent(beOrder?.Name ?? "BE_Stop", newStop, beOrder?.FromEntrySignal ?? string.Empty);
 
                     breakevenAtivado = true;
+                    double? targetPrice = currentPlannedTarget
+                        ?? (Position.MarketPosition == MarketPosition.Long ? ordemTargetLong?.LimitPrice : ordemTargetShort?.LimitPrice);
+                    string targetText = targetPrice.HasValue ? targetPrice.Value.ToString(CultureInfo.InvariantCulture) : "null";
+                    Print($"[HawkBE][REPLACE] time={Time[0]:O} side={side} beStopPrice={newStop} targetPrice={targetText} signalStop=BE_Stop signalTarget=TakeProfit posNow={Position.MarketPosition} posQty={Position.Quantity}");
+                    PrintCurrentOrdersState("AFTER_BE");
                     Print($"[HawkDiag][BE_TRIGGER] time0={Time[0]:O} pos={Position.MarketPosition} entry={entry} probePrice={probePrice} newStop={newStop} baseStopTicks={baseStopTicks} triggerTicks={triggerTicks} protectTicks={protectTicks}");
                     RPLog($"[BE_TRIGGER] time0={Time[0]:O} pos={Position.MarketPosition} entry={entry} probePrice={probePrice} newStop={newStop} baseStopTicks={baseStopTicks} triggerTicks={triggerTicks} protectTicks={protectTicks}");
                 }
@@ -3798,6 +3846,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
 
             ClearPendingSnapshot();
+            PrintCurrentOrdersState("AFTER_STOP_TARGET_SETUP");
 
             RPLog($"[ENTRY_STOPS] trigger={triggerTag} pos={marketPosition} qty={qty} entry={entryPrice} stop={stopPrice} target={targetPrice} source={source}");
 
@@ -3845,6 +3894,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (Position.MarketPosition == MarketPosition.Long) ExitLong("CloseByTime", "LongAuto");
                 if (Position.MarketPosition == MarketPosition.Short) ExitShort("CloseByTime", "ShortAuto");
                 CancelPendingLimitsIfAny();
+                PrintCurrentOrdersState("AFTER_CLOSE_ALL");
             }
             catch (Exception ex) { Log("[Strategy] CloseAllAndCancel error: " + ex.Message, LogLevel.Error); }
         }
@@ -3910,7 +3960,10 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (needTarget && ordemTargetLong != null) CancelOrder(ordemTargetLong);
 
             if (needStop)
+            {
                 ordemStopLong = ExitLongStopMarket(0, true, qty, stopPrice, "StopLoss", "LongAuto");
+                LogStopEvent(ordemStopLong?.Name ?? "StopLoss", stopPrice, ordemStopLong?.FromEntrySignal ?? string.Empty);
+            }
             if (needTarget)
                 ordemTargetLong = ExitLongLimit(0, true, qty, targetPrice, "TakeProfit", "LongAuto");
         }
@@ -3927,7 +3980,10 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (needTarget && ordemTargetShort != null) CancelOrder(ordemTargetShort);
 
             if (needStop)
+            {
                 ordemStopShort = ExitShortStopMarket(0, true, qty, stopPrice, "StopLoss", "ShortAuto");
+                LogStopEvent(ordemStopShort?.Name ?? "StopLoss", stopPrice, ordemStopShort?.FromEntrySignal ?? string.Empty);
+            }
             if (needTarget)
                 ordemTargetShort = ExitShortLimit(0, true, qty, targetPrice, "TakeProfit", "ShortAuto");
         }
