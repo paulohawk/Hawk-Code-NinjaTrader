@@ -1630,6 +1630,12 @@ namespace NinjaTrader.NinjaScript.Strategies
     }
     #endregion // fecha UI Helper
 
+    public enum ExecutionModeType
+    {
+        HistoricalSafe,
+        RealtimePrecise
+    }
+
     public class HawkAnchoredMidas : Strategy
     {
         #region Parâmetros
@@ -1657,6 +1663,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         [NinjaScriptProperty, Display(Name = "Fechar Posições às (HH:mm)", GroupName = "Execução", Order = 320)]
         public string ClosePositionsAtHHmm { get; set; } = "17:00";
+
+        [NinjaScriptProperty, Display(Name = "Execution Mode", GroupName = "Execução", Order = 335)]
+        public ExecutionModeType ExecutionMode { get; set; } = ExecutionModeType.HistoricalSafe;
 
         [NinjaScriptProperty, Display(Name = "Stop por ATR?", GroupName = "Risco", Order = 400)]
         public bool StopTypeIsATR { get; set; } = true;
@@ -1796,6 +1805,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         private int entryStopTicksUsed = 0;
         private HashSet<string> plottedExecutions = new HashSet<string>();
         private double lastAtrVal = 0.0;
+        private double lastValidAtrValue = double.NaN;
 
         private DateTime lastSnapshotUtc = DateTime.MinValue;
         private bool initialSnapshotPublished = false;
@@ -1897,6 +1907,12 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             if (DebugMode) Log(msg, LogLevel.Information);
         }
+
+        private void RPLog(string msg)
+        {
+            if (ExecutionMode == ExecutionModeType.RealtimePrecise)
+                Print("[HawkRP] " + msg);
+        }
         #endregion
 
         #region State
@@ -1906,6 +1922,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 Name = "HawkAnchoredMidas";
                 Calculate = Calculate.OnBarClose;
+                ExecutionMode = ExecutionModeType.HistoricalSafe;
                 EntriesPerDirection = 1;
                 EntryHandling = EntryHandling.AllEntries;
                 IsExitOnSessionCloseStrategy = false;
@@ -1917,6 +1934,10 @@ namespace NinjaTrader.NinjaScript.Strategies
             else if (State == State.Configure)
             {
                 instanceId = Guid.NewGuid().ToString("N");
+
+                Calculate = ExecutionMode == ExecutionModeType.RealtimePrecise
+                    ? Calculate.OnEachTick
+                    : Calculate.OnBarClose;
 
                 AddDataSeries(BarsPeriodType.Minute, 1); // scheduler 1m
                 AddDataSeries(BarsPeriodType.Minute, VWAPTimeFrameMin);
@@ -2046,6 +2067,12 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (BarsInProgress == vwapBip)
             {
                 HandleMidasBar();
+                return;
+            }
+
+            if (BarsInProgress == atrBip)
+            {
+                UpdateAtrCache();
                 return;
             }
 
@@ -2306,6 +2333,45 @@ namespace NinjaTrader.NinjaScript.Strategies
                 return $"{Math.Round(atrTicks, 1)}t (${atrUsdPerC.ToString("N2", CultureInfo.CurrentCulture)}/1C)";
             }
             catch { return "-"; }
+        }
+
+        private void UpdateAtrCache()
+        {
+            try
+            {
+                if (atrInd == null || CurrentBars.Length <= atrBip || CurrentBars[atrBip] <= ATRPeriod)
+                    return;
+
+                double atrVal = atrInd[0];
+                if (double.IsNaN(atrVal) || atrVal <= 0)
+                    return;
+
+                lastValidAtrValue = atrVal;
+                lastAtrVal = atrVal * ATRMultiplier;
+            }
+            catch { }
+        }
+
+        private double GetAtrValueForStops()
+        {
+            double atrVal = double.NaN;
+            try
+            {
+                if (atrInd != null && CurrentBars.Length > atrBip && CurrentBars[atrBip] >= ATRPeriod)
+                    atrVal = atrInd[0];
+            }
+            catch { }
+
+            if (!double.IsNaN(atrVal) && atrVal > 0)
+            {
+                lastValidAtrValue = atrVal;
+                return atrVal;
+            }
+
+            if (!double.IsNaN(lastValidAtrValue) && lastValidAtrValue > 0)
+                return lastValidAtrValue;
+
+            return double.NaN;
         }
         #endregion
 
@@ -2648,6 +2714,9 @@ namespace NinjaTrader.NinjaScript.Strategies
         #region Trading logic core (com horário somente via scheduler)
         private void HandleMidasBar()
         {
+            if (ExecutionMode == ExecutionModeType.RealtimePrecise && !IsFirstTickOfBar)
+                return;
+
             if (CurrentBars.Length <= vwapBip || CurrentBars[vwapBip] <= 0) return;
             if (CurrentBars[0] < BarsRequiredToTrade) return;
 
@@ -2754,6 +2823,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             double atrVal = atrInd[0] * ATRMultiplier;
             lastAtrVal = atrVal;
+            if (atrInd[0] > 0 && !double.IsNaN(atrInd[0]))
+                lastValidAtrValue = atrInd[0];
             if (atrVal <= 0)
                 return Math.Max(1, FixedQuantity);
 
@@ -2844,13 +2915,18 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (vwap == null) { statusText = "VWAP null"; return; }
             if (atrInd == null && StopTypeIsATR) { statusText = "ATR null"; return; }
 
+            bool entryGate = ExecutionMode != ExecutionModeType.RealtimePrecise || IsFirstTickOfBar;
+
             if (Position.MarketPosition != MarketPosition.Flat)
             {
                 statusText = "Posição aberta";
-                if (ordemLimiteCompra != null) CancelOrder(ordemLimiteCompra);
-                if (ordemLimiteVenda != null) CancelOrder(ordemLimiteVenda);
-                if (ordemHedgeBuyStop != null) CancelOrder(ordemHedgeBuyStop);
-                if (ordemHedgeSellStop != null) CancelOrder(ordemHedgeSellStop);
+                if (entryGate)
+                {
+                    if (ordemLimiteCompra != null) CancelOrder(ordemLimiteCompra);
+                    if (ordemLimiteVenda != null) CancelOrder(ordemLimiteVenda);
+                    if (ordemHedgeBuyStop != null) CancelOrder(ordemHedgeBuyStop);
+                    if (ordemHedgeSellStop != null) CancelOrder(ordemHedgeSellStop);
+                }
                 if (!breakevenAtivado && stopAlvoConfigurados)
                     AplicarBreakEvenSeAtingiuRR();
             }
@@ -3055,6 +3131,10 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (orderState == OrderState.Filled || orderState == OrderState.Cancelled || orderState == OrderState.Rejected)
                 {
                     Print($"[HawkDiag][ORDER] stateChange name={order.Name} id={order.OrderId} state={orderState} action={order.OrderAction} type={order.OrderType} qty={order.Quantity} filled={order.Filled} avgFill={order.AverageFillPrice} limit={order.LimitPrice} stop={order.StopPrice} oco={order.Oco} time={time:O} error={error} nativeError={nativeError}");
+                    if (orderState == OrderState.Rejected)
+                    {
+                        RPLog($"[ORDER_REJECT] name={order.Name} id={order.OrderId} action={order.OrderAction} type={order.OrderType} qty={order.Quantity} filled={order.Filled} avgFill={order.AverageFillPrice} limit={order.LimitPrice} stop={order.StopPrice} time={time:O} error={error} nativeError={nativeError} pos={Position.MarketPosition} posQty={Position.Quantity} entry={currentEntryPrice} plannedStop={currentPlannedStop} plannedTarget={currentPlannedTarget}");
+                    }
                 }
             }
             catch { }
@@ -3104,6 +3184,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 int desiredQty = Math.Abs(position.Quantity);
                 lastKnownPositionQty = position.Quantity;
+
+                if (ExecutionMode == ExecutionModeType.RealtimePrecise)
+                {
+                    if (!stopAlvoConfigurados)
+                        ConfigureStopsTargetsForEntry(marketPosition, averagePrice, desiredQty, "PositionUpdate");
+                    else
+                        currentEntryPrice = currentEntryPrice ?? averagePrice;
+
+                    statusText = marketPosition == MarketPosition.Long ? "Posição Long" : "Posição Short";
+                    return;
+                }
 
                 double vwapHigh = double.NaN, vwapLow = double.NaN;
                 try { vwapHigh = vwap.Values[0][0]; vwapLow = vwap.Values[2][0]; } catch { }
@@ -3197,6 +3288,22 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (execution.Order != null && execution.Order.OrderState == OrderState.Filled)
                 {
                     Print($"[HawkDiag][EXEC] time={execution.Time:O} name={execution.Order.Name} action={execution.Order.OrderAction} qty={quantity} price={price} mp={marketPosition}");
+                }
+
+                if (ExecutionMode == ExecutionModeType.RealtimePrecise && execution.Order != null)
+                {
+                    bool isEntryAction = execution.Order.OrderAction == OrderAction.Buy || execution.Order.OrderAction == OrderAction.SellShort;
+                    bool isFillEvent = execution.Order.OrderState == OrderState.Filled || execution.Order.OrderState == OrderState.PartFilled;
+                    if (isEntryAction && isFillEvent && marketPosition != MarketPosition.Flat)
+                    {
+                        int desiredQty = Math.Abs(Position.Quantity);
+                        if (desiredQty == 0) desiredQty = Math.Abs(quantity);
+                        if (desiredQty == 0) desiredQty = Math.Abs(execution.Order.Filled);
+
+                        double entryPrice = Position.AveragePrice > 0 ? Position.AveragePrice : price;
+                        RPLog($"[ENTRY_FILL] time={execution.Time:O} name={execution.Order.Name} action={execution.Order.OrderAction} qty={desiredQty} entryPrice={entryPrice} mp={marketPosition}");
+                        ConfigureStopsTargetsForEntry(marketPosition, entryPrice, desiredQty, "ExecutionUpdate");
+                    }
                 }
 
                 if (!PlotExitLines) return;
@@ -3308,6 +3415,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                     breakevenAtivado = true;
                     Print($"[HawkDiag][BE_TRIGGER] time0={Time[0]:O} pos={Position.MarketPosition} entry={entry} current={current} newStop={newStop} baseStopTicks={baseStopTicks} triggerTicks={triggerTicks} protectTicks={protectTicks}");
+                    RPLog($"[BE_TRIGGER] time0={Time[0]:O} pos={Position.MarketPosition} entry={entry} current={current} newStop={newStop} baseStopTicks={baseStopTicks} triggerTicks={triggerTicks} protectTicks={protectTicks}");
                 }
             }
             catch (Exception ex) { Log("[Strategy] BE error: " + ex.Message, LogLevel.Error); }
@@ -3323,6 +3431,169 @@ namespace NinjaTrader.NinjaScript.Strategies
                 return ticks;
             }
             catch { return FixedStopTicks; }
+        }
+
+        private bool TryGetMidasValues(out double vwapHigh, out double vwapMedian, out double vwapLow, out string source, out DateTime timestamp)
+        {
+            vwapHigh = double.NaN;
+            vwapMedian = double.NaN;
+            vwapLow = double.NaN;
+            timestamp = Core.Globals.MinDate;
+            source = "MIDAS_NONE";
+
+            if (vwap != null && vwap.IsReady)
+            {
+                try
+                {
+                    vwapHigh = vwap.Values[0][0];
+                    vwapMedian = vwap.Values[1][0];
+                    vwapLow = vwap.Values[2][0];
+                    if (!double.IsNaN(vwapHigh) && !double.IsNaN(vwapMedian) && !double.IsNaN(vwapLow))
+                    {
+                        source = "MIDAS_CURRENT";
+                        return true;
+                    }
+                }
+                catch { }
+            }
+
+            if (vwap != null && vwap.TryGetLastValidValues(out vwapHigh, out vwapMedian, out vwapLow, out timestamp))
+            {
+                source = "MIDAS_CACHE";
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TryComputeStopTarget(MarketPosition marketPosition, double entryPrice, out double stopPrice, out double targetPrice, out string source)
+        {
+            stopPrice = double.NaN;
+            targetPrice = double.NaN;
+            source = "UNKNOWN";
+
+            if (marketPosition == MarketPosition.Flat)
+                return false;
+
+            double cushion = SlippageCushionTicksForRisk * tickSize;
+            double atrRaw = GetAtrValueForStops();
+            double atrStop = (!double.IsNaN(atrRaw) && atrRaw > 0) ? atrRaw * ATRMultiplier : double.NaN;
+
+            bool hasMidas = TryGetMidasValues(out double vwapHigh, out double vwapMedian, out double vwapLow, out string midasSource, out _);
+
+            double stopBase;
+            if (StopTypeIsATR)
+            {
+                if (hasMidas && !double.IsNaN(atrStop) && atrStop > 0)
+                {
+                    stopBase = marketPosition == MarketPosition.Long
+                        ? vwapLow - atrStop
+                        : vwapHigh + atrStop;
+                    source = midasSource;
+                }
+                else if (!double.IsNaN(atrStop) && atrStop > 0)
+                {
+                    stopBase = marketPosition == MarketPosition.Long
+                        ? entryPrice - atrStop
+                        : entryPrice + atrStop;
+                    source = "FALLBACK_ATR";
+                }
+                else
+                {
+                    double fixedOffset = FixedStopTicks * tickSize;
+                    stopBase = marketPosition == MarketPosition.Long
+                        ? entryPrice - fixedOffset
+                        : entryPrice + fixedOffset;
+                    source = "FALLBACK_FIXED";
+                }
+            }
+            else
+            {
+                double fixedOffset = FixedStopTicks * tickSize;
+                stopBase = marketPosition == MarketPosition.Long
+                    ? entryPrice - fixedOffset
+                    : entryPrice + fixedOffset;
+                source = "FIXED";
+            }
+
+            stopPrice = Instrument.MasterInstrument.RoundToTickSize(marketPosition == MarketPosition.Long
+                ? stopBase - cushion
+                : stopBase + cushion);
+
+            if (double.IsNaN(stopPrice) || stopPrice <= 0)
+            {
+                double fixedOffset = FixedStopTicks * tickSize;
+                stopPrice = Instrument.MasterInstrument.RoundToTickSize(marketPosition == MarketPosition.Long
+                    ? entryPrice - fixedOffset
+                    : entryPrice + fixedOffset);
+                source = "FALLBACK_FIXED";
+            }
+
+            double riscoPreco = marketPosition == MarketPosition.Long
+                ? entryPrice - stopPrice
+                : stopPrice - entryPrice;
+
+            if (double.IsNaN(riscoPreco) || riscoPreco <= 0)
+            {
+                double fixedOffset = FixedStopTicks * tickSize;
+                stopPrice = Instrument.MasterInstrument.RoundToTickSize(marketPosition == MarketPosition.Long
+                    ? entryPrice - fixedOffset
+                    : entryPrice + fixedOffset);
+                riscoPreco = fixedOffset;
+                source = "FALLBACK_FIXED";
+            }
+
+            targetPrice = Instrument.MasterInstrument.RoundToTickSize(marketPosition == MarketPosition.Long
+                ? entryPrice + riscoPreco * TPFactor
+                : entryPrice - riscoPreco * TPFactor);
+
+            return true;
+        }
+
+        private void ConfigureStopsTargetsForEntry(MarketPosition marketPosition, double entryPrice, int qty, string triggerTag)
+        {
+            if (qty <= 0)
+                return;
+
+            if (!TryComputeStopTarget(marketPosition, entryPrice, out double stopPrice, out double targetPrice, out string source))
+                return;
+
+            double riscoPreco = marketPosition == MarketPosition.Long
+                ? entryPrice - stopPrice
+                : stopPrice - entryPrice;
+
+            precoEntradaAtual = entryPrice;
+            riscoPrecoAtual = riscoPreco;
+            breakevenAtivado = false;
+            entryStopTicksUsed = Math.Max(1, (int)Math.Round(riscoPreco / tickSize));
+            currentPlannedStop = stopPrice;
+            currentPlannedTarget = targetPrice;
+            currentEntryPrice = entryPrice;
+            stopAlvoConfigurados = true;
+
+            if (marketPosition == MarketPosition.Long)
+            {
+                EnsureLongStopsTargets(qty, stopPrice, targetPrice);
+                ordemLimiteCompra = null;
+                compraFeitaNaSessao = true;
+                statusText = "Posição Long";
+            }
+            else if (marketPosition == MarketPosition.Short)
+            {
+                EnsureShortStopsTargets(qty, stopPrice, targetPrice);
+                ordemLimiteVenda = null;
+                vendaFeitaNaSessao = true;
+                statusText = "Posição Short";
+            }
+
+            ClearPendingSnapshot();
+
+            RPLog($"[ENTRY_STOPS] trigger={triggerTag} pos={marketPosition} qty={qty} entry={entryPrice} stop={stopPrice} target={targetPrice} source={source}");
+
+            if (marketPosition == MarketPosition.Long && (ordemStopLong == null || ordemTargetLong == null))
+                RPLog($"[ENTRY_STOPS][WARN] missingOrders pos=Long stopNull={ordemStopLong == null} targetNull={ordemTargetLong == null}");
+            if (marketPosition == MarketPosition.Short && (ordemStopShort == null || ordemTargetShort == null))
+                RPLog($"[ENTRY_STOPS][WARN] missingOrders pos=Short stopNull={ordemStopShort == null} targetNull={ordemTargetShort == null}");
         }
         #endregion
 
