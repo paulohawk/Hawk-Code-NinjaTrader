@@ -343,28 +343,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 	}
 }
-
-
-    public enum SuperTrendMode
-    {
-        ATR,
-       // DualThrust, - not available at time of beta 5
-        Adaptive
-    }
-
-    public enum MovingAverageType
-    {
-        SMA,
-        //SMMA, - Not available at time of beta 5
-        TMA,
-        WMA,
-        VWMA,
-        TEMA,
-        HMA,
-        EMA,
-        VMA
-    }
-
 #region NinjaScript generated code. Neither change nor remove.
 
 namespace NinjaTrader.NinjaScript.Indicators
