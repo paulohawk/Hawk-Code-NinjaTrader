@@ -25,12 +25,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 {
     public class HawkMidasBands : Indicator
     {
-        private const int MaxSessionsTracked = 1000;
         private SessionIterator sessionIterator;
-        private readonly List<int> sessionStartBars = new List<int>();
-        private int currentSessionIndex = -1;
-        private int sessionStartBarAbs = -1;
-        private int barsSinceSessionStart = -1;
+        private readonly List<int> sessionStartIndices = new List<int>();
+        private bool sessionStartsBuilt = false;
+        private DateTime lastTradingDay = Core.Globals.MinDate;
 
         private int anchorBarIndex_byBar = -1;
         private bool anchorValid_byBar = false;
@@ -65,8 +63,6 @@ namespace NinjaTrader.NinjaScript.Indicators
         private bool loggedReady = false;
         private bool loggedNotReady = false;
         private bool fallbackDisabledLogged = false;
-        private int lastBarInSessionAnchor = int.MinValue;
-
         [XmlIgnore, Browsable(false)] public int LastRequestedTargetSessionIndex { get; private set; } = int.MinValue;
         [XmlIgnore, Browsable(false)] public int LastUsedAnchorSessionIndex { get; private set; } = int.MinValue;
         [XmlIgnore, Browsable(false)] public bool AnchorWasClamped { get; private set; } = false;
@@ -160,6 +156,14 @@ namespace NinjaTrader.NinjaScript.Indicators
                     catch (Exception ex) { if (DebugMode) Log($"[HawkMidas] Could not create log folder {_logFolder}: {ex.Message}", LogLevel.Warning); }
                 }
 
+                try
+                {
+                    BuildSessionStarts();
+                    lastTradingDay = sessionIterator != null && Bars.Count > 0
+                        ? sessionIterator.GetTradingDay(Bars.GetTime(Math.Max(0, Bars.Count - 1)))
+                        : Core.Globals.MinDate;
+                }
+                catch (Exception ex) { if (DebugMode) Log($"[HawkMidas] BuildSessionStarts failed in DataLoaded: {ex.Message}", LogLevel.Warning); }
             }
             else if (State == State.Terminated)
             {
@@ -177,15 +181,33 @@ namespace NinjaTrader.NinjaScript.Indicators
                 return;
             }
 
-            UpdateSessionTracking();
-            if (currentSessionIndex < 0 || sessionStartBars.Count == 0)
+            if (!sessionStartsBuilt)
+            {
+                BuildSessionStarts();
+                sessionStartsBuilt = true;
+            }
+
+            try
+            {
+                DateTime td = sessionIterator.GetTradingDay(Bars.GetTime(CurrentBar));
+                if (td != lastTradingDay)
+                {
+                    BuildSessionStarts();
+                    lastTradingDay = td;
+                    loggedReady = false;
+                    loggedNotReady = false;
+                    fallbackDisabledLogged = false;
+                }
+            }
+            catch { }
+
+            int currentSessionIndex = GetSessionIndexContainingBar(CurrentBar);
+            if (currentSessionIndex < 0)
             {
                 ClearAllValues();
                 LogNotReadyOnce("No session index");
                 return;
             }
-
-            HandleBarInSessionAnchorChange();
 
             int targetSessionIndex = currentSessionIndex + SessionOffset;
 
@@ -201,11 +223,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                 return;
             }
 
-            if (targetSessionIndex < 0 || targetSessionIndex >= sessionStartBars.Count)
+            if (targetSessionIndex < 0 || targetSessionIndex >= sessionStartIndices.Count)
             {
-                if (FallbackToNearestSession && sessionStartBars.Count > 0)
+                if (FallbackToNearestSession && sessionStartIndices.Count > 0)
                 {
-                    int clamped = Math.Max(0, Math.Min(targetSessionIndex, sessionStartBars.Count - 1));
+                    int clamped = Math.Max(0, Math.Min(targetSessionIndex, sessionStartIndices.Count - 1));
                     AnchorWasClamped = clamped != targetSessionIndex;
                     if (AnchorWasClamped) ClampCount++;
                     LastUsedAnchorSessionIndex = clamped;
@@ -333,7 +355,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private void EnsureBarInSessionAnchor(int targetSessionIndex)
         {
-            if (targetSessionIndex < 0 || targetSessionIndex >= sessionStartBars.Count)
+            if (targetSessionIndex < 0 || targetSessionIndex >= sessionStartIndices.Count)
             {
                 anchorValid_byBar = false;
                 return;
@@ -343,7 +365,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (requestedAnchor != BarInSession && DebugMode)
                 Log($"[HawkMidasBands][ANCHOR_CLAMP] requested={BarInSession} -> using={requestedAnchor}", LogLevel.Information);
 
-            int sessionStart = sessionStartBars[targetSessionIndex];
+            int sessionStart = sessionStartIndices[targetSessionIndex];
             int candidate = sessionStart + (requestedAnchor - 1);
             if (anchorSessionIndex == targetSessionIndex && anchorValid_byBar && anchorBarIndex_byBar == candidate)
                 return;
@@ -415,80 +437,49 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private void DrawBandCloud()
         {
-            try
+            if (!EnableBandCloud) return;
+            if (BarInSession != 1) return;
+            if (!IsReady) return;
+            if (double.IsNaN(Values[0][0]) || double.IsNaN(Values[2][0])) return;
+            if (State == State.Historical && CurrentBar < Bars.Count - 1) return;
+
+            var baseBrush = BandCloudBrush ?? new SolidColorBrush(Media.Color.FromArgb(51, 128, 128, 128));
+            Brush area = baseBrush;
+            if (baseBrush.CanFreeze) area = baseBrush.Clone();
+            byte alpha = (byte)Math.Max(0, Math.Min(255, (int)Math.Round(255.0 * (Math.Max(0.0, Math.Min(100.0, BandCloudOpacity)) / 100.0))));
+            if (area is SolidColorBrush scb)
             {
-                if (!EnableBandCloud) return;
-                if (State == State.Historical && BarInSession != 1) return;
-                if (!IsReady) return;
-                if (double.IsNaN(Values[0][0]) || double.IsNaN(Values[2][0])) return;
-                if (State == State.Historical && CurrentBar < Bars.Count - 1) return;
-
-                var baseBrush = BandCloudBrush ?? new SolidColorBrush(Media.Color.FromArgb(51, 128, 128, 128));
-                Brush area = baseBrush;
-                if (baseBrush.CanFreeze) area = baseBrush.Clone();
-                byte alpha = (byte)Math.Max(0, Math.Min(255, (int)Math.Round(255.0 * (Math.Max(0.0, Math.Min(100.0, BandCloudOpacity)) / 100.0))));
-                if (area is SolidColorBrush scb)
-                {
-                    area = new SolidColorBrush(Media.Color.FromArgb(alpha, scb.Color.R, scb.Color.G, scb.Color.B));
-                    area.Freeze();
-                }
-                else
-                {
-                    area.Freeze();
-                }
-
-                Draw.Region(this, "VWAP_BandCloud", CurrentBar, 0, Values[0], Values[2], Brushes.Transparent, area, 100);
-            }
-            catch (Exception ex) { if (DebugMode) Log($"[HawkMidas] DrawBandCloud error: {ex.Message}", LogLevel.Error); }
-        }
-
-        private void UpdateSessionTracking()
-        {
-            if (Bars.IsFirstBarOfSession || sessionStartBarAbs < 0)
-            {
-                sessionStartBarAbs = CurrentBar;
-                barsSinceSessionStart = 0;
-
-                if (sessionStartBars.Count == 0 || sessionStartBars[sessionStartBars.Count - 1] != sessionStartBarAbs)
-                {
-                    sessionStartBars.Add(sessionStartBarAbs);
-                    currentSessionIndex = sessionStartBars.Count - 1;
-                    if (sessionStartBars.Count > MaxSessionsTracked)
-                    {
-                        sessionStartBars.RemoveAt(0);
-                        currentSessionIndex = sessionStartBars.Count - 1;
-                    }
-                }
-
-                if (DebugMode)
-                    Log($"[HawkMidasBands][SESSION] startBarAbs={sessionStartBarAbs} time={Bars.GetTime(CurrentBar):yyyy-MM-dd HH:mm}", LogLevel.Information);
+                area = new SolidColorBrush(Media.Color.FromArgb(alpha, scb.Color.R, scb.Color.G, scb.Color.B));
+                area.Freeze();
             }
             else
             {
-                barsSinceSessionStart++;
+                area.Freeze();
             }
+
+            Draw.Region(this, "VWAP_BandCloud", CurrentBar, 0, Values[0], Values[2], Brushes.Transparent, area, 100);
         }
 
-        private void HandleBarInSessionAnchorChange()
+        private void BuildSessionStarts()
         {
-            if (lastBarInSessionAnchor == int.MinValue)
+            sessionStartIndices.Clear();
+            if (sessionIterator == null) sessionIterator = new SessionIterator(Bars);
+            if (Bars.Count == 0) return;
+
+            DateTime lastDay = Core.Globals.MinDate;
+            for (int i = 0; i < Bars.Count; i++)
             {
-                lastBarInSessionAnchor = BarInSession;
-                return;
+                DateTime td = sessionIterator.GetTradingDay(Bars.GetTime(i));
+                if (td != lastDay) { sessionStartIndices.Add(i); lastDay = td; }
             }
+            sessionStartsBuilt = true;
+        }
 
-            if (lastBarInSessionAnchor == BarInSession) return;
-
-            if (DebugMode)
-                Log($"[HawkMidasBands][PARAM_CHANGE] BarInSessionAnchor old={lastBarInSessionAnchor} new={BarInSession} reset=1", LogLevel.Information);
-
-            lastBarInSessionAnchor = BarInSession;
-            anchorValid_byBar = false;
-            anchorBarIndex_byBar = -1;
-            anchorSessionIndex = -1;
-            cumPV_Bar_High = cumV_Bar_High = cumPV_Bar_Median = cumV_Bar_Median = cumPV_Bar_Low = cumV_Bar_Low = 0;
-            lastCumIndex_Bar = -1;
-            ClearAllValues();
+        private int GetSessionIndexContainingBar(int barIndex)
+        {
+            if (sessionStartIndices == null || sessionStartIndices.Count == 0) return -1;
+            for (int s = sessionStartIndices.Count - 1; s >= 0; s--) if (sessionStartIndices[s] <= barIndex) return s;
+            return -1;
         }
 
         private void UpdatePlotBrushes()
