@@ -53,7 +53,12 @@ namespace NinjaTrader.NinjaScript.Indicators
         private MovingAverageType _maType = MovingAverageType.HMA;
         private SuperTrendMode _smode = SuperTrendMode.ATR;	
 
-		// ===== Hawk Info Panel (Visual Spec) =====
+		// =====================================================================
+		// HAWK STANDARD INFO PANEL
+		// Este painel segue o padrão visual Hawk (Celtium).
+		// Alterar apenas textos e lógica de estado.
+		// NÃO recriar, NÃO duplicar, NÃO mover para outro arquivo.
+		// =====================================================================
 		private const float PanelMargin = 8f;
 		private const float PanelLift = 45f;
 		private const float PanelPadding = 10f;
@@ -69,6 +74,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 		private D2D.LinearGradientBrush _dxGradientBrush;
 		private D2D.GradientStopCollection _dxGradientStops;
 		private D2D.SolidColorBrush _dxHighlightBrush;
+		private bool _lastTrend;
+		private bool _lastIsBuyer;
 
 		protected override void OnStateChange()
 		{
@@ -226,9 +233,19 @@ namespace NinjaTrader.NinjaScript.Indicators
             BarBrush = Open[0] < Close[0]    ? Brushes.Transparent : _tempColor;
 			
 			if (ShowInfoPanel)
-				UpdateInfoText();
+			{
+				bool isBuyerNow = Close[0] > (_trend[0] ? UpTrend[0] : DownTrend[0]);
+				if (_trend[0] != _lastTrend || isBuyerNow != _lastIsBuyer)
+				{
+					UpdateInfoText();
+					_lastTrend = _trend[0];
+					_lastIsBuyer = isBuyerNow;
+				}
+			}
 			else
+			{
 				_infoText = string.Empty;
+			}
 		}	// end protected override void OnBarUpdate()
 		
         private double Dtt(int nDay, double mult)
@@ -262,14 +279,14 @@ namespace NinjaTrader.NinjaScript.Indicators
 				return;
 			}
 
-			double superTrendValue = _trend[0] ? UpTrend[0] : DownTrend[0];
-			if (double.IsNaN(superTrendValue))
+			double stValue = _trend[0] ? UpTrend[0] : DownTrend[0];
+			if (double.IsNaN(stValue))
 			{
 				_infoText = string.Empty;
 				return;
 			}
 
-			bool isBuyer = Close[0] >= superTrendValue;
+			bool isBuyer = Close[0] > stValue;
 			bool isReversal = _trend[0] != _trend[1];
 
 			string contexto = isBuyer ? "Contexto: COMPRADOR" : "Contexto: VENDEDOR";
