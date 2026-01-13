@@ -261,11 +261,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             var brush = new LinearGradientBrush
             {
-                StartPoint = new Point(0, 0),
-                EndPoint = new Point(1, 1)
+                StartPoint = new System.Windows.Point(0, 0),
+                EndPoint = new System.Windows.Point(1, 1)
             };
-            brush.GradientStops.Add(new GradientStop(Color.FromRgb(90, 90, 90), 0));
-            brush.GradientStops.Add(new GradientStop(Color.FromRgb(40, 40, 40), 1));
+            brush.GradientStops.Add(new GradientStop(System.Windows.Media.Color.FromRgb(90, 90, 90), 0));
+            brush.GradientStops.Add(new GradientStop(System.Windows.Media.Color.FromRgb(40, 40, 40), 1));
             if (brush.CanFreeze)
                 brush.Freeze();
             return brush;
