@@ -74,8 +74,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 		private D2D.LinearGradientBrush _dxGradientBrush;
 		private D2D.GradientStopCollection _dxGradientStops;
 		private D2D.SolidColorBrush _dxHighlightBrush;
-		private bool _lastTrend;
-		private bool _lastIsBuyer;
 
 		protected override void OnStateChange()
 		{
@@ -225,22 +223,15 @@ namespace NinjaTrader.NinjaScript.Indicators
                     _tempColor = _prevColor;
                 }
 
-            if (!_colorBars) 
-                return;
-
-            CandleOutlineBrush = _tempColor;
-
-            BarBrush = Open[0] < Close[0]    ? Brushes.Transparent : _tempColor;
+            if (_colorBars)
+            {
+                CandleOutlineBrush = _tempColor;
+                BarBrush = Open[0] < Close[0]    ? Brushes.Transparent : _tempColor;
+            }
 			
 			if (ShowInfoPanel)
 			{
-				bool isBuyerNow = Close[0] > (_trend[0] ? UpTrend[0] : DownTrend[0]);
-				if (_trend[0] != _lastTrend || isBuyerNow != _lastIsBuyer)
-				{
-					UpdateInfoText();
-					_lastTrend = _trend[0];
-					_lastIsBuyer = isBuyerNow;
-				}
+				UpdateInfoText();
 			}
 			else
 			{
@@ -319,8 +310,16 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 			var stops = new[]
 			{
-				new D2D.GradientStop { Color = new Color4(0.31f, 0.31f, 0.31f, 0.75f), Position = 0f },
-				new D2D.GradientStop { Color = new Color4(0.16f, 0.16f, 0.16f, 0.7f), Position = 1f }
+				new D2D.GradientStop
+				{
+					Color = new Color4(0.31f, 0.31f, 0.31f, 0.55f),
+					Position = 0f
+				},
+				new D2D.GradientStop
+				{
+					Color = new Color4(0.31f, 0.31f, 0.31f, 0.55f),
+					Position = 1f
+				}
 			};
 
 			_dxGradientStops = new D2D.GradientStopCollection(RenderTarget, stops, D2D.Gamma.StandardRgb, D2D.ExtendMode.Clamp);
