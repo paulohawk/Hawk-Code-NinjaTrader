@@ -41,8 +41,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         private double _tl = double.MaxValue;		
         private double _offset;
         private double _multiplier = 2.618;
-        private Brush _barColorUp = Brushes.Blue;
-        private Brush _barColorDown = Brushes.Red;
+        private Brush _barColorUp = Brushes.DarkGoldenrod;
+        private Brush _barColorDown = CreateDownTrendBrush();
         private Brush _tempColor;
         private Brush _prevColor;
         private string _longAlert = @"C:\Program Files (x86)\NinjaTrader 8\sounds\Alert3.wav";
@@ -67,8 +67,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 				//Disable this property if your indicator requires custom values that cumulate with each new market data event. 
 				//See Help Guide for additional information.
 				IsSuspendedWhileInactive			= true;
-				AddPlot(new Stroke(Brushes.Green, 2), PlotStyle.Hash, "UpTrend");
-				AddPlot(new Stroke(Brushes.Red,2), PlotStyle.Hash, "DownTrend");
+				AddPlot(new Stroke(Brushes.DarkGoldenrod, 2), PlotStyle.Line, "UpTrend");
+				AddPlot(new Stroke(_barColorDown, 2), PlotStyle.Line, "DownTrend");
 				
 			}
 			else if (State == State.Configure)
@@ -211,6 +211,20 @@ namespace NinjaTrader.NinjaScript.Indicators
             double lc = MIN(Close, nDay)[0];
             return mult * Math.Max((hh - lc), (hc - ll));
         }		
+
+        private static Brush CreateDownTrendBrush()
+        {
+            var brush = new LinearGradientBrush
+            {
+                StartPoint = new Point(0, 0),
+                EndPoint = new Point(1, 1)
+            };
+            brush.GradientStops.Add(new GradientStop(Color.FromRgb(90, 90, 90), 0));
+            brush.GradientStops.Add(new GradientStop(Color.FromRgb(40, 40, 40), 1));
+            if (brush.CanFreeze)
+                brush.Freeze();
+            return brush;
+        }
 
 		#region Properties
 		[NinjaScriptProperty]
