@@ -18,6 +18,9 @@ using NinjaTrader.Data;
 using NinjaTrader.NinjaScript;
 using NinjaTrader.Core.FloatingPoint;
 using NinjaTrader.NinjaScript.DrawingTools;
+using SharpDX;
+using D2D = SharpDX.Direct2D1;
+using DW = SharpDX.DirectWrite;
 #endregion
 
 //This namespace holds Indicators in this folder and is required. Do not change it. 
@@ -49,6 +52,23 @@ namespace NinjaTrader.NinjaScript.Indicators
         private string _shortAlert = @"C:\Program Files (x86)\NinjaTrader 8\sounds\Alert4.wav";
         private MovingAverageType _maType = MovingAverageType.HMA;
         private SuperTrendMode _smode = SuperTrendMode.ATR;	
+
+		// ===== Hawk Info Panel (Visual Spec) =====
+		private const float PanelMargin = 8f;
+		private const float PanelLift = 45f;
+		private const float PanelPadding = 10f;
+		private const float PanelCornerRadius = 4f;
+		private const string PanelFont = "Segoe UI";
+		private const float PanelFontSize = 10f;
+
+		private string _infoText = string.Empty;
+		private DW.Factory _dwriteFactory;
+		private DW.TextFormat _textFormat;
+		private D2D.SolidColorBrush _dxBorderBrush;
+		private D2D.SolidColorBrush _dxTextBrush;
+		private D2D.LinearGradientBrush _dxGradientBrush;
+		private D2D.GradientStopCollection _dxGradientStops;
+		private D2D.SolidColorBrush _dxHighlightBrush;
 
 		protected override void OnStateChange()
 		{
@@ -106,6 +126,10 @@ namespace NinjaTrader.NinjaScript.Indicators
                             _avg = EMA(Input, _smooth).Value;
                             break;
                     }
+			}
+			else if (State == State.Terminated)
+			{
+				DisposeDx();
 			}
 		}
 
@@ -201,6 +225,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             BarBrush = Open[0] < Close[0]    ? Brushes.Transparent : _tempColor;
 			
+			if (ShowInfoPanel)
+				UpdateInfoText();
+			else
+				_infoText = string.Empty;
 		}	// end protected override void OnBarUpdate()
 		
         private double Dtt(int nDay, double mult)
@@ -225,6 +253,121 @@ namespace NinjaTrader.NinjaScript.Indicators
                 brush.Freeze();
             return brush;
         }
+
+		private void UpdateInfoText()
+		{
+			if (CurrentBar < 1)
+			{
+				_infoText = string.Empty;
+				return;
+			}
+
+			double superTrendValue = _trend[0] ? UpTrend[0] : DownTrend[0];
+			if (double.IsNaN(superTrendValue))
+			{
+				_infoText = string.Empty;
+				return;
+			}
+
+			bool isBuyer = Close[0] >= superTrendValue;
+			bool isReversal = _trend[0] != _trend[1];
+
+			string contexto = isBuyer ? "Contexto: COMPRADOR" : "Contexto: VENDEDOR";
+			string preco = isBuyer ? "Preço: ACIMA do SuperTrend" : "Preço: ABAIXO do SuperTrend";
+			string estado = isReversal ? "Estado: Reversão recente" : "Estado: Continuação";
+			string observacao = isReversal
+				? "Observação: Reversão recente — aguarde confirmação"
+				: "Observação: Tendência em continuação — priorize entradas em correção";
+
+			_infoText = $"{contexto}\n{preco}\n{estado}\n{observacao}";
+		}
+
+		public override void OnRenderTargetChanged()
+		{
+			DisposeDx();
+
+			if (RenderTarget == null || !ShowInfoPanel)
+				return;
+
+			_dwriteFactory = new DW.Factory();
+
+			_textFormat = new DW.TextFormat(_dwriteFactory, PanelFont, PanelFontSize)
+			{
+				TextAlignment = DW.TextAlignment.Leading,
+				ParagraphAlignment = DW.ParagraphAlignment.Near
+			};
+
+			_dxBorderBrush = new D2D.SolidColorBrush(RenderTarget, new Color4(0.83f, 0.63f, 0.09f, 1f));
+			_dxTextBrush = new D2D.SolidColorBrush(RenderTarget, new Color4(0.8f, 0.8f, 0.8f, 0.9f));
+
+			var stops = new[]
+			{
+				new D2D.GradientStop { Color = new Color4(0.31f, 0.31f, 0.31f, 0.75f), Position = 0f },
+				new D2D.GradientStop { Color = new Color4(0.16f, 0.16f, 0.16f, 0.7f), Position = 1f }
+			};
+
+			_dxGradientStops = new D2D.GradientStopCollection(RenderTarget, stops, D2D.Gamma.StandardRgb, D2D.ExtendMode.Clamp);
+			_dxGradientBrush = new D2D.LinearGradientBrush(RenderTarget, new D2D.LinearGradientBrushProperties(), _dxGradientStops);
+			_dxHighlightBrush = new D2D.SolidColorBrush(RenderTarget, new Color4(1f, 1f, 1f, 0.18f));
+
+			base.OnRenderTargetChanged();
+		}
+
+		protected override void OnRender(ChartControl chartControl, ChartScale chartScale)
+		{
+			base.OnRender(chartControl, chartScale);
+
+			if (!ShowInfoPanel || RenderTarget == null || ChartPanel == null || string.IsNullOrEmpty(_infoText))
+				return;
+
+			using (var textLayout = new DW.TextLayout(_dwriteFactory, _infoText, _textFormat, float.MaxValue, float.MaxValue))
+			{
+				float boxW = textLayout.Metrics.Width + 2f * PanelPadding;
+				float boxH = textLayout.Metrics.Height + 2f * PanelPadding;
+
+				float x = (float)Math.Floor(ChartPanel.X + PanelMargin) + 0.5f;
+				float y = (float)Math.Floor(ChartPanel.Y + ChartPanel.H - PanelLift - boxH) + 0.5f;
+
+				var rect = new D2D.RoundedRectangle
+				{
+					Rect = new RectangleF(x, y, boxW, boxH),
+					RadiusX = PanelCornerRadius,
+					RadiusY = PanelCornerRadius
+				};
+
+				_dxGradientBrush.StartPoint = new Vector2(x, y);
+				_dxGradientBrush.EndPoint = new Vector2(x, y + boxH);
+				RenderTarget.FillRoundedRectangle(rect, _dxGradientBrush);
+
+				RenderTarget.DrawLine(
+					new Vector2(x + PanelCornerRadius, y + 1f),
+					new Vector2(x + boxW - PanelCornerRadius, y + 1f),
+					_dxHighlightBrush,
+					1f);
+
+				RenderTarget.DrawRoundedRectangle(rect, _dxBorderBrush, 1.4f);
+				RenderTarget.DrawTextLayout(new Vector2(x + PanelPadding, y + PanelPadding), textLayout, _dxTextBrush);
+			}
+		}
+
+		private void DisposeDx()
+		{
+			_dxBorderBrush?.Dispose();
+			_dxTextBrush?.Dispose();
+			_dxGradientBrush?.Dispose();
+			_dxGradientStops?.Dispose();
+			_dxHighlightBrush?.Dispose();
+			_textFormat?.Dispose();
+			_dwriteFactory?.Dispose();
+
+			_dxBorderBrush = null;
+			_dxTextBrush = null;
+			_dxGradientBrush = null;
+			_dxGradientStops = null;
+			_dxHighlightBrush = null;
+			_textFormat = null;
+			_dwriteFactory = null;
+		}
 
 		#region Properties
 		[NinjaScriptProperty]
@@ -339,6 +482,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 			get 
 			{return Values[1];}
 		}		
+
+		[NinjaScriptProperty]
+		[Display(Name="Mostrar painel informativo", Order=99, GroupName="Visual")]
+		public bool ShowInfoPanel { get; set; } = true;
 		#endregion
 
 	}
