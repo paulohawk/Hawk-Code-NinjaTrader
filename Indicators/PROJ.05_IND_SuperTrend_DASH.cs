@@ -75,6 +75,11 @@ namespace NinjaTrader.NinjaScript.Indicators
 		private D2D.GradientStopCollection _dxGradientStops;
 		private D2D.SolidColorBrush _dxHighlightBrush;
 
+		private static Color4 ToColor4(Color color)
+		{
+			return new Color4(color.ScR, color.ScG, color.ScB, color.ScA);
+		}
+
 		protected override void OnStateChange()
 		{
 			if (State == State.SetDefaults)
@@ -229,7 +234,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 BarBrush = Open[0] < Close[0]    ? Brushes.Transparent : _tempColor;
             }
 			
-			if (ShowInfoPanel)
+			if (EnableInfoPanel)
 			{
 				UpdateInfoText();
 			}
@@ -294,7 +299,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 		{
 			DisposeDx();
 
-			if (RenderTarget == null || !ShowInfoPanel)
+			if (RenderTarget == null || !EnableInfoPanel)
 				return;
 
 			_dwriteFactory = new DW.Factory();
@@ -305,26 +310,39 @@ namespace NinjaTrader.NinjaScript.Indicators
 				ParagraphAlignment = DW.ParagraphAlignment.Near
 			};
 
-			_dxBorderBrush = new D2D.SolidColorBrush(RenderTarget, new Color4(0.83f, 0.63f, 0.09f, 1f));
-			_dxTextBrush = new D2D.SolidColorBrush(RenderTarget, new Color4(0.8f, 0.8f, 0.8f, 0.9f));
+			_dxBorderBrush = new D2D.SolidColorBrush(
+				RenderTarget,
+				ToColor4(Color.FromArgb(0xFF, 0xD4, 0xA0, 0x17)));
+			_dxTextBrush = new D2D.SolidColorBrush(
+				RenderTarget,
+				ToColor4(Color.FromArgb(0xE6, 0xCC, 0xCC, 0xCC)));
 
 			var stops = new[]
 			{
 				new D2D.GradientStop
 				{
-					Color = new Color4(0.31f, 0.31f, 0.31f, 0.55f),
-					Position = 0f
+					Color = ToColor4(Color.FromArgb(0xC0, 0x50, 0x50, 0x50)),
+					Position = 0.0f
 				},
 				new D2D.GradientStop
 				{
-					Color = new Color4(0.31f, 0.31f, 0.31f, 0.55f),
-					Position = 1f
+					Color = ToColor4(Color.FromArgb(0xB4, 0x28, 0x28, 0x28)),
+					Position = 1.0f
 				}
 			};
 
 			_dxGradientStops = new D2D.GradientStopCollection(RenderTarget, stops, D2D.Gamma.StandardRgb, D2D.ExtendMode.Clamp);
-			_dxGradientBrush = new D2D.LinearGradientBrush(RenderTarget, new D2D.LinearGradientBrushProperties(), _dxGradientStops);
-			_dxHighlightBrush = new D2D.SolidColorBrush(RenderTarget, new Color4(1f, 1f, 1f, 0.18f));
+			_dxGradientBrush = new D2D.LinearGradientBrush(
+				RenderTarget,
+				new D2D.LinearGradientBrushProperties
+				{
+					StartPoint = new Vector2(0f, 0f),
+					EndPoint = new Vector2(0f, 1f)
+				},
+				_dxGradientStops);
+			_dxHighlightBrush = new D2D.SolidColorBrush(
+				RenderTarget,
+				ToColor4(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)));
 
 			base.OnRenderTargetChanged();
 		}
@@ -333,7 +351,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 		{
 			base.OnRender(chartControl, chartScale);
 
-			if (!ShowInfoPanel || RenderTarget == null || ChartPanel == null || string.IsNullOrEmpty(_infoText))
+			if (!EnableInfoPanel || RenderTarget == null || ChartPanel == null || string.IsNullOrEmpty(_infoText))
 				return;
 
 			using (var textLayout = new DW.TextLayout(_dwriteFactory, _infoText, _textFormat, float.MaxValue, float.MaxValue))
@@ -500,8 +518,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 		}		
 
 		[NinjaScriptProperty]
-		[Display(Name="Mostrar painel informativo", Order=99, GroupName="Visual")]
-		public bool ShowInfoPanel { get; set; } = true;
+		[Display(Name = "Enable Info Panel", Order = 1, GroupName = "Visual")]
+		public bool EnableInfoPanel { get; set; } = true;
 		#endregion
 
 	}
