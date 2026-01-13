@@ -415,31 +415,27 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private void DrawBandCloud()
         {
-            try
+            if (!EnableBandCloud) return;
+            if (BarInSession != 1) return;
+            if (!IsReady) return;
+            if (double.IsNaN(Values[0][0]) || double.IsNaN(Values[2][0])) return;
+            if (State == State.Historical && CurrentBar < Bars.Count - 1) return;
+
+            var baseBrush = BandCloudBrush ?? new SolidColorBrush(Media.Color.FromArgb(51, 128, 128, 128));
+            Brush area = baseBrush;
+            if (baseBrush.CanFreeze) area = baseBrush.Clone();
+            byte alpha = (byte)Math.Max(0, Math.Min(255, (int)Math.Round(255.0 * (Math.Max(0.0, Math.Min(100.0, BandCloudOpacity)) / 100.0))));
+            if (area is SolidColorBrush scb)
             {
-                if (!EnableBandCloud) return;
-                if (State == State.Historical && BarInSession != 1) return;
-                if (!IsReady) return;
-                if (double.IsNaN(Values[0][0]) || double.IsNaN(Values[2][0])) return;
-                if (State == State.Historical && CurrentBar < Bars.Count - 1) return;
-
-                var baseBrush = BandCloudBrush ?? new SolidColorBrush(Media.Color.FromArgb(51, 128, 128, 128));
-                Brush area = baseBrush;
-                if (baseBrush.CanFreeze) area = baseBrush.Clone();
-                byte alpha = (byte)Math.Max(0, Math.Min(255, (int)Math.Round(255.0 * (Math.Max(0.0, Math.Min(100.0, BandCloudOpacity)) / 100.0))));
-                if (area is SolidColorBrush scb)
-                {
-                    area = new SolidColorBrush(Media.Color.FromArgb(alpha, scb.Color.R, scb.Color.G, scb.Color.B));
-                    area.Freeze();
-                }
-                else
-                {
-                    area.Freeze();
-                }
-
-                Draw.Region(this, "VWAP_BandCloud", CurrentBar, 0, Values[0], Values[2], Brushes.Transparent, area, 100);
+                area = new SolidColorBrush(Media.Color.FromArgb(alpha, scb.Color.R, scb.Color.G, scb.Color.B));
+                area.Freeze();
             }
-            catch (Exception ex) { if (DebugMode) Log($"[HawkMidas] DrawBandCloud error: {ex.Message}", LogLevel.Error); }
+            else
+            {
+                area.Freeze();
+            }
+
+            Draw.Region(this, "VWAP_BandCloud", CurrentBar, 0, Values[0], Values[2], Brushes.Transparent, area, 100);
         }
 
         private void UpdateSessionTracking()
