@@ -26,20 +26,12 @@ namespace NinjaTrader.NinjaScript.Indicators
     public class HawkMidasBands : Indicator
     {
         private SessionIterator sessionIterator;
-        private readonly List<int> sessionStartIndices = new List<int>();
+        private List<int> sessionStartIndices = new List<int>();
         private bool sessionStartsBuilt = false;
-        private DateTime lastTradingDay = Core.Globals.MinDate;
-        private int lastSessionBuildBarsCount = -1;
-        private DateTime lastSessionBuildTradingDay = Core.Globals.MinDate;
 
         private int anchorBarIndex_byBar = -1;
         private bool anchorValid_byBar = false;
         private int anchorSessionIndex = -1;
-        private int lastAnchorSessionIndex = int.MinValue;
-        private int lastAnchorBarInSession = int.MinValue;
-        private int lastAnchorSessionStart = int.MinValue;
-        private int lastAnchorBarsCount = -1;
-        private DateTime lastAnchorTradingDay = Core.Globals.MinDate;
 
         private double cumPV_Bar_High, cumV_Bar_High, cumPV_Bar_Median, cumV_Bar_Median, cumPV_Bar_Low, cumV_Bar_Low;
         private int lastCumIndex_Bar = -1;
@@ -67,9 +59,12 @@ namespace NinjaTrader.NinjaScript.Indicators
         private string _bandCloudBrushSerializable;
         private double _bandCloudOpacity = 20.0; // 0-100 %
 
+        private DateTime lastTradingDay = Core.Globals.MinDate;
+
         private bool loggedReady = false;
         private bool loggedNotReady = false;
         private bool fallbackDisabledLogged = false;
+
         [XmlIgnore, Browsable(false)] public int LastRequestedTargetSessionIndex { get; private set; } = int.MinValue;
         [XmlIgnore, Browsable(false)] public int LastUsedAnchorSessionIndex { get; private set; } = int.MinValue;
         [XmlIgnore, Browsable(false)] public bool AnchorWasClamped { get; private set; } = false;
@@ -209,12 +204,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             catch { }
 
             int currentSessionIndex = GetSessionIndexContainingBar(CurrentBar);
-            if (currentSessionIndex < 0)
-            {
-                ClearAllValues();
-                LogNotReadyOnce("No session index");
-                return;
-            }
+            if (currentSessionIndex < 0) { ClearAllValues(); LogNotReadyOnce("No session index"); return; }
 
             int targetSessionIndex = currentSessionIndex + SessionOffset;
 
@@ -362,61 +352,30 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private void EnsureBarInSessionAnchor(int targetSessionIndex)
         {
-            if (targetSessionIndex < 0 || targetSessionIndex >= sessionStartIndices.Count)
-            {
-                anchorValid_byBar = false;
-                return;
-            }
-
-            int requestedAnchor = Math.Max(1, BarInSession);
-            if (requestedAnchor != BarInSession && DebugMode)
-                Log($"[HawkMidasBands][ANCHOR_CLAMP] requested={BarInSession} -> using={requestedAnchor}", LogLevel.Information);
-
-            int sessionStart = sessionStartIndices[targetSessionIndex];
-            int candidate = sessionStart + (requestedAnchor - 1);
-            DateTime currentTradingDay = sessionIterator != null
-                ? sessionIterator.GetTradingDay(Bars.GetTime(CurrentBar))
-                : Core.Globals.MinDate;
-            bool anchorContextChanged = targetSessionIndex != lastAnchorSessionIndex
-                || requestedAnchor != lastAnchorBarInSession
-                || sessionStart != lastAnchorSessionStart;
-            bool needsReset = anchorContextChanged
-                || Bars.Count != lastAnchorBarsCount
-                || currentTradingDay != lastAnchorTradingDay
-                || CurrentBar < lastCumIndex_Bar
-                || State == State.Historical;
-
-            if (!needsReset && CurrentBar != candidate && anchorSessionIndex == targetSessionIndex && anchorValid_byBar && anchorBarIndex_byBar == candidate)
-                return;
-
+            if (anchorSessionIndex == targetSessionIndex && anchorValid_byBar) return;
             anchorSessionIndex = targetSessionIndex;
+
+            if (sessionStartIndices == null || sessionStartIndices.Count == 0) { anchorValid_byBar = false; return; }
+
+            int sessionStart = sessionStartIndices[anchorSessionIndex];
+            int sessionEnd = (anchorSessionIndex == sessionStartIndices.Count - 1) ? Bars.Count - 1 : sessionStartIndices[anchorSessionIndex + 1] - 1;
+            int candidate = sessionStart + (BarInSession - 1);
+            if (candidate > sessionEnd)
+            {
+                if (_useLastBarIfBarIndexTooLarge)
+                    candidate = sessionEnd;
+                else { anchorValid_byBar = false; return; }
+            }
+            if (candidate < 0 || candidate >= Bars.Count) { anchorValid_byBar = false; return; }
+
             anchorBarIndex_byBar = candidate;
             anchorValid_byBar = true;
 
-            if (CurrentBar == anchorBarIndex_byBar)
-            {
-                cumPV_Bar_High = cumV_Bar_High = cumPV_Bar_Median = cumV_Bar_Median = cumPV_Bar_Low = cumV_Bar_Low = 0;
-                lastCumIndex_Bar = anchorBarIndex_byBar - 1;
-            }
-            else if (needsReset)
-            {
-                cumPV_Bar_High = cumV_Bar_High = cumPV_Bar_Median = cumV_Bar_Median = cumPV_Bar_Low = cumV_Bar_Low = 0;
-                lastCumIndex_Bar = anchorBarIndex_byBar - 1;
-            }
+            cumPV_Bar_High = cumV_Bar_High = cumPV_Bar_Median = cumV_Bar_Median = cumPV_Bar_Low = cumV_Bar_Low = 0;
+            lastCumIndex_Bar = anchorBarIndex_byBar - 1;
 
             LastUsedAnchorSessionIndex = anchorSessionIndex;
-            LastUsedAnchorTime = (anchorBarIndex_byBar >= 0 && anchorBarIndex_byBar < Bars.Count)
-                ? Bars.GetTime(anchorBarIndex_byBar)
-                : Core.Globals.MinDate;
-
-            lastAnchorSessionIndex = targetSessionIndex;
-            lastAnchorBarInSession = requestedAnchor;
-            lastAnchorSessionStart = sessionStart;
-            lastAnchorBarsCount = Bars.Count;
-            lastAnchorTradingDay = currentTradingDay;
-
-            if (DebugMode)
-                Log($"[HawkMidasBands][ANCHOR_SET] sessionStartAbs={sessionStart} anchorAbs={anchorBarIndex_byBar} requested={requestedAnchor}", LogLevel.Information);
+            LastUsedAnchorTime = Bars.GetTime(anchorBarIndex_byBar);
         }
 
         private void CalculateVWAPForBarAnchor()
@@ -470,40 +429,37 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private void DrawBandCloud()
         {
-            if (!EnableBandCloud) return;
-            if (BarInSession != 1) return;
-            if (!IsRenderSafe()) return;
-            if (!IsReady) return;
-            if (double.IsNaN(Values[0][0]) || double.IsNaN(Values[2][0])) return;
-            if (State == State.Historical && CurrentBar < Bars.Count - 1) return;
-
-            var baseBrush = BandCloudBrush ?? new SolidColorBrush(Media.Color.FromArgb(51, 128, 128, 128));
-            Brush area = baseBrush;
-            if (baseBrush.CanFreeze) area = baseBrush.Clone();
-            byte alpha = (byte)Math.Max(0, Math.Min(255, (int)Math.Round(255.0 * (Math.Max(0.0, Math.Min(100.0, BandCloudOpacity)) / 100.0))));
-            if (area is SolidColorBrush scb)
+            try
             {
-                area = new SolidColorBrush(Media.Color.FromArgb(alpha, scb.Color.R, scb.Color.G, scb.Color.B));
-                area.Freeze();
-            }
-            else
-            {
-                area.Freeze();
-            }
+                if (!EnableBandCloud) return;
+                if (!IsReady) return;
+                if (double.IsNaN(Values[0][0]) || double.IsNaN(Values[2][0])) return;
 
-            Draw.Region(this, "VWAP_BandCloud", CurrentBar, 0, Values[0], Values[2], Brushes.Transparent, area, 100);
+                var baseBrush = BandCloudBrush ?? new SolidColorBrush(Media.Color.FromArgb(51, 128, 128, 128));
+                Brush area = baseBrush;
+                if (baseBrush.CanFreeze) area = baseBrush.Clone();
+                byte alpha = (byte)Math.Max(0, Math.Min(255, (int)Math.Round(255.0 * (Math.Max(0.0, Math.Min(100.0, BandCloudOpacity)) / 100.0))));
+                if (area is SolidColorBrush scb)
+                {
+                    area = new SolidColorBrush(Media.Color.FromArgb(alpha, scb.Color.R, scb.Color.G, scb.Color.B));
+                    area.Freeze();
+                }
+                else
+                {
+                    area.Freeze();
+                }
+
+                Draw.Region(this, "VWAP_BandCloud", CurrentBar, 0, Values[0], Values[2], Brushes.Transparent, area, 100);
+            }
+            catch (Exception ex) { if (DebugMode) Log($"[HawkMidas] DrawBandCloud error: {ex.Message}", LogLevel.Error); }
         }
 
         private void BuildSessionStarts()
         {
-            if (Bars == null || Bars.Count == 0) return;
-            if (sessionIterator == null) sessionIterator = new SessionIterator(Bars);
-            DateTime currentTradingDay = sessionIterator != null
-                ? sessionIterator.GetTradingDay(Bars.GetTime(Math.Max(0, Bars.Count - 1)))
-                : Core.Globals.MinDate;
-            if (Bars.Count == lastSessionBuildBarsCount && currentTradingDay == lastSessionBuildTradingDay) return;
-
             sessionStartIndices.Clear();
+            if (sessionIterator == null) sessionIterator = new SessionIterator(Bars);
+            if (Bars.Count == 0) return;
+
             DateTime lastDay = Core.Globals.MinDate;
             for (int i = 0; i < Bars.Count; i++)
             {
@@ -511,8 +467,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (td != lastDay) { sessionStartIndices.Add(i); lastDay = td; }
             }
             sessionStartsBuilt = true;
-            lastSessionBuildBarsCount = Bars.Count;
-            lastSessionBuildTradingDay = currentTradingDay;
         }
 
         private int GetSessionIndexContainingBar(int barIndex)
@@ -556,12 +510,6 @@ namespace NinjaTrader.NinjaScript.Indicators
         // =========================
         private void UpdateInfoText()
         {
-            if (!IsRenderSafe())
-            {
-                _infoText = string.Empty;
-                return;
-            }
-
             if (TickSize <= 0)
             {
                 _infoText = string.Empty;
@@ -615,6 +563,30 @@ namespace NinjaTrader.NinjaScript.Indicators
         public override void OnRenderTargetChanged()
         {
             DisposeDx();
+
+            if (RenderTarget != null)
+            {
+                _dwriteFactory = new DW.Factory();
+                _textFormat = new DW.TextFormat(_dwriteFactory, PanelFont, PanelFontSize)
+                {
+                    TextAlignment = DW.TextAlignment.Leading,
+                    ParagraphAlignment = DW.ParagraphAlignment.Near
+                };
+
+                _dxBorderBrush   = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0xFF, 0xD4, 0xA0, 0x17)));
+                _dxTextBrush     = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0xE6, 0xCC, 0xCC, 0xCC)));
+                var stops = new[]
+                {
+                    new D2D.GradientStop { Color = ToColor4(Media.Color.FromArgb(0xC0, 0x50, 0x50, 0x50)), Position = 0.0f },
+                    new D2D.GradientStop { Color = ToColor4(Media.Color.FromArgb(0xB4, 0x28, 0x28, 0x28)), Position = 1.0f }
+                };
+                _dxGradientStops = new D2D.GradientStopCollection(RenderTarget, stops, D2D.Gamma.StandardRgb, D2D.ExtendMode.Clamp);
+                _dxGradientBrush = new D2D.LinearGradientBrush(RenderTarget,
+                    new D2D.LinearGradientBrushProperties { StartPoint = new Vector2(0f, 0f), EndPoint = new Vector2(0f, 1f) },
+                    _dxGradientStops);
+                _dxHighlightBrush = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)));
+            }
+
             base.OnRenderTargetChanged();
         }
 
@@ -622,9 +594,6 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             base.OnRender(chartControl, chartScale);
 
-            if (!IsRenderSafe()) return;
-
-            EnsureDxResources();
             if (RenderTarget == null || ChartPanel == null || string.IsNullOrEmpty(_infoText) ||
                 _dwriteFactory == null || _textFormat == null || _dxGradientBrush == null ||
                 _dxBorderBrush == null || _dxTextBrush == null || _dxHighlightBrush == null)
@@ -656,43 +625,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                 float textY = y + PanelPadding;
                 RenderTarget.DrawTextLayout(new Vector2(textX, textY), textLayout, _dxTextBrush, D2D.DrawTextOptions.None);
             }
-        }
-
-        private void EnsureDxResources()
-        {
-            if (RenderTarget == null) return;
-            if (_dwriteFactory != null && _textFormat != null && _dxGradientBrush != null &&
-                _dxBorderBrush != null && _dxTextBrush != null && _dxHighlightBrush != null)
-                return;
-
-            DisposeDx();
-
-            _dwriteFactory = new DW.Factory();
-            _textFormat = new DW.TextFormat(_dwriteFactory, PanelFont, PanelFontSize)
-            {
-                TextAlignment = DW.TextAlignment.Leading,
-                ParagraphAlignment = DW.ParagraphAlignment.Near
-            };
-
-            _dxBorderBrush   = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0xFF, 0xD4, 0xA0, 0x17)));
-            _dxTextBrush     = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0xE6, 0xCC, 0xCC, 0xCC)));
-            var stops = new[]
-            {
-                new D2D.GradientStop { Color = ToColor4(Media.Color.FromArgb(0xC0, 0x50, 0x50, 0x50)), Position = 0.0f },
-                new D2D.GradientStop { Color = ToColor4(Media.Color.FromArgb(0xB4, 0x28, 0x28, 0x28)), Position = 1.0f }
-            };
-            _dxGradientStops = new D2D.GradientStopCollection(RenderTarget, stops, D2D.Gamma.StandardRgb, D2D.ExtendMode.Clamp);
-            _dxGradientBrush = new D2D.LinearGradientBrush(RenderTarget,
-                new D2D.LinearGradientBrushProperties { StartPoint = new Vector2(0f, 0f), EndPoint = new Vector2(0f, 1f) },
-                _dxGradientStops);
-            _dxHighlightBrush = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)));
-        }
-
-        private bool IsRenderSafe()
-        {
-            if (State == State.Realtime) return true;
-            if (State == State.Historical && Bars != null && Bars.Count > 0 && CurrentBar >= Bars.Count - 1) return true;
-            return false;
         }
 
         private void DisposeDx()
