@@ -25,6 +25,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 {
     public class HawkMidasBands : Indicator
     {
+        private const int MaxSessionsTracked = 1000;
         private SessionIterator sessionIterator;
         private readonly List<int> sessionStartBars = new List<int>();
         private int currentSessionIndex = -1;
@@ -451,6 +452,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                 {
                     sessionStartBars.Add(sessionStartBarAbs);
                     currentSessionIndex = sessionStartBars.Count - 1;
+                    if (sessionStartBars.Count > MaxSessionsTracked)
+                    {
+                        sessionStartBars.RemoveAt(0);
+                        currentSessionIndex = sessionStartBars.Count - 1;
+                    }
                 }
 
                 if (DebugMode)
