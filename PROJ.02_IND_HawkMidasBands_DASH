@@ -29,6 +29,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         private readonly List<int> sessionStartIndices = new List<int>();
         private bool sessionStartsBuilt = false;
         private DateTime lastTradingDay = Core.Globals.MinDate;
+        private int lastSessionBuildBarsCount = -1;
+        private DateTime lastSessionBuildTradingDay = Core.Globals.MinDate;
 
         private int anchorBarIndex_byBar = -1;
         private bool anchorValid_byBar = false;
@@ -463,10 +465,14 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private void BuildSessionStarts()
         {
-            sessionStartIndices.Clear();
+            if (Bars == null || Bars.Count == 0) return;
             if (sessionIterator == null) sessionIterator = new SessionIterator(Bars);
-            if (Bars.Count == 0) return;
+            DateTime currentTradingDay = sessionIterator != null
+                ? sessionIterator.GetTradingDay(Bars.GetTime(Math.Max(0, Bars.Count - 1)))
+                : Core.Globals.MinDate;
+            if (Bars.Count == lastSessionBuildBarsCount && currentTradingDay == lastSessionBuildTradingDay) return;
 
+            sessionStartIndices.Clear();
             DateTime lastDay = Core.Globals.MinDate;
             for (int i = 0; i < Bars.Count; i++)
             {
@@ -474,6 +480,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (td != lastDay) { sessionStartIndices.Add(i); lastDay = td; }
             }
             sessionStartsBuilt = true;
+            lastSessionBuildBarsCount = Bars.Count;
+            lastSessionBuildTradingDay = currentTradingDay;
         }
 
         private int GetSessionIndexContainingBar(int barIndex)
@@ -576,12 +584,6 @@ namespace NinjaTrader.NinjaScript.Indicators
         public override void OnRenderTargetChanged()
         {
             DisposeDx();
-
-            if (RenderTarget != null && IsRenderSafe())
-            {
-                EnsureDxResources();
-            }
-
             base.OnRenderTargetChanged();
         }
 
