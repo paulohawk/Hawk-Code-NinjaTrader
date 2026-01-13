@@ -439,6 +439,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             if (!EnableBandCloud) return;
             if (BarInSession != 1) return;
+            if (!IsRenderSafe()) return;
             if (!IsReady) return;
             if (double.IsNaN(Values[0][0]) || double.IsNaN(Values[2][0])) return;
             if (State == State.Historical && CurrentBar < Bars.Count - 1) return;
@@ -516,6 +517,12 @@ namespace NinjaTrader.NinjaScript.Indicators
         // =========================
         private void UpdateInfoText()
         {
+            if (!IsRenderSafe())
+            {
+                _infoText = string.Empty;
+                return;
+            }
+
             if (TickSize <= 0)
             {
                 _infoText = string.Empty;
@@ -570,27 +577,9 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             DisposeDx();
 
-            if (RenderTarget != null)
+            if (RenderTarget != null && IsRenderSafe())
             {
-                _dwriteFactory = new DW.Factory();
-                _textFormat = new DW.TextFormat(_dwriteFactory, PanelFont, PanelFontSize)
-                {
-                    TextAlignment = DW.TextAlignment.Leading,
-                    ParagraphAlignment = DW.ParagraphAlignment.Near
-                };
-
-                _dxBorderBrush   = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0xFF, 0xD4, 0xA0, 0x17)));
-                _dxTextBrush     = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0xE6, 0xCC, 0xCC, 0xCC)));
-                var stops = new[]
-                {
-                    new D2D.GradientStop { Color = ToColor4(Media.Color.FromArgb(0xC0, 0x50, 0x50, 0x50)), Position = 0.0f },
-                    new D2D.GradientStop { Color = ToColor4(Media.Color.FromArgb(0xB4, 0x28, 0x28, 0x28)), Position = 1.0f }
-                };
-                _dxGradientStops = new D2D.GradientStopCollection(RenderTarget, stops, D2D.Gamma.StandardRgb, D2D.ExtendMode.Clamp);
-                _dxGradientBrush = new D2D.LinearGradientBrush(RenderTarget,
-                    new D2D.LinearGradientBrushProperties { StartPoint = new Vector2(0f, 0f), EndPoint = new Vector2(0f, 1f) },
-                    _dxGradientStops);
-                _dxHighlightBrush = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)));
+                EnsureDxResources();
             }
 
             base.OnRenderTargetChanged();
@@ -600,6 +589,9 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             base.OnRender(chartControl, chartScale);
 
+            if (!IsRenderSafe()) return;
+
+            EnsureDxResources();
             if (RenderTarget == null || ChartPanel == null || string.IsNullOrEmpty(_infoText) ||
                 _dwriteFactory == null || _textFormat == null || _dxGradientBrush == null ||
                 _dxBorderBrush == null || _dxTextBrush == null || _dxHighlightBrush == null)
@@ -631,6 +623,43 @@ namespace NinjaTrader.NinjaScript.Indicators
                 float textY = y + PanelPadding;
                 RenderTarget.DrawTextLayout(new Vector2(textX, textY), textLayout, _dxTextBrush, D2D.DrawTextOptions.None);
             }
+        }
+
+        private void EnsureDxResources()
+        {
+            if (RenderTarget == null) return;
+            if (_dwriteFactory != null && _textFormat != null && _dxGradientBrush != null &&
+                _dxBorderBrush != null && _dxTextBrush != null && _dxHighlightBrush != null)
+                return;
+
+            DisposeDx();
+
+            _dwriteFactory = new DW.Factory();
+            _textFormat = new DW.TextFormat(_dwriteFactory, PanelFont, PanelFontSize)
+            {
+                TextAlignment = DW.TextAlignment.Leading,
+                ParagraphAlignment = DW.ParagraphAlignment.Near
+            };
+
+            _dxBorderBrush   = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0xFF, 0xD4, 0xA0, 0x17)));
+            _dxTextBrush     = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0xE6, 0xCC, 0xCC, 0xCC)));
+            var stops = new[]
+            {
+                new D2D.GradientStop { Color = ToColor4(Media.Color.FromArgb(0xC0, 0x50, 0x50, 0x50)), Position = 0.0f },
+                new D2D.GradientStop { Color = ToColor4(Media.Color.FromArgb(0xB4, 0x28, 0x28, 0x28)), Position = 1.0f }
+            };
+            _dxGradientStops = new D2D.GradientStopCollection(RenderTarget, stops, D2D.Gamma.StandardRgb, D2D.ExtendMode.Clamp);
+            _dxGradientBrush = new D2D.LinearGradientBrush(RenderTarget,
+                new D2D.LinearGradientBrushProperties { StartPoint = new Vector2(0f, 0f), EndPoint = new Vector2(0f, 1f) },
+                _dxGradientStops);
+            _dxHighlightBrush = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)));
+        }
+
+        private bool IsRenderSafe()
+        {
+            if (State == State.Realtime) return true;
+            if (State == State.Historical && Bars != null && Bars.Count > 0 && CurrentBar >= Bars.Count - 1) return true;
+            return false;
         }
 
         private void DisposeDx()
