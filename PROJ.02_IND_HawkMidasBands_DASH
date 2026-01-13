@@ -654,7 +654,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         #region Properties
         [NinjaScriptProperty] public int SessionOffset { get => _sessionOffset; set => _sessionOffset = value; }
-        [NinjaScriptProperty] public int BarInSession { get => _barInSession; set => _barInSession = Math.Max(1, value); }
+        public int BarInSession { get => _barInSession; internal set => _barInSession = 1; }
         [NinjaScriptProperty] public bool UseLastBarIfBarIndexTooLarge { get => _useLastBarIfBarIndexTooLarge; set => _useLastBarIfBarIndexTooLarge = value; }
         [NinjaScriptProperty] public bool PlotOnlyNextSession { get => _plotOnlyNextSession; set => _plotOnlyNextSession = value; }
         [NinjaScriptProperty] public bool DebugMode { get => _debugMode; set => _debugMode = value; }
