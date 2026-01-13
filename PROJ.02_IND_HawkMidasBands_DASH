@@ -418,6 +418,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             try
             {
                 if (!EnableBandCloud) return;
+                if (State == State.Historical && BarInSession != 1) return;
                 if (!IsReady) return;
                 if (double.IsNaN(Values[0][0]) || double.IsNaN(Values[2][0])) return;
                 if (State == State.Historical && CurrentBar < Bars.Count - 1) return;
