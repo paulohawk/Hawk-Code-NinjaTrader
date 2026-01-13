@@ -35,6 +35,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         private int anchorBarIndex_byBar = -1;
         private bool anchorValid_byBar = false;
         private int anchorSessionIndex = -1;
+        private int lastAnchorSessionIndex = int.MinValue;
+        private int lastAnchorBarInSession = int.MinValue;
+        private int lastAnchorSessionStart = int.MinValue;
+        private int lastAnchorBarsCount = -1;
+        private DateTime lastAnchorTradingDay = Core.Globals.MinDate;
 
         private double cumPV_Bar_High, cumV_Bar_High, cumPV_Bar_Median, cumV_Bar_Median, cumPV_Bar_Low, cumV_Bar_Low;
         private int lastCumIndex_Bar = -1;
@@ -369,20 +374,46 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             int sessionStart = sessionStartIndices[targetSessionIndex];
             int candidate = sessionStart + (requestedAnchor - 1);
-            if (anchorSessionIndex == targetSessionIndex && anchorValid_byBar && anchorBarIndex_byBar == candidate)
+            DateTime currentTradingDay = sessionIterator != null
+                ? sessionIterator.GetTradingDay(Bars.GetTime(CurrentBar))
+                : Core.Globals.MinDate;
+            bool anchorContextChanged = targetSessionIndex != lastAnchorSessionIndex
+                || requestedAnchor != lastAnchorBarInSession
+                || sessionStart != lastAnchorSessionStart;
+            bool needsReset = anchorContextChanged
+                || Bars.Count != lastAnchorBarsCount
+                || currentTradingDay != lastAnchorTradingDay
+                || CurrentBar < lastCumIndex_Bar
+                || State == State.Historical;
+
+            if (!needsReset && CurrentBar != candidate && anchorSessionIndex == targetSessionIndex && anchorValid_byBar && anchorBarIndex_byBar == candidate)
                 return;
 
             anchorSessionIndex = targetSessionIndex;
             anchorBarIndex_byBar = candidate;
             anchorValid_byBar = true;
 
-            cumPV_Bar_High = cumV_Bar_High = cumPV_Bar_Median = cumV_Bar_Median = cumPV_Bar_Low = cumV_Bar_Low = 0;
-            lastCumIndex_Bar = anchorBarIndex_byBar - 1;
+            if (CurrentBar == anchorBarIndex_byBar)
+            {
+                cumPV_Bar_High = cumV_Bar_High = cumPV_Bar_Median = cumV_Bar_Median = cumPV_Bar_Low = cumV_Bar_Low = 0;
+                lastCumIndex_Bar = anchorBarIndex_byBar - 1;
+            }
+            else if (needsReset)
+            {
+                cumPV_Bar_High = cumV_Bar_High = cumPV_Bar_Median = cumV_Bar_Median = cumPV_Bar_Low = cumV_Bar_Low = 0;
+                lastCumIndex_Bar = anchorBarIndex_byBar - 1;
+            }
 
             LastUsedAnchorSessionIndex = anchorSessionIndex;
             LastUsedAnchorTime = (anchorBarIndex_byBar >= 0 && anchorBarIndex_byBar < Bars.Count)
                 ? Bars.GetTime(anchorBarIndex_byBar)
                 : Core.Globals.MinDate;
+
+            lastAnchorSessionIndex = targetSessionIndex;
+            lastAnchorBarInSession = requestedAnchor;
+            lastAnchorSessionStart = sessionStart;
+            lastAnchorBarsCount = Bars.Count;
+            lastAnchorTradingDay = currentTradingDay;
 
             if (DebugMode)
                 Log($"[HawkMidasBands][ANCHOR_SET] sessionStartAbs={sessionStart} anchorAbs={anchorBarIndex_byBar} requested={requestedAnchor}", LogLevel.Information);
