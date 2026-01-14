@@ -244,27 +244,44 @@ namespace NinjaTrader.NinjaScript.Indicators
                     return false;
                 }
 
-                int barsLeft = 3;
-                int barsRight = -3;
+                // ================================
+                // SIZE NORMALIZATION (Paper 02.3)
+                // ================================
+                int baseTicks = 6;
 
-                double top = High[barsAgo];
-                double bottom = Low[barsAgo];
+                double levelMultiplier =
+                    level == 1 ? 1.0 :
+                    level == 2 ? 1.5 :
+                                 2.0;
+
+                double finalMultiplier = levelMultiplier * markerScale;
+                int ticks = Math.Max(2, (int)Math.Round(baseTicks * finalMultiplier));
+
+                int barsLeft = Math.Max(1, (int)Math.Round(1 * finalMultiplier));
+                int barsRight = -barsLeft;
+
+                double top = price + (ticks * TickSize);
+                double bottom = price - (ticks * TickSize);
 
                 DebugLog(
-                    $"Coords | Top={top:F2} | Bottom={bottom:F2}");
+                    $"Coords | Top={top:F2} | Bottom={bottom:F2} | Ticks={ticks}");
 
                 Color baseColor = ((SolidColorBrush)levelBrush).Color;
-                byte alpha = (byte)(255 * markerOpacity);
+                // ================================
+                // STROKE / FILL SEPARATION (Paper 02.3)
+                // ================================
+                byte strokeAlpha = (byte)(255 * markerOpacity);
+                byte fillAlpha = (byte)Math.Min(255, strokeAlpha * 0.75);
 
                 Brush strokeBrush = new SolidColorBrush(
-                    Color.FromArgb(alpha, baseColor.R, baseColor.G, baseColor.B)
+                    Color.FromArgb(strokeAlpha, baseColor.R, baseColor.G, baseColor.B)
                 );
                 Brush fillBrush = new SolidColorBrush(
-                    Color.FromArgb(alpha, baseColor.R, baseColor.G, baseColor.B)
+                    Color.FromArgb(fillAlpha, baseColor.R, baseColor.G, baseColor.B)
                 );
 
                 DebugLog(
-                    $"Brushes | Fill={fillBrush.GetType().Name} | Opacity={markerOpacity:F2}"
+                    $"Brushes | Stroke={strokeBrush.GetType().Name} | Fill={fillBrush.GetType().Name} | Opacity={markerOpacity:F2}"
                 );
 
                 string tag = $"HSV_PM_{level}_{CurrentBar}_{barsAgo}_{eventTime.Ticks}";
@@ -708,6 +725,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             Order = 17)]
         public bool UseGradientFill
         {
+            // NOTE: Disabled in Paper 02.3. Solid fill enforced.
             get { return useGradientFill; }
             set { useGradientFill = value; }
         }
