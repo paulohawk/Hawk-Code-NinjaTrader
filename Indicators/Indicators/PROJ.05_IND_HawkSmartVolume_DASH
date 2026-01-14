@@ -166,8 +166,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         private Brush BuildGradientBrush(Brush levelBrush)
         {
             Color color = (levelBrush as SolidColorBrush)?.Color ?? Colors.White;
-            Color centerColor = Color.FromArgb(180, color.R, color.G, color.B);
-            Color edgeColor = Color.FromArgb(30, color.R, color.G, color.B);
+            Color centerColor = Color.FromArgb(200, color.R, color.G, color.B);
+            Color edgeColor = Color.FromArgb(18, color.R, color.G, color.B);
 
             var gradient = new RadialGradientBrush();
             gradient.GradientOrigin = new Point(0.5, 0.5);
