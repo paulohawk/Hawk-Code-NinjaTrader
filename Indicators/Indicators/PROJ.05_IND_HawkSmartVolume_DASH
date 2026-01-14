@@ -247,7 +247,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 // ================================
                 // SIZE NORMALIZATION (Paper 02.3)
                 // ================================
-                int baseTicks = 6;
+                int baseTicks = 18; // 3x maior (Paper 02.3.1)
 
                 double levelMultiplier =
                     level == 1 ? 1.0 :
@@ -290,16 +290,35 @@ namespace NinjaTrader.NinjaScript.Indicators
                   $"DRAW | Type=Ellipse | Level={level} | BarsAgo={barsAgo} | " +
                   $"Left={barsLeft} | Right={barsRight}"
                 );
+                // ================================
+                // FILL LAYER (solid, no stroke)
+                // ================================
                 Draw.Ellipse(
                     this,
-                    tag,
+                    tag + "_FILL",
+                    true,
+                    barsLeft,
+                    top,
+                    barsRight,
+                    bottom,
+                    Brushes.Transparent,
+                    fillBrush,
+                    0
+                );
+
+                // ================================
+                // STROKE LAYER (outline only)
+                // ================================
+                Draw.Ellipse(
+                    this,
+                    tag + "_STROKE",
                     true,
                     barsLeft,
                     top,
                     barsRight,
                     bottom,
                     strokeBrush,
-                    fillBrush,
+                    Brushes.Transparent,
                     1
                 );
 
