@@ -73,15 +73,15 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 case State.SetDefaults:
                     Name = "Hawk Smart Volume";
-                    Description = "Hawk Smart Volume - Detects large trade volumes with visual markers (Detecta grandes volumes com marcadores visuais).";
+                    Description = "Hawk Smart Volume - Detects large trade volumes with visual markers.";
                     Calculate = Calculate.OnEachTick;
                     IsOverlay = true;
                     BarsRequiredToPlot = 2;
                     // ===== Visual Defaults (Paper 02 – FINAL & LOCKED) =====
-                    level1Brush = new SolidColorBrush(Colors.DimGray);
-                    level2Brush = new SolidColorBrush(Colors.DarkGoldenrod);
-                    level3Brush = new SolidColorBrush(Colors.SaddleBrown);
-                    textBrush = Brushes.DarkGray;
+                    level1Brush = new SolidColorBrush(Colors.DimGray);       level1Brush.Freeze();
+                    level2Brush = new SolidColorBrush(Colors.DarkGoldenrod); level2Brush.Freeze();
+                    level3Brush = new SolidColorBrush(Colors.SaddleBrown);   level3Brush.Freeze();
+                    textBrush = Brushes.DarkGray.Clone();                    textBrush.Freeze();
 
                     showPrintMarkers = true;
                     showTime = false;
@@ -231,6 +231,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             Brush invisibleStroke = CreateInvisibleStroke();
             Brush textOpacityBrush = textBrush.Clone();
             textOpacityBrush.Opacity = 1.0 - (markerOpacity / 100.0);
+            textOpacityBrush.Freeze();
             string tagKey = $"{CurrentBar}_{barsAgo}_{eventTime.Ticks}";
             // Default font — subject to refinement in future versions.
             Draw.Text(
@@ -297,6 +298,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                 Brush bulletBrush = levelBrush.Clone();
                 bulletBrush.Opacity = 1.0 - (markerOpacity / 100.0);
+                bulletBrush.Freeze();
 
                 Draw.Text(
                     this,
