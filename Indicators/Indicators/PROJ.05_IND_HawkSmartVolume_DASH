@@ -188,12 +188,21 @@ namespace NinjaTrader.NinjaScript.Indicators
                       $"EVENT | Level={ev.Level} | Vol={ev.Volume} | " +
                       $"EventTime={ev.Time:HH:mm:ss.fff} | BarIdx={barIdx} | BarsAgo={barsAgo}"
                     );
+                    Brush brush =
+                        ev.Level == 3 ? level3Brush :
+                        ev.Level == 2 ? level2Brush :
+                                        level1Brush;
 
-                var ev = pending.Dequeue();
+                    bool drawn = false;
 
-                int barIdx = BarsArray[0].GetBar(ev.Time);
-                if (barIdx < 0)
-                    barIdx = BarsArray[0].GetBar(Time[0]);
+                    if (showPrintMarkers)
+                        drawn = DrawPrintMarker_OnPrimary(
+                            ev.Level,
+                            brush,
+                            ev.Price,
+                            barsAgo,
+                            ev.Time
+                        );
 
                     if (drawn)
                     {
