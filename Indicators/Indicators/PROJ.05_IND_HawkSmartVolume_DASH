@@ -66,15 +66,6 @@ namespace NinjaTrader.NinjaScript.Indicators
         private readonly Queue<PrintEvent> pending = new Queue<PrintEvent>();
         #endregion
 
-        /// <summary>
-        /// This method is used to configure the indicator and is called once before any bar data is loaded.
-        /// </summary>
-        private void Initialize()
-        {
-            Calculate = Calculate.OnEachTick;
-            IsOverlay = true;
-        }
-
         protected override void OnStateChange()
         {
             switch (State)
@@ -82,11 +73,13 @@ namespace NinjaTrader.NinjaScript.Indicators
                 case State.SetDefaults:
                     Name = "Hawk Smart Volume";
                     Description = "Hawk Smart Volume - Detects large trade volumes with visual markers (Detecta grandes volumes com marcadores visuais).";
+                    Calculate = Calculate.OnEachTick;
+                    IsOverlay = true;
+                    BarsRequiredToPlot = 2;
                     level1Brush = ResolveDefaultLevel1Brush();
                     level2Brush = new SolidColorBrush(Colors.DimGray);
                     level3Brush = new SolidColorBrush(Colors.DarkGoldenrod);
                     textBrush = Brushes.DarkGray;
-                    Initialize();
                     break;
             }
 
@@ -169,9 +162,38 @@ namespace NinjaTrader.NinjaScript.Indicators
                     Print($"[HSV][DBG] BIP={BarsInProgress} | CB0={CurrentBars[0]} | CB1={(BarsArray.Length > 1 ? CurrentBars[1] : -1)} | Time={Time[0]:HH:mm:ss} | Vol={Volume[0]}");
                 }
 
-                if (pending.Count == 0)
-                    // Single-event-per-tick design: return if nothing to process for this primary bar.
-                    return;
+                int maxPerTick = 3;
+                while (pending.Count > 0 && maxPerTick-- > 0)
+                {
+                    var ev = pending.Dequeue();
+
+                    int barIdx = BarsArray[0].GetBar(ev.Time);
+                    if (barIdx < 0)
+                        barIdx = BarsArray[0].GetBar(Time[0]);
+
+                    if (barIdx < 0)
+                    {
+                        DebugLog("DROP | Reason=InvalidBarsAgo | BarsAgo=-1");
+                        continue;
+                    }
+
+                    int barsAgo = CurrentBar - barIdx;
+                    if (barsAgo < 0)
+                    {
+                        DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
+                        continue;
+                    }
+
+                    if (barsAgo > CurrentBar)
+                    {
+                        DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
+                        continue;
+                    }
+
+                    DebugLog(
+                      $"EVENT | Level={ev.Level} | Vol={ev.Volume} | " +
+                      $"EventTime={ev.Time:HH:mm:ss.fff} | BarIdx={barIdx} | BarsAgo={barsAgo}"
+                    );
 
                 var ev = pending.Dequeue();
 
@@ -179,40 +201,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (barIdx < 0)
                     barIdx = BarsArray[0].GetBar(Time[0]);
 
-                if (barIdx < 0)
-                {
-                    DebugLog("DROP | Reason=InvalidBarsAgo | BarsAgo=-1");
-                    return;
-                }
-
-                int barsAgo = CurrentBar - barIdx;
-                if (barsAgo < 0)
-                {
-                    DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
-                    return;
-                }
-
-                if (barsAgo > CurrentBar)
-                {
-                    DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
-                    return;
-                }
-
-                DebugLog(
-                  $"EVENT | Level={ev.Level} | Vol={ev.Volume} | " +
-                  $"EventTime={ev.Time:HH:mm:ss.fff} | BarIdx={barIdx} | BarsAgo={barsAgo}"
-                );
-
-                Brush brush = ev.Level == 3 ? level3Brush : ev.Level == 2 ? level2Brush : level1Brush;
-
-                bool drawn = false;
-                if (showPrintMarkers)
-                    drawn = DrawPrintMarker_OnPrimary(ev.Level, brush, ev.Price, barsAgo, ev.Time);
-
-                if (drawn)
-                {
-                    DrawLevelText_OnPrimary(ev.Level, ev.Price, barsAgo, ev.Time, ev.Volume);
-                    TriggerAlert(ev.Level, brush, ev.Time);
+                    if (drawn)
+                    {
+                        DrawLevelText_OnPrimary(ev.Level, ev.Price, barsAgo, ev.Time, ev.Volume);
+                        TriggerAlert(ev.Level, brush, ev.Time);
+                    }
                 }
             }
         }
@@ -588,7 +581,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         [NinjaScriptProperty]
         [XmlIgnore]
         [Display(
-            Name = "Show Print Markers (Exibir marcadores de print)",
+            Name = "Show Print Markers (Exibir marcadores ●)",
             Description = "Enable print markers on chart (Ativar marcadores de print no gráfico).",
             GroupName = "Visual Settings",
             Order = 9)]
@@ -739,18 +732,6 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             get { return markerFontSizeLevel3; }
             set { markerFontSizeLevel3 = Math.Max(6, Math.Min(72, value)); }
-        }
-
-        [NinjaScriptProperty]
-        [Display(
-            Name = "Marker Opacity (Opacidade do marcador)",
-            Description = "Opacity of the print marker (0.05 = 5%, 0.20 = 20%)",
-            GroupName = "Visual Settings",
-            Order = 18)]
-        public double MarkerOpacity
-        {
-            get { return markerOpacity; }
-            set { markerOpacity = Math.Min(0.30, Math.Max(0.05, value)); }
         }
         #endregion
     }
