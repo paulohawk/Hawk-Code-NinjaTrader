@@ -142,7 +142,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                         var ev = new PrintEvent
                         {
                             Time = Time[0],
-                            Price = Median[0],
+                            Price = Close[0],
                             Level = level,
                             Volume = Volume[0]
                         };
@@ -162,6 +162,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 }
 
                 if (pending.Count == 0)
+                    // Single-event-per-tick design: return if nothing to process for this primary bar.
                     return;
 
                 var ev = pending.Dequeue();
@@ -203,7 +204,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (drawn)
                 {
                     DrawLevelText_OnPrimary(ev.Level, ev.Price, barsAgo, ev.Time, ev.Volume);
-                    TriggerAlert(ev.Level, brush);
+                    TriggerAlert(ev.Level, brush, ev.Time);
                 }
             }
         }
@@ -485,7 +486,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             return Color.FromRgb((byte)r, (byte)g, (byte)b);
         }
 
-        private void TriggerAlert(int level, Brush levelBrush)
+        private void TriggerAlert(int level, Brush levelBrush, DateTime evTime)
         {
             if (!enableAlerts)
                 return;
@@ -493,7 +494,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             if ((level == 1 && !alertLevel1Enabled) || (level == 2 && !alertLevel2Enabled) || (level == 3 && !alertLevel3Enabled))
                 return;
 
-            long eventKey = GetAlertEventKey();
+            long eventKey = GetAlertEventKey(evTime);
             if (lastAlertEventKey == eventKey)
                 return;
 
@@ -510,9 +511,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                 levelBrush);
         }
 
-        private long GetAlertEventKey()
+        private long GetAlertEventKey(DateTime evTime)
         {
-            return ((long)BarsInProgress << 56) ^ Time[0].Ticks;
+            return ((long)BarsInProgress << 56) ^ evTime.Ticks;
         }
 
         #region Properties
