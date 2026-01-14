@@ -43,6 +43,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private bool showTime = false;
         private string alertSoundFile = "Alert4.wav";
         private double markerScale = 1.0;
+        private bool useGradientFill = true;
         private long lastAlertEventKey = -1;
         #endregion
 
@@ -158,9 +159,29 @@ namespace NinjaTrader.NinjaScript.Indicators
             byte midAlpha = level == 3 ? (byte)130 : level == 2 ? (byte)105 : (byte)85;
             byte boostAmount = level == 3 ? (byte)42 : level == 2 ? (byte)28 : (byte)18;
 
-            Brush core = BuildRadialOverlayBrush(levelBrush, coreAlpha, 0, boostAmount);
-            Brush mid = BuildRadialOverlayBrush(levelBrush, midAlpha, 0, (byte)(boostAmount - 8));
-            Brush hi = BuildRadialOverlayBrush(levelBrush, (byte)(midAlpha + 10), 0, (byte)(boostAmount + 12), highlight: true);
+            Brush core;
+            Brush mid;
+            Brush hi;
+
+            if (useGradientFill)
+            {
+                core = BuildOverlayBrushSafe(levelBrush, coreAlpha, 0, boostAmount);
+                mid = BuildOverlayBrushSafe(levelBrush, midAlpha, 0, (byte)(boostAmount - 8));
+                hi = BuildOverlayBrushSafe(levelBrush, (byte)(midAlpha + 10), 0, (byte)(boostAmount + 12), highlight: true);
+            }
+            else
+            {
+                // Forced fallback: Solid overlays (guaranteed visible)
+                Color baseColor = (levelBrush as SolidColorBrush)?.Color ?? Colors.White;
+
+                Color cCore = BoostColor(baseColor, boostAmount, false);
+                Color cMid = BoostColor(baseColor, (byte)Math.Max(0, boostAmount - 8), false);
+                Color cHi = BoostColor(baseColor, (byte)Math.Min(255, boostAmount + 12), true);
+
+                core = new SolidColorBrush(Color.FromArgb(coreAlpha, cCore.R, cCore.G, cCore.B));
+                mid = new SolidColorBrush(Color.FromArgb(midAlpha, cMid.R, cMid.G, cMid.B));
+                hi = new SolidColorBrush(Color.FromArgb((byte)(midAlpha + 10), cHi.R, cHi.G, cHi.B));
+            }
 
             // Layer 1: Core (largest)
             Draw.Ellipse(
@@ -243,6 +264,27 @@ namespace NinjaTrader.NinjaScript.Indicators
             gradient.Freeze();
 
             return gradient;
+        }
+
+        private Brush BuildOverlayBrushSafe(
+            Brush baseBrush,
+            byte centerAlpha,
+            byte edgeAlpha,
+            byte saturateBoost,
+            bool highlight = false)
+        {
+            // 1) Tenta RadialGradientBrush (premium)
+            try
+            {
+                return BuildRadialOverlayBrush(baseBrush, centerAlpha, edgeAlpha, saturateBoost, highlight);
+            }
+            catch
+            {
+                // 2) Fallback: SolidColorBrush (garante render)
+                Color baseColor = (baseBrush as SolidColorBrush)?.Color ?? Colors.White;
+                Color boosted = BoostColor(baseColor, saturateBoost, highlight);
+                return new SolidColorBrush(Color.FromArgb(centerAlpha, boosted.R, boosted.G, boosted.B));
+            }
         }
 
         private Color BoostColor(Color color, byte boost, bool highlight)
@@ -537,6 +579,18 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             get { return markerScale; }
             set { markerScale = Math.Max(0.5, value); }
+        }
+
+        [NinjaScriptProperty]
+        [Display(
+            Name = "Use Gradient Fill (Usar preenchimento com gradiente)",
+            Description = "Use radial gradient fill for markers. Disable if markers do not render on your system (Usar preenchimento radial. Desative se os marcadores não aparecerem).",
+            GroupName = "Visual Settings",
+            Order = 17)]
+        public bool UseGradientFill
+        {
+            get { return useGradientFill; }
+            set { useGradientFill = value; }
         }
         #endregion
     }
