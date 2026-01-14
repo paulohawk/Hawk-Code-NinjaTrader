@@ -525,7 +525,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         public Brush Level1Brush
         {
             get { return level1Brush; }
-            set { level1Brush = value; }
+            set
+            {
+                level1Brush = value?.Clone();
+                level1Brush?.Freeze();
+            }
         }
 
         [NinjaScriptProperty]
@@ -538,7 +542,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         public Brush Level2Brush
         {
             get { return level2Brush; }
-            set { level2Brush = value; }
+            set
+            {
+                level2Brush = value?.Clone();
+                level2Brush?.Freeze();
+            }
         }
 
         [NinjaScriptProperty]
@@ -551,7 +559,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         public Brush Level3Brush
         {
             get { return level3Brush; }
-            set { level3Brush = value; }
+            set
+            {
+                level3Brush = value?.Clone();
+                level3Brush?.Freeze();
+            }
         }
 
         [Browsable(false)]
@@ -585,7 +597,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         public Brush TextBrush
         {
             get { return textBrush; }
-            set { textBrush = value; }
+            set
+            {
+                textBrush = value?.Clone();
+                textBrush?.Freeze();
+            }
         }
 
         [Browsable(false)]
