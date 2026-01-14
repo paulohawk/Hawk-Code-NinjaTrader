@@ -21,6 +21,7 @@ using NinjaTrader.NinjaScript.DrawingTools;
 using SharpDX;
 using D2D = SharpDX.Direct2D1;
 using DW = SharpDX.DirectWrite;
+using MediaColor = System.Windows.Media.Color;
 #endregion
 
 //This namespace holds Indicators in this folder and is required. Do not change it. 
@@ -75,7 +76,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 		private D2D.GradientStopCollection _dxGradientStops;
 		private D2D.SolidColorBrush _dxHighlightBrush;
 
-		private static Color4 ToColor4(System.Windows.Media.Color color)
+		private static Color4 ToColor4(MediaColor color)
 		{
 			return new Color4(color.ScR, color.ScG, color.ScB, color.ScA);
 		}
@@ -260,8 +261,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 StartPoint = new System.Windows.Point(0, 0),
                 EndPoint = new System.Windows.Point(1, 1)
             };
-            brush.GradientStops.Add(new GradientStop(System.Windows.Media.Color.FromRgb(90, 90, 90), 0));
-            brush.GradientStops.Add(new GradientStop(System.Windows.Media.Color.FromRgb(40, 40, 40), 1));
+            brush.GradientStops.Add(new GradientStop(MediaColor.FromRgb(90, 90, 90), 0));
+            brush.GradientStops.Add(new GradientStop(MediaColor.FromRgb(40, 40, 40), 1));
             if (brush.CanFreeze)
                 brush.Freeze();
             return brush;
@@ -312,21 +313,21 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 			_dxBorderBrush = new D2D.SolidColorBrush(
 				RenderTarget,
-				ToColor4(System.Windows.Media.Color.FromArgb(0xFF, 0xD4, 0xA0, 0x17)));
+				ToColor4(MediaColor.FromArgb(0xFF, 0xD4, 0xA0, 0x17)));
 			_dxTextBrush = new D2D.SolidColorBrush(
 				RenderTarget,
-				ToColor4(System.Windows.Media.Color.FromArgb(0xE6, 0xCC, 0xCC, 0xCC)));
+				ToColor4(MediaColor.FromArgb(0xE6, 0xCC, 0xCC, 0xCC)));
 
 			var stops = new[]
 			{
 				new D2D.GradientStop
 				{
-					Color = ToColor4(System.Windows.Media.Color.FromArgb(0xC0, 0x50, 0x50, 0x50)),
+					Color = ToColor4(MediaColor.FromArgb(0xC0, 0x50, 0x50, 0x50)),
 					Position = 0.0f
 				},
 				new D2D.GradientStop
 				{
-					Color = ToColor4(System.Windows.Media.Color.FromArgb(0xB4, 0x28, 0x28, 0x28)),
+					Color = ToColor4(MediaColor.FromArgb(0xB4, 0x28, 0x28, 0x28)),
 					Position = 1.0f
 				}
 			};
@@ -342,7 +343,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				_dxGradientStops);
 			_dxHighlightBrush = new D2D.SolidColorBrush(
 				RenderTarget,
-				ToColor4(System.Windows.Media.Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)));
+				ToColor4(MediaColor.FromArgb(0x30, 0xFF, 0xFF, 0xFF)));
 
 			base.OnRenderTargetChanged();
 		}
