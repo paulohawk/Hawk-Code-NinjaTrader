@@ -127,7 +127,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             // Default font — subject to refinement in future versions.
             Draw.Text(
                 this,
-                $"HSV_Label_{CurrentBar}",
+                $"HSV_TX_{CurrentBar}",
                 true,
                 textToShow,
                 5,
@@ -163,12 +163,13 @@ namespace NinjaTrader.NinjaScript.Indicators
             Brush core;
             Brush mid;
             Brush hi;
+            var invisibleStroke = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0));
 
             if (useGradientFill)
             {
-                core = BuildOverlayBrushSafe(levelBrush, coreAlpha, 0, boostAmount);
-                mid = BuildOverlayBrushSafe(levelBrush, midAlpha, 0, (byte)(boostAmount - 8));
-                hi = BuildOverlayBrushSafe(levelBrush, (byte)(midAlpha + 10), 0, (byte)(boostAmount + 12), highlight: true);
+                core = BuildOverlayBrushSafe(levelBrush, coreAlpha, boostAmount);
+                mid = BuildOverlayBrushSafe(levelBrush, midAlpha, (byte)(boostAmount - 8));
+                hi = BuildOverlayBrushSafe(levelBrush, (byte)(midAlpha + 10), (byte)(boostAmount + 12), highlight: true);
             }
             else
             {
@@ -193,7 +194,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 top,
                 -scaledSize,
                 bottom,
-                Brushes.Transparent,
+                invisibleStroke,
                 core,
                 0);
 
@@ -207,7 +208,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 top,
                 -midSize,
                 bottom,
-                Brushes.Transparent,
+                invisibleStroke,
                 mid,
                 0);
 
@@ -224,7 +225,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 hiTop,
                 -hiSize,
                 hiBottom,
-                Brushes.Transparent,
+                invisibleStroke,
                 hi,
                 0);
         }
@@ -232,7 +233,6 @@ namespace NinjaTrader.NinjaScript.Indicators
         private Brush BuildRadialOverlayBrush(
             Brush baseBrush,
             byte centerAlpha,
-            byte edgeAlpha,
             byte saturateBoost,
             bool highlight = false)
         {
@@ -244,7 +244,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             // Center is denser; edges dissolve.
             Color center = Color.FromArgb(centerAlpha, boosted.R, boosted.G, boosted.B);
-            Color edge = Color.FromArgb(edgeAlpha, boosted.R, boosted.G, boosted.B);
+            Color edge = Color.FromArgb(0, boosted.R, boosted.G, boosted.B);
 
             var gradient = new RadialGradientBrush();
             if (highlight)
@@ -270,14 +270,13 @@ namespace NinjaTrader.NinjaScript.Indicators
         private Brush BuildOverlayBrushSafe(
             Brush baseBrush,
             byte centerAlpha,
-            byte edgeAlpha,
             byte saturateBoost,
             bool highlight = false)
         {
             // 1) Tenta RadialGradientBrush (premium)
             try
             {
-                return BuildRadialOverlayBrush(baseBrush, centerAlpha, edgeAlpha, saturateBoost, highlight);
+                return BuildRadialOverlayBrush(baseBrush, centerAlpha, saturateBoost, highlight);
             }
             catch
             {
