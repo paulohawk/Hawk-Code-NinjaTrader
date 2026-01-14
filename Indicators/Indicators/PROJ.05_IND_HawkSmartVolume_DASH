@@ -45,6 +45,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private double markerScale = 1.0;
         private bool useGradientFill = true;
         private long lastAlertEventKey = -1;
+        private bool debugDraw = false;
         #endregion
 
         /// <summary>
@@ -87,6 +88,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             if (BarsInProgress == 1)
             {
+                DebugLog($"OnBarUpdate hit | Volume={Volume[0]} | Time={Time[0]}");
                 TimeSpan ts1 = Time[0] - new DateTime(1970, 1, 1, 0, 0, 0);
                 TimeSpan ts2 = Time[1] - new DateTime(1970, 1, 1, 0, 0, 0);
                 int timeGap = (int)ts1.TotalSeconds - (int)ts2.TotalSeconds;
@@ -95,39 +97,46 @@ namespace NinjaTrader.NinjaScript.Indicators
                 {
                     if (Volume[0] >= volumeThresholdLevel3)
                     {
+                        string tagKey = $"{CurrentBar}_{Time[0].Ticks}";
+                        DebugLog("Level 3 triggered | Threshold OK | Calling DrawPrintMarker()");
                         if (showPrintMarkers)
-                            DrawPrintMarker(3, level3Brush);
+                            DrawPrintMarker(3, level3Brush, tagKey);
 
-                        DrawLevelText();
+                        DrawLevelText(tagKey);
                         TriggerAlert(3, level3Brush);
                     }
                     else if (Volume[0] >= volumeThresholdLevel2)
                     {
+                        string tagKey = $"{CurrentBar}_{Time[0].Ticks}";
+                        DebugLog("Level 2 triggered | Threshold OK | Calling DrawPrintMarker()");
                         if (showPrintMarkers)
-                            DrawPrintMarker(2, level2Brush);
+                            DrawPrintMarker(2, level2Brush, tagKey);
 
-                        DrawLevelText();
+                        DrawLevelText(tagKey);
                         TriggerAlert(2, level2Brush);
                     }
                     else if (Volume[0] >= volumeThresholdLevel1)
                     {
+                        string tagKey = $"{CurrentBar}_{Time[0].Ticks}";
+                        DebugLog("Level 1 triggered | Threshold OK | Calling DrawPrintMarker()");
                         if (showPrintMarkers)
-                            DrawPrintMarker(1, level1Brush);
+                            DrawPrintMarker(1, level1Brush, tagKey);
 
-                        DrawLevelText();
+                        DrawLevelText(tagKey);
                         TriggerAlert(1, level1Brush);
                     }
                 }
             }
         }
 
-        private void DrawLevelText()
+        private void DrawLevelText(string tagKey)
         {
             string textToShow = showTime ? Convert.ToString(Time[0]) : Convert.ToString(Volume[0]);
+            Brush invisibleStroke = CreateInvisibleStroke();
             // Default font — subject to refinement in future versions.
             Draw.Text(
                 this,
-                $"HSV_TX_{CurrentBar}",
+                $"HSV_TX_{tagKey}",
                 true,
                 textToShow,
                 5,
@@ -136,98 +145,140 @@ namespace NinjaTrader.NinjaScript.Indicators
                 textBrush,
                 new SimpleFont("Small Fonts", 9),
                 TextAlignment.Right,
-                Brushes.Transparent,
-                Brushes.Transparent,
+                invisibleStroke,
+                invisibleStroke,
                 0);
         }
 
-        private void DrawPrintMarker(int level, Brush levelBrush)
+        private void DrawPrintMarker(int level, Brush levelBrush, string tagKey)
         {
-            int baseSize = level == 1 ? 3 : level == 2 ? 4 : 5;
-            int scaledSize = Math.Max(1, (int)Math.Round(baseSize * markerScale));
-            int heightTicks = scaledSize * 2;
-
-            double centerPrice = Median[0];
-            double top = centerPrice + (heightTicks * TickSize);
-            double bottom = centerPrice - (heightTicks * TickSize);
-
-            // NOTE: No outline. We intentionally avoid any stroke to prevent border artifacts.
-            // Build 3-layer radial overlay stack:
-            // 1) Core (densest)
-            // 2) Mid (fade)
-            // 3) Highlight (small, slightly offset) for 3D depth
-            byte coreAlpha = level == 3 ? (byte)225 : level == 2 ? (byte)200 : (byte)175;
-            byte midAlpha = level == 3 ? (byte)130 : level == 2 ? (byte)105 : (byte)85;
-            byte boostAmount = level == 3 ? (byte)42 : level == 2 ? (byte)28 : (byte)18;
-
-            Brush core;
-            Brush mid;
-            Brush hi;
-            var invisibleStroke = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0));
-
-            if (useGradientFill)
+            try
             {
-                core = BuildOverlayBrushSafe(levelBrush, coreAlpha, boostAmount);
-                mid = BuildOverlayBrushSafe(levelBrush, midAlpha, (byte)(boostAmount - 8));
-                hi = BuildOverlayBrushSafe(levelBrush, (byte)(midAlpha + 10), (byte)(boostAmount + 12), highlight: true);
+                DebugLog($"DrawPrintMarker START | Level={level}");
+                int baseSize = level == 1 ? 3 : level == 2 ? 4 : 5;
+                int scaledSize = Math.Max(1, (int)Math.Round(baseSize * markerScale));
+                int heightTicks = scaledSize * 2;
+
+                double centerPrice = Median[0];
+                double top = centerPrice + (heightTicks * TickSize);
+                double bottom = centerPrice - (heightTicks * TickSize);
+
+                DebugLog(
+                    $"Coords | Center={centerPrice:F2} | Top={top:F2} | Bottom={bottom:F2} | " +
+                    $"ScaledSize={scaledSize} | TickSize={TickSize}");
+
+                // NOTE: No outline. We intentionally avoid any stroke to prevent border artifacts.
+                // Build 3-layer radial overlay stack:
+                // 1) Core (densest)
+                // 2) Mid (fade)
+                // 3) Highlight (small, slightly offset) for 3D depth
+                byte coreAlpha = level == 3 ? (byte)225 : level == 2 ? (byte)200 : (byte)175;
+                byte midAlpha = level == 3 ? (byte)130 : level == 2 ? (byte)105 : (byte)85;
+                byte boostAmount = level == 3 ? (byte)42 : level == 2 ? (byte)28 : (byte)18;
+
+                Brush core;
+                Brush mid;
+                Brush hi;
+                Brush invisibleStroke = CreateInvisibleStroke();
+
+                if (useGradientFill)
+                {
+                    core = BuildOverlayBrushSafe(levelBrush, coreAlpha, boostAmount);
+                    mid = BuildOverlayBrushSafe(levelBrush, midAlpha, (byte)(boostAmount - 8));
+                    hi = BuildOverlayBrushSafe(levelBrush, (byte)(midAlpha + 10), (byte)(boostAmount + 12), highlight: true);
+                }
+                else
+                {
+                    // Forced fallback: Solid overlays (guaranteed visible)
+                    Color baseColor = (levelBrush as SolidColorBrush)?.Color ?? Colors.White;
+
+                    Color cCore = BoostColor(baseColor, boostAmount, false);
+                    Color cMid = BoostColor(baseColor, (byte)Math.Max(0, boostAmount - 8), false);
+                    Color cHi = BoostColor(baseColor, (byte)Math.Min(255, boostAmount + 12), true);
+
+                    core = new SolidColorBrush(Color.FromArgb(coreAlpha, cCore.R, cCore.G, cCore.B));
+                    mid = new SolidColorBrush(Color.FromArgb(midAlpha, cMid.R, cMid.G, cMid.B));
+                    hi = new SolidColorBrush(Color.FromArgb((byte)(midAlpha + 10), cHi.R, cHi.G, cHi.B));
+                }
+
+                DebugLog(
+                    $"Brushes | Core={core.GetType().Name} | Mid={mid.GetType().Name} | Hi={hi.GetType().Name} | " +
+                    $"Gradient={useGradientFill}");
+
+                // Layer 1: Core (largest)
+                DebugLog("Calling Draw.Ellipse CORE");
+                Draw.Ellipse(
+                    this,
+                    $"HSV_PM_CORE_{level}_{tagKey}",
+                    true,
+                    scaledSize,
+                    top,
+                    -scaledSize,
+                    bottom,
+                    invisibleStroke,
+                    core,
+                    0);
+
+                // Layer 2: Mid (slightly smaller)
+                int midSize = Math.Max(1, scaledSize - 1);
+                DebugLog("Calling Draw.Ellipse MID");
+                Draw.Ellipse(
+                    this,
+                    $"HSV_PM_MID_{level}_{tagKey}",
+                    true,
+                    midSize,
+                    top,
+                    -midSize,
+                    bottom,
+                    invisibleStroke,
+                    mid,
+                    0);
+
+                // Layer 3: Highlight (small + subtle offset for 3D)
+                int hiSize = Math.Max(1, scaledSize - 2);
+                double hiTop = centerPrice + ((heightTicks - 1) * TickSize);
+                double hiBottom = centerPrice - ((heightTicks - 3) * TickSize);
+
+                DebugLog("Calling Draw.Ellipse HI");
+                Draw.Ellipse(
+                    this,
+                    $"HSV_PM_HI_{level}_{tagKey}",
+                    true,
+                    hiSize,
+                    hiTop,
+                    -hiSize,
+                    hiBottom,
+                    invisibleStroke,
+                    hi,
+                    0);
+
+                DebugLog("DrawPrintMarker END");
             }
-            else
+            catch (Exception ex)
             {
-                // Forced fallback: Solid overlays (guaranteed visible)
-                Color baseColor = (levelBrush as SolidColorBrush)?.Color ?? Colors.White;
+                Print($"[HSV][ERROR][DrawPrintMarker] {ex.Message}");
+                Print(ex.StackTrace);
+            }
+        }
 
-                Color cCore = BoostColor(baseColor, boostAmount, false);
-                Color cMid = BoostColor(baseColor, (byte)Math.Max(0, boostAmount - 8), false);
-                Color cHi = BoostColor(baseColor, (byte)Math.Min(255, boostAmount + 12), true);
+        private void DebugLog(string message)
+        {
+            if (!debugDraw)
+                return;
 
-                core = new SolidColorBrush(Color.FromArgb(coreAlpha, cCore.R, cCore.G, cCore.B));
-                mid = new SolidColorBrush(Color.FromArgb(midAlpha, cMid.R, cMid.G, cMid.B));
-                hi = new SolidColorBrush(Color.FromArgb((byte)(midAlpha + 10), cHi.R, cHi.G, cHi.B));
+            Print($"[HSV][DRAW][{BarsInProgress}][Bar:{CurrentBar}] {message}");
+        }
+
+        private Brush CreateInvisibleStroke()
+        {
+            Brush invisibleStroke = Brushes.Black.Clone();
+            invisibleStroke.Opacity = 0;
+            if (invisibleStroke is SolidColorBrush solidStroke)
+            {
+                solidStroke.Color = Color.FromArgb(1, 0, 0, 0);
             }
 
-            // Layer 1: Core (largest)
-            Draw.Ellipse(
-                this,
-                $"HSV_PM_CORE_{level}_{CurrentBar}",
-                true,
-                scaledSize,
-                top,
-                -scaledSize,
-                bottom,
-                invisibleStroke,
-                core,
-                0);
-
-            // Layer 2: Mid (slightly smaller)
-            int midSize = Math.Max(1, scaledSize - 1);
-            Draw.Ellipse(
-                this,
-                $"HSV_PM_MID_{level}_{CurrentBar}",
-                true,
-                midSize,
-                top,
-                -midSize,
-                bottom,
-                invisibleStroke,
-                mid,
-                0);
-
-            // Layer 3: Highlight (small + subtle offset for 3D)
-            int hiSize = Math.Max(1, scaledSize - 2);
-            double hiTop = centerPrice + ((heightTicks - 1) * TickSize);
-            double hiBottom = centerPrice - ((heightTicks - 3) * TickSize);
-
-            Draw.Ellipse(
-                this,
-                $"HSV_PM_HI_{level}_{CurrentBar}",
-                true,
-                hiSize,
-                hiTop,
-                -hiSize,
-                hiBottom,
-                invisibleStroke,
-                hi,
-                0);
+            return invisibleStroke;
         }
 
         private Brush BuildRadialOverlayBrush(
@@ -519,6 +570,18 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             get { return enableAlerts; }
             set { enableAlerts = value; }
+        }
+
+        [NinjaScriptProperty]
+        [Display(
+            Name = "Debug Draw (Log detalhado de desenho)",
+            Description = "Enable detailed logs for draw pipeline (Ativar logs detalhados do pipeline de desenho).",
+            GroupName = "Debug",
+            Order = 100)]
+        public bool DebugDraw
+        {
+            get { return debugDraw; }
+            set { debugDraw = value; }
         }
 
         [NinjaScriptProperty]
