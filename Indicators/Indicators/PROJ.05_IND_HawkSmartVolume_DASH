@@ -653,11 +653,14 @@ namespace NinjaTrader.NinjaScript.Indicators
             lastAlertEventKey = eventKey;
 
             string message = $"Hawk Smart Volume - Level {level} print detected (Print nível {level} detectado).";
+            string soundToUse = SoundFileExists(alertSoundFile)
+                ? alertSoundFile
+                : "Alert1.wav";
             Alert(
                 $"HSV_Alert_{level}_{eventKey}",
                 Priority.High,
                 message,
-                alertSoundFile,
+                soundToUse,
                 0,
                 levelBrush,
                 levelBrush);
@@ -666,6 +669,20 @@ namespace NinjaTrader.NinjaScript.Indicators
         private long GetAlertEventKey(DateTime evTime)
         {
             return ((long)BarsInProgress << 56) ^ evTime.Ticks;
+        }
+
+        private bool SoundFileExists(string fileName)
+        {
+            if (string.IsNullOrWhiteSpace(fileName))
+                return false;
+
+            string path = System.IO.Path.Combine(
+                Core.Globals.UserDataDir,
+                "sounds",
+                fileName
+            );
+
+            return System.IO.File.Exists(path);
         }
 
         #region Properties
@@ -924,8 +941,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         [NinjaScriptProperty]
         [Display(
-            Name = "Alert Sound File (Arquivo de som do alerta)",
-            Description = "Sound file name for alerts in the NinjaTrader sounds folder (Nome do arquivo na pasta de sons do NinjaTrader).",
+            Name = "Alert Sound File",
+            Description = "Nome do arquivo de som localizado em Documents\\NinjaTrader 8\\sounds (ex: Alert1.wav)",
             GroupName = "Alerts",
             Order = 15)]
         public string AlertSoundFile
