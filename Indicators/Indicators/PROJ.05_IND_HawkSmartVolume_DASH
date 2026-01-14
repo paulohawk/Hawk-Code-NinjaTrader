@@ -1,56 +1,58 @@
 #region Using declarations
 using System;
-                            using System.Collections;
-                            using System.Collections.Generic;
-                            using System.ComponentModel;
-                            using System.ComponentModel.DataAnnotations;
-                            using System.Diagnostics.CodeAnalysis;
-                            using System.Windows;
-                            using System.Reflection;
-                            using System.Windows.Media;
-                            using System.Xml.Serialization;
-                            using NinjaTrader.Cbi;
-                            using NinjaTrader.Data;
-                            using NinjaTrader.Gui;
-                            using NinjaTrader.Gui.Chart;
-                            using NinjaTrader.Gui.Tools;
-                            using NinjaTrader.NinjaScript.DrawingTools;
-                            using NinjaTrader.NinjaScript.Indicators;
+using System.Collections;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.ComponentModel.DataAnnotations;
+using System.Diagnostics.CodeAnalysis;
+using System.Reflection;
+using System.Windows;
+using System.Windows.Media;
+using System.Xml.Serialization;
+using NinjaTrader.Cbi;
+using NinjaTrader.Data;
+using NinjaTrader.Gui;
+using NinjaTrader.Gui.Chart;
+using NinjaTrader.Gui.Tools;
+using NinjaTrader.NinjaScript.DrawingTools;
+using NinjaTrader.NinjaScript.Indicators;
 #endregion
 
 // This namespace holds all indicators and is required. Do not change it.
 namespace NinjaTrader.NinjaScript.Indicators
 {
     /// <summary>
-    /// Enter the description of your new custom indicator here
+    /// Hawk Smart Volume indicator (Indicador Hawk Smart Volume).
     /// </summary>
-    public class BigTrades3Vol : Indicator
+    public class HawkSamartVolume : Indicator
     {
-        #region Variables 
-		private int vol1 = 900;
-		private int vol2 = 1500;
-		private int vol3 = 2500;
-		private int fix = 1; 
-		Brush colorV1 = Brushes.RoyalBlue;
-		Brush colorV2 = Brushes.DarkMagenta;
-		Brush colorV3 = Brushes.Gold;
-		Brush colorText = Brushes.DarkGray;
-		Brush shadowcolor = Brushes.Red;
-		int opacity = 1;
-		private bool useAlerts = true;
-		private bool useEllipse = true;
-		private bool ShowTime = false;
-		private string stringtoAlert = "Alert4.wav";
+        #region Variables
+        private int volumeThresholdLevel1 = 900;
+        private int volumeThresholdLevel2 = 1500;
+        private int volumeThresholdLevel3 = 2500;
+        private int timeWindowSeconds = 1;
+        private Brush level1Brush = new SolidColorBrush(Color.FromRgb(80, 80, 80));
+        private Brush level2Brush = new SolidColorBrush(Colors.DimGray);
+        private Brush level3Brush = new SolidColorBrush(Colors.DarkGoldenrod);
+        private Brush textBrush = Brushes.DarkGray;
+        private bool enableAlerts = true;
+        private bool alertLevel1Enabled = true;
+        private bool alertLevel2Enabled = true;
+        private bool alertLevel3Enabled = true;
+        private bool showPrintMarkers = true;
+        private bool showTime = false;
+        private string alertSoundFile = "Alert4.wav";
+        private double markerScale = 1.0;
+        private long lastAlertEventKey = -1;
         #endregion
 
         /// <summary>
         /// This method is used to configure the indicator and is called once before any bar data is loaded.
         /// </summary>
-		/// 
         private void Initialize()
-        {                
-            Calculate	= Calculate.OnBarClose;
-			IsOverlay				= true;	
+        {
+            Calculate = Calculate.OnBarClose;
+            IsOverlay = true;
         }
 
         protected override void OnStateChange()
@@ -58,200 +60,390 @@ namespace NinjaTrader.NinjaScript.Indicators
             switch (State)
             {
                 case State.SetDefaults:
-                    Name = "BigTrades3Vol";
-                    Description = "Marca con una elipse vols relevantes";
+                    Name = "Hawk Smart Volume";
+                    Description = "Hawk Smart Volume - Detects large trade volumes with visual markers (Detecta grandes volumes com marcadores visuais).";
+                    level1Brush = new SolidColorBrush(Color.FromRgb(80, 80, 80));
+                    level2Brush = new SolidColorBrush(Colors.DimGray);
+                    level3Brush = new SolidColorBrush(Colors.DarkGoldenrod);
                     Initialize();
                     break;
-             }
-		if (State == State.Configure)
-    	{
-			AddDataSeries(BarsPeriodType.Second,1);
-		}
+            }
+
+            if (State == State.Configure)
+            {
+                AddDataSeries(BarsPeriodType.Second, 1);
+            }
         }
+
         /// <summary>
-        /// Called on each bar update event (incoming tick)
+        /// Called on each bar update event (incoming tick).
         /// </summary>
-       protected override void OnBarUpdate()
+        protected override void OnBarUpdate()
         {
-					
-	        if (CurrentBar < 2) return;
-			if (BarsInProgress == 1)
-			{			
-				TimeSpan ts1 = Time[0] - new DateTime(1970,1,1,0,0,0);
-			    TimeSpan ts2 = Time[1] - new DateTime(1970,1,1,0,0,0);
+            if (CurrentBar < 2)
+                return;
 
-			   // int timeGap=(int)Time[0].Second-(int)Time[1].Second;
-				int timeGap=(int)ts1.TotalSeconds-(int)ts2.TotalSeconds;
+            if (BarsInProgress == 1)
+            {
+                TimeSpan ts1 = Time[0] - new DateTime(1970, 1, 1, 0, 0, 0);
+                TimeSpan ts2 = Time[1] - new DateTime(1970, 1, 1, 0, 0, 0);
+                int timeGap = (int)ts1.TotalSeconds - (int)ts2.TotalSeconds;
 
-				if (Math.Abs(timeGap)<=fix)
-				{
-					if (Volume[0]>=vol3)
-					{	
-						if(useEllipse)	
-					    	Draw.Ellipse(this,"ellipse"+CurrentBar, true, 3, High[0], -3, Low[0], colorV3, shadowcolor, opacity);
-					    
-						if(ShowTime)	
-						{
-							Draw.Text(this,"TFx"+CurrentBar, true, Convert.ToString(Time[0]),5, Median[0], 0,colorText, 
-							new SimpleFont("Small Fonts", 9)/*new Font("Small Fonts", 7, FontStyle.Regular)*/, TextAlignment.Right,	Brushes.Transparent,Brushes.Transparent, 0);
-						}
-						else
-						{
-							Draw.Text(this,"TFx"+CurrentBar, true, Convert.ToString(Volume[0]), 5, Median[0], 0,colorText, 
-							new SimpleFont("Small Fonts", 9)/*new Font("Small Fonts", 7, FontStyle.Regular)*/, TextAlignment.Right,Brushes.Transparent, Brushes.Transparent, 0);
-						}
-					}
-					else
-					if (Volume[0]>=vol2)
-					{	
-						if(useEllipse)	
-					    	Draw.Ellipse(this,"ellipse"+CurrentBar, true, 3, High[0], -3, Low[0], colorV2, shadowcolor, opacity);
-					    
-						if(ShowTime)	
-						{
-							Draw.Text(this,"TFx"+CurrentBar, true, Convert.ToString(Time[0]),5, Median[0], 0,colorText, 
-							new SimpleFont("Small Fonts", 9)/*new Font("Small Fonts", 7, FontStyle.Regular)*/, TextAlignment.Right,	Brushes.Transparent,Brushes.Transparent, 0);
-						}
-						else
-						{
-							Draw.Text(this,"TFx"+CurrentBar, true, Convert.ToString(Volume[0]), 5, Median[0], 0,colorText, 
-							new SimpleFont("Small Fonts", 9)/*new Font("Small Fonts", 7, FontStyle.Regular)*/, TextAlignment.Right,Brushes.Transparent, Brushes.Transparent, 0);
-						}
-					}
-					else 
-					if (Volume[0]>=vol1)
-					{	
-						if(useEllipse)	
-					    	Draw.Ellipse(this,"ellipse"+CurrentBar, true, 3, High[0], -3, Low[0], colorV1, shadowcolor, opacity);
-					    
-						if(ShowTime)	
-						{
-							Draw.Text(this,"TFx"+CurrentBar, true, Convert.ToString(Time[0]),5, Median[0], 0,colorText, 
-							new SimpleFont("Small Fonts", 9)/*new Font("Small Fonts", 7, FontStyle.Regular)*/, TextAlignment.Right,	Brushes.Transparent,Brushes.Transparent, 0);
-						}
-						else
-						{
-							Draw.Text(this,"TFx"+CurrentBar, true, Convert.ToString(Volume[0]), 5, Median[0], 0,colorText, 
-							new SimpleFont("Small Fonts", 9)/*new Font("Small Fonts", 7, FontStyle.Regular)*/, TextAlignment.Right,Brushes.Transparent, Brushes.Transparent, 0);
-						}
-					}
-				}
-			}
-		}
-	
-		#region Properties	
-		[NinjaScriptProperty]		
-		[Display(Name = "1. Volumen 1 de la transacción", Description = "Volumen 1 de transacción", GroupName = "Parameters", Order = 1)]		public int Vol1
-        {
-            get { return vol1; }
-            set { vol1 = Math.Max(1, value); }
+                if (Math.Abs(timeGap) <= timeWindowSeconds)
+                {
+                    if (Volume[0] >= volumeThresholdLevel3)
+                    {
+                        if (showPrintMarkers)
+                            DrawPrintMarker(3, level3Brush);
+
+                        DrawLevelText();
+                        TriggerAlert(3, level3Brush);
+                    }
+                    else if (Volume[0] >= volumeThresholdLevel2)
+                    {
+                        if (showPrintMarkers)
+                            DrawPrintMarker(2, level2Brush);
+
+                        DrawLevelText();
+                        TriggerAlert(2, level2Brush);
+                    }
+                    else if (Volume[0] >= volumeThresholdLevel1)
+                    {
+                        if (showPrintMarkers)
+                            DrawPrintMarker(1, level1Brush);
+
+                        DrawLevelText();
+                        TriggerAlert(1, level1Brush);
+                    }
+                }
+            }
         }
-        
-		[NinjaScriptProperty]		
-		[Display(Name = "2. Volumen 2 de la transacción", Description = "Volumen 2 de transacción", GroupName = "Parameters", Order = 2)]		public int Vol2
+
+        private void DrawLevelText()
         {
-            get { return vol2; }
-            set { vol2 = Math.Max(1, value); }
+            string textToShow = showTime ? Convert.ToString(Time[0]) : Convert.ToString(Volume[0]);
+            // Default font — subject to refinement in future versions.
+            Draw.Text(
+                this,
+                $"HSV_Label_{CurrentBar}",
+                true,
+                textToShow,
+                5,
+                Median[0],
+                0,
+                textBrush,
+                new SimpleFont("Small Fonts", 9),
+                TextAlignment.Right,
+                Brushes.Transparent,
+                Brushes.Transparent,
+                0);
         }
-		
-		[NinjaScriptProperty]		
-		[Display(Name = "3. Volumen 3 de la transacción", Description = "Volumen 3 de transacción", GroupName = "Parameters", Order = 3)]		public int Vol3
+
+        private void DrawPrintMarker(int level, Brush levelBrush)
         {
-            get { return vol3; }
-            set { vol3 = Math.Max(1, value); }
+            int baseSize = level == 1 ? 3 : level == 2 ? 4 : 5;
+            int scaledSize = Math.Max(1, (int)Math.Round(baseSize * markerScale));
+            int heightTicks = scaledSize * 2;
+            double centerPrice = Median[0];
+            double top = centerPrice + (heightTicks * TickSize);
+            double bottom = centerPrice - (heightTicks * TickSize);
+
+            Brush gradientBrush = BuildGradientBrush(levelBrush);
+
+            Draw.Ellipse(
+                this,
+                $"HSV_PrintMarker_{level}_{CurrentBar}",
+                true,
+                scaledSize,
+                top,
+                -scaledSize,
+                bottom,
+                null,
+                gradientBrush,
+                0);
         }
-		[NinjaScriptProperty]        
-		[Display(Name = "4. Momento", Description = "Momento durante el cual se realizó la transacción.", GroupName = "Parameters", Order = 4)]        public int Время
+
+        private Brush BuildGradientBrush(Brush levelBrush)
         {
-            get { return fix; }
-            set { fix = Math.Max(1, value); }
+            Color color = (levelBrush as SolidColorBrush)?.Color ?? Colors.White;
+            Color centerColor = Color.FromArgb(180, color.R, color.G, color.B);
+            Color edgeColor = Color.FromArgb(30, color.R, color.G, color.B);
+
+            var gradient = new RadialGradientBrush();
+            gradient.GradientOrigin = new Point(0.5, 0.5);
+            gradient.Center = new Point(0.5, 0.5);
+            gradient.RadiusX = 0.5;
+            gradient.RadiusY = 0.5;
+            gradient.GradientStops.Add(new GradientStop(centerColor, 0));
+            gradient.GradientStops.Add(new GradientStop(edgeColor, 1));
+            gradient.Freeze();
+
+            return gradient;
         }
-		[NinjaScriptProperty]		
-		[XmlIgnore()]
-		[Display(Name = "5. Color de elipse 1", Description = "Color 1", GroupName = "Parameters", Order = 5)]		
-		public Brush cV1
-		{
-			get{return colorV1;}
-			set{colorV1 = value;}
-		}
-		
-		[NinjaScriptProperty]		
-		[XmlIgnore()]
-		[Display(Name = "6. Color de elipse 2", Description = "Color 2", GroupName = "Parameters", Order = 6)]		
-		public Brush cV2
-		{
-			get{return colorV2;}
-			set{colorV2 = value;}
-		}
-		
-		[NinjaScriptProperty]		
-		[XmlIgnore()]
-		[Display(Name = "7. Color de elipse 3", Description = "Color 3", GroupName = "Parameters", Order = 7)]		
-		public Brush cV3
-		{
-			get{return colorV3;}
-			set{colorV3 = value;}
-		}
-		
-		
-		// Serialize our Color object
-		[Browsable(false)]
-		public string ColorBrushSerialize1
-		{
-			get { return Serialize.BrushToString(colorV1); }
-   			set { colorV1 = Serialize.StringToBrush(value); }
-		}
-		[Browsable(false)]
-		public string ColorBrushSerialize2
-		{
-			get { return Serialize.BrushToString(colorV2); }
-   			set { colorV2 = Serialize.StringToBrush(value); }
-		}
-		[Browsable(false)]
-		public string ColorBrushSerialize3
-		{
-			get { return Serialize.BrushToString(colorV3); }
-   			set { colorV3 = Serialize.StringToBrush(value); }
-		}
-		[NinjaScriptProperty]		
-		[XmlIgnore()]
-		[Display(Name = "4. Colores del texto", Description = "colores del texto", GroupName = "Parameters", Order = 8)]		
-		public Brush ЦветТекста
-		{
-			get{return colorText;}
-			set{colorText = value;}
-		}
-		[Browsable(false)]
-		public string ColorTextBrushSerialize
-		{
-			get { return Serialize.BrushToString(ЦветТекста); }
-   			set { ЦветТекста = Serialize.StringToBrush(value); }
-		}
-        [NinjaScriptProperty]        
-		[XmlIgnore()]
-		[Display(Name = "1. Exhibición comercial", Description = "Exhibición comercial", GroupName = "Parameters-Other", Order = 9)]        public bool Эллипс
+
+        private void TriggerAlert(int level, Brush levelBrush)
         {
-            get { return useEllipse; }
-            set {useEllipse = value; }
-        }	
-        [NinjaScriptProperty]        
-		[Display(Name = "2. Tiempo y volumen", Description = "Tiempo de visualización verdadero, volumen", GroupName = "Parameters-Other", Order = 10)]        public bool Значения_объёма
+            if (!enableAlerts)
+                return;
+
+            if ((level == 1 && !alertLevel1Enabled) || (level == 2 && !alertLevel2Enabled) || (level == 3 && !alertLevel3Enabled))
+                return;
+
+            long eventKey = GetAlertEventKey();
+            if (lastAlertEventKey == eventKey)
+                return;
+
+            lastAlertEventKey = eventKey;
+
+            string message = $"Hawk Smart Volume - Level {level} print detected (Print nível {level} detectado).";
+            Alert(
+                $"HSV_Alert_{level}_{eventKey}",
+                Priority.High,
+                message,
+                alertSoundFile,
+                0,
+                levelBrush,
+                levelBrush);
+        }
+
+        private long GetAlertEventKey()
         {
-            get { return ShowTime; }
-            set {ShowTime = value; }
-        }	
-        [NinjaScriptProperty]       
-		[Display(Name = "3. Señal de sonido", Description = "Señal de sonido", GroupName = "Parameters-Other", Order = 11)]        public bool Звуковой_сигнал
+            return ((long)BarsInProgress << 56) ^ Time[0].Ticks;
+        }
+
+        #region Properties
+        [NinjaScriptProperty]
+        [Display(
+            Name = "Volume Threshold Level 1 (Limite mínimo de volume – Nível 1)",
+            Description = "Minimum volume threshold for level 1 (Limite mínimo de volume – Nível 1).",
+            GroupName = "Volume Thresholds",
+            Order = 1)]
+        public int VolumeThresholdLevel1
         {
-            get { return useAlerts; }
-            set {useAlerts = value; }
-        }			
-        [NinjaScriptProperty]        
-		[Display(Name = "4. Archivo", Description = "Nombre del archivo de sonido", GroupName = "Parameters-Other", Order = 12)]        public string StringtoAlert
+            get { return volumeThresholdLevel1; }
+            set { volumeThresholdLevel1 = Math.Max(1, value); }
+        }
+
+        [NinjaScriptProperty]
+        [Display(
+            Name = "Volume Threshold Level 2 (Limite mínimo de volume – Nível 2)",
+            Description = "Minimum volume threshold for level 2 (Limite mínimo de volume – Nível 2).",
+            GroupName = "Volume Thresholds",
+            Order = 2)]
+        public int VolumeThresholdLevel2
         {
-            get { return stringtoAlert; }
-            set {stringtoAlert = value; }
-        }		
+            get { return volumeThresholdLevel2; }
+            set { volumeThresholdLevel2 = Math.Max(1, value); }
+        }
+
+        [NinjaScriptProperty]
+        [Display(
+            Name = "Volume Threshold Level 3 (Limite mínimo de volume – Nível 3)",
+            Description = "Minimum volume threshold for level 3 (Limite mínimo de volume – Nível 3).",
+            GroupName = "Volume Thresholds",
+            Order = 3)]
+        public int VolumeThresholdLevel3
+        {
+            get { return volumeThresholdLevel3; }
+            set { volumeThresholdLevel3 = Math.Max(1, value); }
+        }
+
+        [NinjaScriptProperty]
+        [Display(
+            Name = "Time Window (Janela de tempo)",
+            Description = "Time window in seconds for trade alignment (Janela de tempo em segundos para alinhamento das transações).",
+            GroupName = "Time Window",
+            Order = 4)]
+        public int TimeWindowSeconds
+        {
+            get { return timeWindowSeconds; }
+            set { timeWindowSeconds = Math.Max(1, value); }
+        }
+
+        [NinjaScriptProperty]
+        [XmlIgnore]
+        [Display(
+            Name = "Print Marker Level 1 Color (Cor do marcador – Nível 1)",
+            Description = "Print marker color for level 1 (Cor do marcador – Nível 1).",
+            GroupName = "Visual Settings",
+            Order = 5)]
+        public Brush Level1Brush
+        {
+            get { return level1Brush; }
+            set { level1Brush = value; }
+        }
+
+        [NinjaScriptProperty]
+        [XmlIgnore]
+        [Display(
+            Name = "Print Marker Level 2 Color (Cor do marcador – Nível 2)",
+            Description = "Print marker color for level 2 (Cor do marcador – Nível 2).",
+            GroupName = "Visual Settings",
+            Order = 6)]
+        public Brush Level2Brush
+        {
+            get { return level2Brush; }
+            set { level2Brush = value; }
+        }
+
+        [NinjaScriptProperty]
+        [XmlIgnore]
+        [Display(
+            Name = "Print Marker Level 3 Color (Cor do marcador – Nível 3)",
+            Description = "Print marker color for level 3 (Cor do marcador – Nível 3).",
+            GroupName = "Visual Settings",
+            Order = 7)]
+        public Brush Level3Brush
+        {
+            get { return level3Brush; }
+            set { level3Brush = value; }
+        }
+
+        [Browsable(false)]
+        public string Level1BrushSerialize
+        {
+            get { return Serialize.BrushToString(level1Brush); }
+            set { level1Brush = Serialize.StringToBrush(value); }
+        }
+
+        [Browsable(false)]
+        public string Level2BrushSerialize
+        {
+            get { return Serialize.BrushToString(level2Brush); }
+            set { level2Brush = Serialize.StringToBrush(value); }
+        }
+
+        [Browsable(false)]
+        public string Level3BrushSerialize
+        {
+            get { return Serialize.BrushToString(level3Brush); }
+            set { level3Brush = Serialize.StringToBrush(value); }
+        }
+
+        [NinjaScriptProperty]
+        [XmlIgnore]
+        [Display(
+            Name = "Text Color (Cor do texto)",
+            Description = "Color used for text labels (Cor usada para os textos).",
+            GroupName = "Visual Settings",
+            Order = 8)]
+        public Brush TextBrush
+        {
+            get { return textBrush; }
+            set { textBrush = value; }
+        }
+
+        [Browsable(false)]
+        public string TextBrushSerialize
+        {
+            get { return Serialize.BrushToString(TextBrush); }
+            set { TextBrush = Serialize.StringToBrush(value); }
+        }
+
+        [NinjaScriptProperty]
+        [XmlIgnore]
+        [Display(
+            Name = "Show Print Markers (Exibir marcadores de print)",
+            Description = "Enable print markers on chart (Ativar marcadores de print no gráfico).",
+            GroupName = "Visual Settings",
+            Order = 9)]
+        public bool ShowEllipses
+        {
+            get { return showPrintMarkers; }
+            set { showPrintMarkers = value; }
+        }
+
+        [Browsable(false)]
+        [XmlIgnore]
+        public bool ShowPrintMarkers
+        {
+            get { return showPrintMarkers; }
+            set { showPrintMarkers = value; }
+        }
+
+        [NinjaScriptProperty]
+        [Display(
+            Name = "Show Time Instead of Volume (Mostrar horário em vez do volume)",
+            Description = "Display trade time instead of volume value (Mostrar horário da transação no lugar do volume).",
+            GroupName = "Visual Settings",
+            Order = 10)]
+        public bool ShowTime
+        {
+            get { return showTime; }
+            set { showTime = value; }
+        }
+
+        [NinjaScriptProperty]
+        [Display(
+            Name = "Enable Alerts (Habilitar alertas)",
+            Description = "Enable or disable alert notifications (Ativar ou desativar alertas).",
+            GroupName = "Alerts",
+            Order = 11)]
+        public bool EnableAlerts
+        {
+            get { return enableAlerts; }
+            set { enableAlerts = value; }
+        }
+
+        [NinjaScriptProperty]
+        [Display(
+            Name = "Alert Level 1 (Alerta nível 1)",
+            Description = "Enable sound alert for level 1 prints (Ativar alerta sonoro para prints nível 1).",
+            GroupName = "Alerts",
+            Order = 12)]
+        public bool AlertLevel1Enabled
+        {
+            get { return alertLevel1Enabled; }
+            set { alertLevel1Enabled = value; }
+        }
+
+        [NinjaScriptProperty]
+        [Display(
+            Name = "Alert Level 2 (Alerta nível 2)",
+            Description = "Enable sound alert for level 2 prints (Ativar alerta sonoro para prints nível 2).",
+            GroupName = "Alerts",
+            Order = 13)]
+        public bool AlertLevel2Enabled
+        {
+            get { return alertLevel2Enabled; }
+            set { alertLevel2Enabled = value; }
+        }
+
+        [NinjaScriptProperty]
+        [Display(
+            Name = "Alert Level 3 (Alerta nível 3)",
+            Description = "Enable sound alert for level 3 prints (Ativar alerta sonoro para prints nível 3).",
+            GroupName = "Alerts",
+            Order = 14)]
+        public bool AlertLevel3Enabled
+        {
+            get { return alertLevel3Enabled; }
+            set { alertLevel3Enabled = value; }
+        }
+
+        [NinjaScriptProperty]
+        [Display(
+            Name = "Alert Sound File (Arquivo de som do alerta)",
+            Description = "Sound file name for alerts in the NinjaTrader sounds folder (Nome do arquivo na pasta de sons do NinjaTrader).",
+            GroupName = "Alerts",
+            Order = 15)]
+        public string AlertSoundFile
+        {
+            get { return alertSoundFile; }
+            set { alertSoundFile = value; }
+        }
+
+        [NinjaScriptProperty]
+        [Display(
+            Name = "Marker Scale (Escala do marcador)",
+            Description = "Global size multiplier for the print marker (Multiplicador global do tamanho do marcador).",
+            GroupName = "Visual Settings",
+            Order = 16)]
+        public double MarkerScale
+        {
+            get { return markerScale; }
+            set { markerScale = Math.Max(0.5, value); }
+        }
         #endregion
     }
 }
@@ -260,55 +452,55 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 namespace NinjaTrader.NinjaScript.Indicators
 {
-	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
-	{
-		private BigTrades3Vol[] cacheBigTrades3Vol;
-		public BigTrades3Vol BigTrades3Vol(int vol1, int vol2, int vol3, int время, Brush cV1, Brush cV2, Brush cV3, Brush цветТекста, bool эллипс, bool значения_объёма, bool звуковой_сигнал, string stringtoAlert)
-		{
-			return BigTrades3Vol(Input, vol1, vol2, vol3, время, cV1, cV2, cV3, цветТекста, эллипс, значения_объёма, звуковой_сигнал, stringtoAlert);
-		}
+    public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
+    {
+        private HawkSamartVolume[] cacheHawkSamartVolume;
+        public HawkSamartVolume HawkSamartVolume(int volumeThresholdLevel1, int volumeThresholdLevel2, int volumeThresholdLevel3, int timeWindowSeconds, Brush level1Brush, Brush level2Brush, Brush level3Brush, Brush textBrush, bool showEllipses, bool showTime, bool enableAlerts, bool alertLevel1Enabled, bool alertLevel2Enabled, bool alertLevel3Enabled, string alertSoundFile, double markerScale)
+        {
+            return HawkSamartVolume(Input, volumeThresholdLevel1, volumeThresholdLevel2, volumeThresholdLevel3, timeWindowSeconds, level1Brush, level2Brush, level3Brush, textBrush, showEllipses, showTime, enableAlerts, alertLevel1Enabled, alertLevel2Enabled, alertLevel3Enabled, alertSoundFile, markerScale);
+        }
 
-		public BigTrades3Vol BigTrades3Vol(ISeries<double> input, int vol1, int vol2, int vol3, int время, Brush cV1, Brush cV2, Brush cV3, Brush цветТекста, bool эллипс, bool значения_объёма, bool звуковой_сигнал, string stringtoAlert)
-		{
-			if (cacheBigTrades3Vol != null)
-				for (int idx = 0; idx < cacheBigTrades3Vol.Length; idx++)
-					if (cacheBigTrades3Vol[idx] != null && cacheBigTrades3Vol[idx].Vol1 == vol1 && cacheBigTrades3Vol[idx].Vol2 == vol2 && cacheBigTrades3Vol[idx].Vol3 == vol3 && cacheBigTrades3Vol[idx].Время == время && cacheBigTrades3Vol[idx].cV1 == cV1 && cacheBigTrades3Vol[idx].cV2 == cV2 && cacheBigTrades3Vol[idx].cV3 == cV3 && cacheBigTrades3Vol[idx].ЦветТекста == цветТекста && cacheBigTrades3Vol[idx].Эллипс == эллипс && cacheBigTrades3Vol[idx].Значения_объёма == значения_объёма && cacheBigTrades3Vol[idx].Звуковой_сигнал == звуковой_сигнал && cacheBigTrades3Vol[idx].StringtoAlert == stringtoAlert && cacheBigTrades3Vol[idx].EqualsInput(input))
-						return cacheBigTrades3Vol[idx];
-			return CacheIndicator<BigTrades3Vol>(new BigTrades3Vol(){ Vol1 = vol1, Vol2 = vol2, Vol3 = vol3, Время = время, cV1 = cV1, cV2 = cV2, cV3 = cV3, ЦветТекста = цветТекста, Эллипс = эллипс, Значения_объёма = значения_объёма, Звуковой_сигнал = звуковой_сигнал, StringtoAlert = stringtoAlert }, input, ref cacheBigTrades3Vol);
-		}
-	}
+        public HawkSamartVolume HawkSamartVolume(ISeries<double> input, int volumeThresholdLevel1, int volumeThresholdLevel2, int volumeThresholdLevel3, int timeWindowSeconds, Brush level1Brush, Brush level2Brush, Brush level3Brush, Brush textBrush, bool showEllipses, bool showTime, bool enableAlerts, bool alertLevel1Enabled, bool alertLevel2Enabled, bool alertLevel3Enabled, string alertSoundFile, double markerScale)
+        {
+            if (cacheHawkSamartVolume != null)
+                for (int idx = 0; idx < cacheHawkSamartVolume.Length; idx++)
+                    if (cacheHawkSamartVolume[idx] != null && cacheHawkSamartVolume[idx].VolumeThresholdLevel1 == volumeThresholdLevel1 && cacheHawkSamartVolume[idx].VolumeThresholdLevel2 == volumeThresholdLevel2 && cacheHawkSamartVolume[idx].VolumeThresholdLevel3 == volumeThresholdLevel3 && cacheHawkSamartVolume[idx].TimeWindowSeconds == timeWindowSeconds && cacheHawkSamartVolume[idx].Level1Brush == level1Brush && cacheHawkSamartVolume[idx].Level2Brush == level2Brush && cacheHawkSamartVolume[idx].Level3Brush == level3Brush && cacheHawkSamartVolume[idx].TextBrush == textBrush && cacheHawkSamartVolume[idx].ShowEllipses == showEllipses && cacheHawkSamartVolume[idx].ShowTime == showTime && cacheHawkSamartVolume[idx].EnableAlerts == enableAlerts && cacheHawkSamartVolume[idx].AlertLevel1Enabled == alertLevel1Enabled && cacheHawkSamartVolume[idx].AlertLevel2Enabled == alertLevel2Enabled && cacheHawkSamartVolume[idx].AlertLevel3Enabled == alertLevel3Enabled && cacheHawkSamartVolume[idx].AlertSoundFile == alertSoundFile && cacheHawkSamartVolume[idx].MarkerScale == markerScale && cacheHawkSamartVolume[idx].EqualsInput(input))
+                        return cacheHawkSamartVolume[idx];
+            return CacheIndicator<HawkSamartVolume>(new HawkSamartVolume() { VolumeThresholdLevel1 = volumeThresholdLevel1, VolumeThresholdLevel2 = volumeThresholdLevel2, VolumeThresholdLevel3 = volumeThresholdLevel3, TimeWindowSeconds = timeWindowSeconds, Level1Brush = level1Brush, Level2Brush = level2Brush, Level3Brush = level3Brush, TextBrush = textBrush, ShowEllipses = showEllipses, ShowTime = showTime, EnableAlerts = enableAlerts, AlertLevel1Enabled = alertLevel1Enabled, AlertLevel2Enabled = alertLevel2Enabled, AlertLevel3Enabled = alertLevel3Enabled, AlertSoundFile = alertSoundFile, MarkerScale = markerScale }, input, ref cacheHawkSamartVolume);
+        }
+    }
 }
 
 namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
 {
-	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
-	{
-		public Indicators.BigTrades3Vol BigTrades3Vol(int vol1, int vol2, int vol3, int время, Brush cV1, Brush cV2, Brush cV3, Brush цветТекста, bool эллипс, bool значения_объёма, bool звуковой_сигнал, string stringtoAlert)
-		{
-			return indicator.BigTrades3Vol(Input, vol1, vol2, vol3, время, cV1, cV2, cV3, цветТекста, эллипс, значения_объёма, звуковой_сигнал, stringtoAlert);
-		}
+    public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
+    {
+        public Indicators.HawkSamartVolume HawkSamartVolume(int volumeThresholdLevel1, int volumeThresholdLevel2, int volumeThresholdLevel3, int timeWindowSeconds, Brush level1Brush, Brush level2Brush, Brush level3Brush, Brush textBrush, bool showEllipses, bool showTime, bool enableAlerts, bool alertLevel1Enabled, bool alertLevel2Enabled, bool alertLevel3Enabled, string alertSoundFile, double markerScale)
+        {
+            return indicator.HawkSamartVolume(Input, volumeThresholdLevel1, volumeThresholdLevel2, volumeThresholdLevel3, timeWindowSeconds, level1Brush, level2Brush, level3Brush, textBrush, showEllipses, showTime, enableAlerts, alertLevel1Enabled, alertLevel2Enabled, alertLevel3Enabled, alertSoundFile, markerScale);
+        }
 
-		public Indicators.BigTrades3Vol BigTrades3Vol(ISeries<double> input , int vol1, int vol2, int vol3, int время, Brush cV1, Brush cV2, Brush cV3, Brush цветТекста, bool эллипс, bool значения_объёма, bool звуковой_сигнал, string stringtoAlert)
-		{
-			return indicator.BigTrades3Vol(input, vol1, vol2, vol3, время, cV1, cV2, cV3, цветТекста, эллипс, значения_объёма, звуковой_сигнал, stringtoAlert);
-		}
-	}
+        public Indicators.HawkSamartVolume HawkSamartVolume(ISeries<double> input, int volumeThresholdLevel1, int volumeThresholdLevel2, int volumeThresholdLevel3, int timeWindowSeconds, Brush level1Brush, Brush level2Brush, Brush level3Brush, Brush textBrush, bool showEllipses, bool showTime, bool enableAlerts, bool alertLevel1Enabled, bool alertLevel2Enabled, bool alertLevel3Enabled, string alertSoundFile, double markerScale)
+        {
+            return indicator.HawkSamartVolume(input, volumeThresholdLevel1, volumeThresholdLevel2, volumeThresholdLevel3, timeWindowSeconds, level1Brush, level2Brush, level3Brush, textBrush, showEllipses, showTime, enableAlerts, alertLevel1Enabled, alertLevel2Enabled, alertLevel3Enabled, alertSoundFile, markerScale);
+        }
+    }
 }
 
 namespace NinjaTrader.NinjaScript.Strategies
 {
-	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
-	{
-		public Indicators.BigTrades3Vol BigTrades3Vol(int vol1, int vol2, int vol3, int время, Brush cV1, Brush cV2, Brush cV3, Brush цветТекста, bool эллипс, bool значения_объёма, bool звуковой_сигнал, string stringtoAlert)
-		{
-			return indicator.BigTrades3Vol(Input, vol1, vol2, vol3, время, cV1, cV2, cV3, цветТекста, эллипс, значения_объёма, звуковой_сигнал, stringtoAlert);
-		}
+    public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
+    {
+        public Indicators.HawkSamartVolume HawkSamartVolume(int volumeThresholdLevel1, int volumeThresholdLevel2, int volumeThresholdLevel3, int timeWindowSeconds, Brush level1Brush, Brush level2Brush, Brush level3Brush, Brush textBrush, bool showEllipses, bool showTime, bool enableAlerts, bool alertLevel1Enabled, bool alertLevel2Enabled, bool alertLevel3Enabled, string alertSoundFile, double markerScale)
+        {
+            return indicator.HawkSamartVolume(Input, volumeThresholdLevel1, volumeThresholdLevel2, volumeThresholdLevel3, timeWindowSeconds, level1Brush, level2Brush, level3Brush, textBrush, showEllipses, showTime, enableAlerts, alertLevel1Enabled, alertLevel2Enabled, alertLevel3Enabled, alertSoundFile, markerScale);
+        }
 
-		public Indicators.BigTrades3Vol BigTrades3Vol(ISeries<double> input , int vol1, int vol2, int vol3, int время, Brush cV1, Brush cV2, Brush cV3, Brush цветТекста, bool эллипс, bool значения_объёма, bool звуковой_сигнал, string stringtoAlert)
-		{
-			return indicator.BigTrades3Vol(input, vol1, vol2, vol3, время, cV1, cV2, cV3, цветТекста, эллипс, значения_объёма, звуковой_сигнал, stringtoAlert);
-		}
-	}
+        public Indicators.HawkSamartVolume HawkSamartVolume(ISeries<double> input, int volumeThresholdLevel1, int volumeThresholdLevel2, int volumeThresholdLevel3, int timeWindowSeconds, Brush level1Brush, Brush level2Brush, Brush level3Brush, Brush textBrush, bool showEllipses, bool showTime, bool enableAlerts, bool alertLevel1Enabled, bool alertLevel2Enabled, bool alertLevel3Enabled, string alertSoundFile, double markerScale)
+        {
+            return indicator.HawkSamartVolume(input, volumeThresholdLevel1, volumeThresholdLevel2, volumeThresholdLevel3, timeWindowSeconds, level1Brush, level2Brush, level3Brush, textBrush, showEllipses, showTime, enableAlerts, alertLevel1Enabled, alertLevel2Enabled, alertLevel3Enabled, alertSoundFile, markerScale);
+        }
+    }
 }
 
 #endregion
