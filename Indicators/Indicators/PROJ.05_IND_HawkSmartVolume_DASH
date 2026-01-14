@@ -63,7 +63,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         /// </summary>
         private void Initialize()
         {
-            Calculate = Calculate.OnBarClose;
+            Calculate = Calculate.OnEachTick;
             IsOverlay = true;
         }
 
@@ -161,81 +161,47 @@ namespace NinjaTrader.NinjaScript.Indicators
                     Print($"[HSV][DBG] BIP={BarsInProgress} | CB0={CurrentBars[0]} | CB1={(BarsArray.Length > 1 ? CurrentBars[1] : -1)} | Time={Time[0]:HH:mm:ss} | Vol={Volume[0]}");
                 }
 
-                while (pending.Count > 0)
+                if (pending.Count == 0)
+                    return;
+
+                var ev = pending.Dequeue();
+
+                int barIdx = BarsArray[0].GetBar(ev.Time);
+                if (barIdx < 0)
+                    barIdx = BarsArray[0].GetBar(Time[0]);
+
+                if (barIdx < 0)
                 {
-                    var ev = pending.Dequeue();
-
-                    int barIdx = BarsArray[0].GetBar(ev.Time);
-                    if (barIdx < 0)
-                    {
-                        DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo=-1");
-                        continue;
-                    }
-
-                    int barsAgo = CurrentBar - barIdx;
-                    if (barsAgo < 0)
-                    {
-                        DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
-                        continue;
-                    }
-
-                    if (barsAgo > CurrentBar)
-                    {
-                        DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
-                        continue;
-                    }
-
-                    if (barsAgo >= BarsArray[0].Count)
-                    {
-                        DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
-                        continue;
-                    }
-
-                    DebugLog(
-                      $"EVENT | Level={ev.Level} | Vol={ev.Volume} | " +
-                      $"EventTime={ev.Time:HH:mm:ss.fff} | BarIdx={barIdx} | BarsAgo={barsAgo}"
-                    );
-
-                    Brush brush = ev.Level == 3 ? level3Brush : ev.Level == 2 ? level2Brush : level1Brush;
-
-                    bool drawn = false;
-                    if (showPrintMarkers)
-                        drawn = DrawPrintMarker_OnPrimary(ev.Level, brush, ev.Price, barsAgo, ev.Time);
-
-                    if (drawn)
-                    {
-                        DrawLevelText_OnPrimary(ev.Level, ev.Price, barsAgo, ev.Time, ev.Volume);
-                        TriggerAlert(ev.Level, brush);
-                    }
-                }
-            }
-
-            if (BarsInProgress == 0)
-            {
-                if (debugDraw)
-                {
-                    Print($"[HSV][DBG] BIP={BarsInProgress} | CB0={CurrentBars[0]} | CB1={(BarsArray.Length > 1 ? CurrentBars[1] : -1)} | Time={Time[0]:HH:mm:ss} | Vol={Volume[0]}");
+                    DebugLog("DROP | Reason=InvalidBarsAgo | BarsAgo=-1");
+                    return;
                 }
 
-                while (pending.Count > 0)
+                int barsAgo = CurrentBar - barIdx;
+                if (barsAgo < 0)
                 {
-                    var ev = pending.Dequeue();
+                    DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
+                    return;
+                }
 
-                    int barIdx = BarsArray[0].GetBar(ev.Time);
-                    if (barIdx < 0)
-                        continue;
+                if (barsAgo > CurrentBar)
+                {
+                    DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
+                    return;
+                }
 
-                    int barsAgo = CurrentBar - barIdx;
-                    if (barsAgo < 0 || barsAgo > CurrentBar)
-                        continue;
+                DebugLog(
+                  $"EVENT | Level={ev.Level} | Vol={ev.Volume} | " +
+                  $"EventTime={ev.Time:HH:mm:ss.fff} | BarIdx={barIdx} | BarsAgo={barsAgo}"
+                );
 
-                    DebugLog($"Dequeue event | Level={ev.Level} | EventTime={ev.Time:HH:mm:ss} | BarIdx={barIdx} | BarsAgo={barsAgo}");
+                Brush brush = ev.Level == 3 ? level3Brush : ev.Level == 2 ? level2Brush : level1Brush;
 
-                    Brush brush = ev.Level == 3 ? level3Brush : ev.Level == 2 ? level2Brush : level1Brush;
+                bool drawn = false;
+                if (showPrintMarkers)
+                    drawn = DrawPrintMarker_OnPrimary(ev.Level, brush, ev.Price, barsAgo, ev.Time);
 
-                    if (showPrintMarkers)
-                        DrawPrintMarker_OnPrimary(ev.Level, brush, ev.Price, barsAgo, ev.Time);
-
+                if (drawn)
+                {
                     DrawLevelText_OnPrimary(ev.Level, ev.Price, barsAgo, ev.Time, ev.Volume);
                     TriggerAlert(ev.Level, brush);
                 }
@@ -276,12 +242,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                 }
 
                 if (barsAgo > CurrentBar)
-                {
-                    DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
-                    return false;
-                }
-
-                if (barsAgo >= BarsArray[0].Count)
                 {
                     DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
                     return false;
@@ -330,6 +290,13 @@ namespace NinjaTrader.NinjaScript.Indicators
                     core = new SolidColorBrush(Color.FromArgb(coreAlpha, cCore.R, cCore.G, cCore.B));
                     mid = new SolidColorBrush(Color.FromArgb(midAlpha, cMid.R, cMid.G, cMid.B));
                     hi = new SolidColorBrush(Color.FromArgb((byte)(midAlpha + 10), cHi.R, cHi.G, cHi.B));
+                }
+
+                if (debugDraw)
+                {
+                    core = new SolidColorBrush(Colors.Red);
+                    mid = new SolidColorBrush(Colors.Transparent);
+                    hi = new SolidColorBrush(Colors.Transparent);
                 }
 
                 DebugLog(
