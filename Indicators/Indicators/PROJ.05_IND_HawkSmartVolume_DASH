@@ -39,11 +39,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         private bool alertLevel1Enabled = true;
         private bool alertLevel2Enabled = true;
         private bool alertLevel3Enabled = true;
-        private bool showEllipses = true;
+        private bool showPrintMarkers = true;
         private bool showTime = false;
         private string alertSoundFile = "Alert4.wav";
         private double markerScale = 1.0;
-        private int lastAlertBar = -1;
+        private long lastAlertEventKey = -1;
         #endregion
 
         /// <summary>
@@ -93,7 +93,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 {
                     if (Volume[0] >= volumeThresholdLevel3)
                     {
-                        if (showEllipses)
+                        if (showPrintMarkers)
                             DrawPrintMarker(3, level3Brush);
 
                         DrawLevelText();
@@ -101,7 +101,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     }
                     else if (Volume[0] >= volumeThresholdLevel2)
                     {
-                        if (showEllipses)
+                        if (showPrintMarkers)
                             DrawPrintMarker(2, level2Brush);
 
                         DrawLevelText();
@@ -109,7 +109,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     }
                     else if (Volume[0] >= volumeThresholdLevel1)
                     {
-                        if (showEllipses)
+                        if (showPrintMarkers)
                             DrawPrintMarker(1, level1Brush);
 
                         DrawLevelText();
@@ -122,9 +122,10 @@ namespace NinjaTrader.NinjaScript.Indicators
         private void DrawLevelText()
         {
             string textToShow = showTime ? Convert.ToString(Time[0]) : Convert.ToString(Volume[0]);
+            // Default font — subject to refinement in future versions.
             Draw.Text(
                 this,
-                "TFx" + CurrentBar,
+                $"HSV_Label_{CurrentBar}",
                 true,
                 textToShow,
                 5,
@@ -156,7 +157,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             Draw.Ellipse(
                 this,
-                $"hawkMarkerOuter{level}_{CurrentBar}",
+                $"HSV_PrintMarkerOuter_{level}_{CurrentBar}",
                 true,
                 scaledSize,
                 top,
@@ -168,7 +169,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             Draw.Ellipse(
                 this,
-                $"hawkMarkerInner{level}_{CurrentBar}",
+                $"HSV_PrintMarkerInner_{level}_{CurrentBar}",
                 true,
                 innerSize,
                 top,
@@ -180,7 +181,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             Draw.Ellipse(
                 this,
-                $"hawkMarkerHighlight{level}_{CurrentBar}",
+                $"HSV_PrintMarkerHighlight_{level}_{CurrentBar}",
                 true,
                 highlightSize,
                 highlightTop,
@@ -208,20 +209,26 @@ namespace NinjaTrader.NinjaScript.Indicators
             if ((level == 1 && !alertLevel1Enabled) || (level == 2 && !alertLevel2Enabled) || (level == 3 && !alertLevel3Enabled))
                 return;
 
-            if (lastAlertBar == CurrentBar)
+            long eventKey = GetAlertEventKey();
+            if (lastAlertEventKey == eventKey)
                 return;
 
-            lastAlertBar = CurrentBar;
+            lastAlertEventKey = eventKey;
 
             string message = $"Hawk Smart Volume - Level {level} print detected (Print nível {level} detectado).";
             Alert(
-                $"HawkSmartVolumeAlert_{level}_{CurrentBar}",
+                $"HSV_Alert_{level}_{eventKey}",
                 Priority.High,
                 message,
                 alertSoundFile,
                 0,
                 levelBrush,
                 levelBrush);
+        }
+
+        private long GetAlertEventKey()
+        {
+            return ((long)BarsInProgress << 56) ^ Time[0].Ticks;
         }
 
         #region Properties
@@ -276,8 +283,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         [NinjaScriptProperty]
         [XmlIgnore]
         [Display(
-            Name = "Level 1 Ellipse Color (Cor da elipse – Nível 1)",
-            Description = "Ellipse color for level 1 (Cor da elipse – Nível 1).",
+            Name = "Print Marker Level 1 Color (Cor do marcador – Nível 1)",
+            Description = "Print marker color for level 1 (Cor do marcador – Nível 1).",
             GroupName = "Visual Settings",
             Order = 5)]
         public Brush Level1Brush
@@ -289,8 +296,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         [NinjaScriptProperty]
         [XmlIgnore]
         [Display(
-            Name = "Level 2 Ellipse Color (Cor da elipse – Nível 2)",
-            Description = "Ellipse color for level 2 (Cor da elipse – Nível 2).",
+            Name = "Print Marker Level 2 Color (Cor do marcador – Nível 2)",
+            Description = "Print marker color for level 2 (Cor do marcador – Nível 2).",
             GroupName = "Visual Settings",
             Order = 6)]
         public Brush Level2Brush
@@ -302,8 +309,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         [NinjaScriptProperty]
         [XmlIgnore]
         [Display(
-            Name = "Level 3 Ellipse Color (Cor da elipse – Nível 3)",
-            Description = "Ellipse color for level 3 (Cor da elipse – Nível 3).",
+            Name = "Print Marker Level 3 Color (Cor do marcador – Nível 3)",
+            Description = "Print marker color for level 3 (Cor do marcador – Nível 3).",
             GroupName = "Visual Settings",
             Order = 7)]
         public Brush Level3Brush
@@ -362,8 +369,16 @@ namespace NinjaTrader.NinjaScript.Indicators
             Order = 9)]
         public bool ShowEllipses
         {
-            get { return showEllipses; }
-            set { showEllipses = value; }
+            get { return showPrintMarkers; }
+            set { showPrintMarkers = value; }
+        }
+
+        [Browsable(false)]
+        [XmlIgnore]
+        public bool ShowPrintMarkers
+        {
+            get { return showPrintMarkers; }
+            set { showPrintMarkers = value; }
         }
 
         [NinjaScriptProperty]
