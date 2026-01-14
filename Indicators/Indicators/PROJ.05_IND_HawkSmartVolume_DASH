@@ -77,7 +77,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     Calculate = Calculate.OnEachTick;
                     IsOverlay = true;
                     BarsRequiredToPlot = 2;
-                    level1Brush = Brushes.GradientBrush;
+                    level1Brush = Serialize.StringToBrush("GradientBrush");
                     level2Brush = new SolidColorBrush(Colors.DimGray);
                     level3Brush = new SolidColorBrush(Colors.DarkGoldenrod);
                     textBrush = Brushes.DarkGray;
@@ -310,11 +310,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Print($"[HSV][ERROR][DrawPrintMarker] {ex.Message}");
                 return false;
             }
-        }
-
-        private Brush ResolveDefaultLevel1Brush()
-        {
-            return new SolidColorBrush(Color.FromRgb(80, 80, 80));
         }
 
         private void DebugLog(string message)
