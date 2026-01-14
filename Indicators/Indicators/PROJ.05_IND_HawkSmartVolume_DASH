@@ -167,6 +167,62 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                     int barIdx = BarsArray[0].GetBar(ev.Time);
                     if (barIdx < 0)
+                    {
+                        DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo=-1");
+                        continue;
+                    }
+
+                    int barsAgo = CurrentBar - barIdx;
+                    if (barsAgo < 0)
+                    {
+                        DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
+                        continue;
+                    }
+
+                    if (barsAgo > CurrentBar)
+                    {
+                        DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
+                        continue;
+                    }
+
+                    if (barsAgo >= BarsArray[0].Count)
+                    {
+                        DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
+                        continue;
+                    }
+
+                    DebugLog(
+                      $"EVENT | Level={ev.Level} | Vol={ev.Volume} | " +
+                      $"EventTime={ev.Time:HH:mm:ss.fff} | BarIdx={barIdx} | BarsAgo={barsAgo}"
+                    );
+
+                    Brush brush = ev.Level == 3 ? level3Brush : ev.Level == 2 ? level2Brush : level1Brush;
+
+                    bool drawn = false;
+                    if (showPrintMarkers)
+                        drawn = DrawPrintMarker_OnPrimary(ev.Level, brush, ev.Price, barsAgo, ev.Time);
+
+                    if (drawn)
+                    {
+                        DrawLevelText_OnPrimary(ev.Level, ev.Price, barsAgo, ev.Time, ev.Volume);
+                        TriggerAlert(ev.Level, brush);
+                    }
+                }
+            }
+
+            if (BarsInProgress == 0)
+            {
+                if (debugDraw)
+                {
+                    Print($"[HSV][DBG] BIP={BarsInProgress} | CB0={CurrentBars[0]} | CB1={(BarsArray.Length > 1 ? CurrentBars[1] : -1)} | Time={Time[0]:HH:mm:ss} | Vol={Volume[0]}");
+                }
+
+                while (pending.Count > 0)
+                {
+                    var ev = pending.Dequeue();
+
+                    int barIdx = BarsArray[0].GetBar(ev.Time);
+                    if (barIdx < 0)
                         continue;
 
                     int barsAgo = CurrentBar - barIdx;
@@ -208,11 +264,29 @@ namespace NinjaTrader.NinjaScript.Indicators
                 0);
         }
 
-        private void DrawPrintMarker_OnPrimary(int level, Brush levelBrush, double price, int barsAgo, DateTime eventTime)
+        private bool DrawPrintMarker_OnPrimary(int level, Brush levelBrush, double price, int barsAgo, DateTime eventTime)
         {
             try
             {
                 DebugLog($"DrawPrintMarker START | Level={level} | BarsAgo={barsAgo}");
+                if (barsAgo < 0)
+                {
+                    DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
+                    return false;
+                }
+
+                if (barsAgo > CurrentBar)
+                {
+                    DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
+                    return false;
+                }
+
+                if (barsAgo >= BarsArray[0].Count)
+                {
+                    DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
+                    return false;
+                }
+
                 int baseSize = level == 1 ? 3 : level == 2 ? 4 : 5;
                 int scaledSize = Math.Max(1, (int)Math.Round(baseSize * markerScale));
                 int heightTicks = scaledSize * 2;
@@ -264,18 +338,24 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                 string tagKey = $"{CurrentBar}_{barsAgo}_{eventTime.Ticks}";
 
-                int leftBarsAgo = Math.Min(CurrentBar, barsAgo + 1);
-                int rightBarsAgo = barsAgo;
+                int startBarsAgo = Math.Min(CurrentBar, barsAgo + 1);
+                int endBarsAgo = barsAgo;
+
+                if (startBarsAgo <= endBarsAgo)
+                    startBarsAgo = endBarsAgo + 1;
 
                 // Layer 1: Core (largest)
-                DebugLog("Calling Draw.Ellipse CORE");
+                DebugLog(
+                  $"DRAW | Type=Ellipse | Level={level} | BarsAgo={barsAgo} | " +
+                  $"Start={startBarsAgo} | End={endBarsAgo} | Price={price:F2}"
+                );
                 Draw.Ellipse(
                     this,
                     $"HSV_PM_CORE_{level}_{tagKey}",
                     false,
-                    leftBarsAgo,
+                    startBarsAgo,
                     top,
-                    rightBarsAgo,
+                    endBarsAgo,
                     bottom,
                     invisibleStroke,
                     core,
@@ -283,14 +363,17 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                 // Layer 2: Mid (slightly smaller)
                 int midSize = Math.Max(1, scaledSize - 1);
-                DebugLog("Calling Draw.Ellipse MID");
+                DebugLog(
+                  $"DRAW | Type=Ellipse | Level={level} | BarsAgo={barsAgo} | " +
+                  $"Start={startBarsAgo} | End={endBarsAgo} | Price={price:F2}"
+                );
                 Draw.Ellipse(
                     this,
                     $"HSV_PM_MID_{level}_{tagKey}",
                     false,
-                    leftBarsAgo,
+                    startBarsAgo,
                     top,
-                    rightBarsAgo,
+                    endBarsAgo,
                     bottom,
                     invisibleStroke,
                     mid,
@@ -301,25 +384,30 @@ namespace NinjaTrader.NinjaScript.Indicators
                 double hiTop = price + ((heightTicks - 1) * TickSize);
                 double hiBottom = price - ((heightTicks - 3) * TickSize);
 
-                DebugLog("Calling Draw.Ellipse HI");
+                DebugLog(
+                  $"DRAW | Type=Ellipse | Level={level} | BarsAgo={barsAgo} | " +
+                  $"Start={startBarsAgo} | End={endBarsAgo} | Price={price:F2}"
+                );
                 Draw.Ellipse(
                     this,
                     $"HSV_PM_HI_{level}_{tagKey}",
                     false,
-                    leftBarsAgo,
+                    startBarsAgo,
                     hiTop,
-                    rightBarsAgo,
+                    endBarsAgo,
                     hiBottom,
                     invisibleStroke,
                     hi,
                     0);
 
                 DebugLog("DrawPrintMarker END");
+                return true;
             }
             catch (Exception ex)
             {
                 Print($"[HSV][ERROR][DrawPrintMarker] {ex.Message}");
                 Print(ex.StackTrace);
+                return false;
             }
         }
 
