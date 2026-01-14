@@ -178,13 +178,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     }
 
                     int barsAgo = CurrentBar - barIdx;
-                    if (barsAgo < 0)
-                    {
-                        DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
-                        continue;
-                    }
-
-                    if (barsAgo > CurrentBar)
+                    if (barsAgo < 0 || barsAgo > CurrentBar)
                     {
                         DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
                         continue;
