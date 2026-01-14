@@ -154,9 +154,13 @@ namespace NinjaTrader.NinjaScript.Indicators
             // 1) Core (densest)
             // 2) Mid (fade)
             // 3) Highlight (small, slightly offset) for 3D depth
-            Brush core = BuildRadialOverlayBrush(levelBrush, centerAlpha: 210, edgeAlpha: 10, saturateBoost: 28);
-            Brush mid = BuildRadialOverlayBrush(levelBrush, centerAlpha: 110, edgeAlpha: 0, saturateBoost: 18);
-            Brush hi = BuildRadialOverlayBrush(levelBrush, centerAlpha: 120, edgeAlpha: 0, saturateBoost: 55, highlight: true);
+            byte coreAlpha = level == 3 ? (byte)225 : level == 2 ? (byte)200 : (byte)175;
+            byte midAlpha = level == 3 ? (byte)130 : level == 2 ? (byte)105 : (byte)85;
+            byte boostAmount = level == 3 ? (byte)42 : level == 2 ? (byte)28 : (byte)18;
+
+            Brush core = BuildRadialOverlayBrush(levelBrush, coreAlpha, 0, boostAmount);
+            Brush mid = BuildRadialOverlayBrush(levelBrush, midAlpha, 0, (byte)(boostAmount - 8));
+            Brush hi = BuildRadialOverlayBrush(levelBrush, (byte)(midAlpha + 10), 0, (byte)(boostAmount + 12), highlight: true);
 
             // Layer 1: Core (largest)
             Draw.Ellipse(
@@ -221,8 +225,17 @@ namespace NinjaTrader.NinjaScript.Indicators
             Color edge = Color.FromArgb(edgeAlpha, boosted.R, boosted.G, boosted.B);
 
             var gradient = new RadialGradientBrush();
-            gradient.GradientOrigin = highlight ? new Point(0.35, 0.35) : new Point(0.5, 0.5);
-            gradient.Center = highlight ? new Point(0.35, 0.35) : new Point(0.5, 0.5);
+            if (highlight)
+            {
+                gradient.GradientOrigin = new Point(0.35, 0.35);
+                gradient.Center = new Point(0.35, 0.35);
+            }
+            else
+            {
+                // subtle asymmetry to avoid perfect rings
+                gradient.GradientOrigin = new Point(0.48, 0.52);
+                gradient.Center = new Point(0.50, 0.50);
+            }
             gradient.RadiusX = highlight ? 0.45 : 0.55;
             gradient.RadiusY = highlight ? 0.45 : 0.55;
             gradient.GradientStops.Add(new GradientStop(center, 0.0));
