@@ -209,6 +209,37 @@ namespace NinjaTrader.NinjaScript.Indicators
                     }
                 }
             }
+
+            if (BarsInProgress == 0)
+            {
+                if (debugDraw)
+                {
+                    Print($"[HSV][DBG] BIP={BarsInProgress} | CB0={CurrentBars[0]} | CB1={(BarsArray.Length > 1 ? CurrentBars[1] : -1)} | Time={Time[0]:HH:mm:ss} | Vol={Volume[0]}");
+                }
+
+                while (pending.Count > 0)
+                {
+                    var ev = pending.Dequeue();
+
+                    int barIdx = BarsArray[0].GetBar(ev.Time);
+                    if (barIdx < 0)
+                        continue;
+
+                    int barsAgo = CurrentBar - barIdx;
+                    if (barsAgo < 0 || barsAgo > CurrentBar)
+                        continue;
+
+                    DebugLog($"Dequeue event | Level={ev.Level} | EventTime={ev.Time:HH:mm:ss} | BarIdx={barIdx} | BarsAgo={barsAgo}");
+
+                    Brush brush = ev.Level == 3 ? level3Brush : ev.Level == 2 ? level2Brush : level1Brush;
+
+                    if (showPrintMarkers)
+                        DrawPrintMarker_OnPrimary(ev.Level, brush, ev.Price, barsAgo, ev.Time);
+
+                    DrawLevelText_OnPrimary(ev.Level, ev.Price, barsAgo, ev.Time, ev.Volume);
+                    TriggerAlert(ev.Level, brush);
+                }
+            }
         }
 
         private void DrawLevelText_OnPrimary(int level, double price, int barsAgo, DateTime eventTime, double eventVolume)
