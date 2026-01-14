@@ -43,7 +43,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private int volumeThresholdLevel2 = 1500;
         private int volumeThresholdLevel3 = 2500;
         private int timeWindowSeconds = 1;
-        private Brush level1Brush = new SolidColorBrush(Color.FromRgb(80, 80, 80));
+        private Brush level1Brush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(80, 80, 80));
         private Brush level2Brush = new SolidColorBrush(Colors.DimGray);
         private Brush level3Brush = new SolidColorBrush(Colors.DarkGoldenrod);
         private Brush textBrush = Brushes.DarkGray;
@@ -424,7 +424,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             invisibleStroke.Opacity = 0;
             if (invisibleStroke is SolidColorBrush solidStroke)
             {
-                solidStroke.Color = Color.FromArgb(1, 0, 0, 0);
+                solidStroke.Color = System.Windows.Media.Color.FromArgb(1, 0, 0, 0);
             }
 
             return invisibleStroke;
