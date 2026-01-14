@@ -77,10 +77,21 @@ namespace NinjaTrader.NinjaScript.Indicators
                     Calculate = Calculate.OnEachTick;
                     IsOverlay = true;
                     BarsRequiredToPlot = 2;
-                    level1Brush = Serialize.StringToBrush("GradientBrush");
-                    level2Brush = new SolidColorBrush(Colors.DimGray);
-                    level3Brush = new SolidColorBrush(Colors.DarkGoldenrod);
+                    // ===== Visual Defaults (Paper 02 – FINAL & LOCKED) =====
+                    level1Brush = new SolidColorBrush(Colors.DimGray);
+                    level2Brush = new SolidColorBrush(Colors.DarkGoldenrod);
+                    level3Brush = new SolidColorBrush(Colors.SaddleBrown);
                     textBrush = Brushes.DarkGray;
+
+                    showPrintMarkers = true;
+                    showTime = false;
+
+                    markerScale = 2.0;
+                    markerOpacity = 30;
+
+                    markerFontSizeLevel1 = 12;
+                    markerFontSizeLevel2 = 16;
+                    markerFontSizeLevel3 = 20;
                     break;
             }
 
