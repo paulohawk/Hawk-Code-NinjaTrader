@@ -66,6 +66,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     level1Brush = new SolidColorBrush(Color.FromRgb(80, 80, 80));
                     level2Brush = new SolidColorBrush(Colors.DimGray);
                     level3Brush = new SolidColorBrush(Colors.DarkGoldenrod);
+                    useGradientFill = false;
                     Initialize();
                     break;
             }
