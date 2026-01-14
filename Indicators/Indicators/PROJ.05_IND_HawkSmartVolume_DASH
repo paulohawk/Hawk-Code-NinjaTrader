@@ -176,15 +176,16 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (Math.Abs(timeGap) <= timeWindowSeconds)
                 {
                     int level = 0;
-                    if (Volume[0] >= volumeThresholdLevel3)
+                    double vol = Volume[0];
+                    if (vol >= volumeThresholdLevel3)
                     {
                         level = 3;
                     }
-                    else if (Volume[0] >= volumeThresholdLevel2)
+                    else if (vol >= volumeThresholdLevel2)
                     {
                         level = 2;
                     }
-                    else if (Volume[0] >= volumeThresholdLevel1)
+                    else if (vol >= volumeThresholdLevel1)
                     {
                         level = 1;
                     }
@@ -327,7 +328,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 price,
                 0,
                 textOpacityBrush,
-                new SimpleFont("Small Fonts", 9),
+                new SimpleFont("Segoe UI", 9),
                 TextAlignment.Right,
                 invisibleStroke,
                 invisibleStroke,
