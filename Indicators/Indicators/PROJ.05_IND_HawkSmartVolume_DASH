@@ -32,8 +32,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         private int volumeThresholdLevel3 = 2500;
         private int timeWindowSeconds = 1;
         private Brush level1Brush = new SolidColorBrush(Color.FromRgb(80, 80, 80));
-        private Brush level2Brush = new SolidColorBrush(Color.FromRgb(200, 200, 200));
-        private Brush level3Brush = new SolidColorBrush(Color.FromRgb(176, 118, 65));
+        private Brush level2Brush = new SolidColorBrush(Colors.DimGray);
+        private Brush level3Brush = new SolidColorBrush(Colors.DarkGoldenrod);
         private Brush textBrush = Brushes.DarkGray;
         private bool enableAlerts = true;
         private bool alertLevel1Enabled = true;
@@ -63,8 +63,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                     Name = "Hawk Smart Volume";
                     Description = "Hawk Smart Volume - Detects large trade volumes with visual markers (Detecta grandes volumes com marcadores visuais).";
                     level1Brush = new SolidColorBrush(Color.FromRgb(80, 80, 80));
-                    level2Brush = new SolidColorBrush(Color.FromRgb(200, 200, 200));
-                    level3Brush = new SolidColorBrush(Color.FromRgb(176, 118, 65));
+                    level2Brush = new SolidColorBrush(Colors.DimGray);
+                    level3Brush = new SolidColorBrush(Colors.DarkGoldenrod);
                     Initialize();
                     break;
             }
@@ -148,57 +148,37 @@ namespace NinjaTrader.NinjaScript.Indicators
             double top = centerPrice + (heightTicks * TickSize);
             double bottom = centerPrice - (heightTicks * TickSize);
 
-            int innerSize = Math.Max(1, scaledSize - 1);
-            int highlightSize = Math.Max(1, scaledSize - 2);
-            double highlightTop = centerPrice + ((heightTicks - 1) * TickSize);
-            double highlightBottom = centerPrice - ((heightTicks - 3) * TickSize);
-
-            Brush highlightBrush = GetHighlightBrush(levelBrush);
+            Brush gradientBrush = BuildGradientBrush(levelBrush);
 
             Draw.Ellipse(
                 this,
-                $"HSV_PrintMarkerOuter_{level}_{CurrentBar}",
+                $"HSV_PrintMarker_{level}_{CurrentBar}",
                 true,
                 scaledSize,
                 top,
                 -scaledSize,
                 bottom,
-                levelBrush,
-                levelBrush,
-                20);
-
-            Draw.Ellipse(
-                this,
-                $"HSV_PrintMarkerInner_{level}_{CurrentBar}",
-                true,
-                innerSize,
-                top,
-                -innerSize,
-                bottom,
-                levelBrush,
-                levelBrush,
-                10);
-
-            Draw.Ellipse(
-                this,
-                $"HSV_PrintMarkerHighlight_{level}_{CurrentBar}",
-                true,
-                highlightSize,
-                highlightTop,
-                -highlightSize,
-                highlightBottom,
-                highlightBrush,
-                highlightBrush,
-                8);
+                null,
+                gradientBrush,
+                0);
         }
 
-        private Brush GetHighlightBrush(Brush levelBrush)
+        private Brush BuildGradientBrush(Brush levelBrush)
         {
             Color color = (levelBrush as SolidColorBrush)?.Color ?? Colors.White;
-            byte highlightR = (byte)Math.Min(255, color.R + 40);
-            byte highlightG = (byte)Math.Min(255, color.G + 40);
-            byte highlightB = (byte)Math.Min(255, color.B + 40);
-            return new SolidColorBrush(Color.FromArgb(200, highlightR, highlightG, highlightB));
+            Color centerColor = Color.FromArgb(180, color.R, color.G, color.B);
+            Color edgeColor = Color.FromArgb(30, color.R, color.G, color.B);
+
+            var gradient = new RadialGradientBrush();
+            gradient.GradientOrigin = new Point(0.5, 0.5);
+            gradient.Center = new Point(0.5, 0.5);
+            gradient.RadiusX = 0.5;
+            gradient.RadiusY = 0.5;
+            gradient.GradientStops.Add(new GradientStop(centerColor, 0));
+            gradient.GradientStops.Add(new GradientStop(edgeColor, 1));
+            gradient.Freeze();
+
+            return gradient;
         }
 
         private void TriggerAlert(int level, Brush levelBrush)
