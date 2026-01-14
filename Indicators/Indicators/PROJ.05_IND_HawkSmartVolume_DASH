@@ -262,6 +262,13 @@ namespace NinjaTrader.NinjaScript.Indicators
                     Color.FromArgb(alpha, baseColor.R, baseColor.G, baseColor.B)
                 );
 
+                if (debugDraw)
+                {
+                    core = new SolidColorBrush(Colors.Red);
+                    mid = new SolidColorBrush(Colors.Transparent);
+                    hi = new SolidColorBrush(Colors.Transparent);
+                }
+
                 DebugLog(
                     $"Brushes | Fill={fillBrush.GetType().Name} | Opacity={markerOpacity:F2}"
                 );
