@@ -244,20 +244,21 @@ namespace NinjaTrader.NinjaScript.Indicators
                     return false;
                 }
 
-                int baseSize = level == 1 ? 3 : level == 2 ? 4 : 5;
-                int scaledSize = Math.Max(1, (int)Math.Round(baseSize * markerScale));
-                int heightTicks = scaledSize * 2;
+                int barsLeft = 3;
+                int barsRight = -3;
 
-                double top = price + (heightTicks * TickSize);
-                double bottom = price - (heightTicks * TickSize);
+                double top = High[barsAgo];
+                double bottom = Low[barsAgo];
 
                 DebugLog(
-                    $"Coords | Center={price:F2} | Top={top:F2} | Bottom={bottom:F2} | " +
-                    $"ScaledSize={scaledSize} | TickSize={TickSize}");
+                    $"Coords | Top={top:F2} | Bottom={bottom:F2}");
 
                 Color baseColor = ((SolidColorBrush)levelBrush).Color;
                 byte alpha = (byte)(255 * markerOpacity);
 
+                Brush strokeBrush = new SolidColorBrush(
+                    Color.FromArgb(alpha, baseColor.R, baseColor.G, baseColor.B)
+                );
                 Brush fillBrush = new SolidColorBrush(
                     Color.FromArgb(alpha, baseColor.R, baseColor.G, baseColor.B)
                 );
@@ -266,25 +267,23 @@ namespace NinjaTrader.NinjaScript.Indicators
                     $"Brushes | Fill={fillBrush.GetType().Name} | Opacity={markerOpacity:F2}"
                 );
 
-                Brush invisibleStroke = CreateInvisibleStroke();
-
                 string tag = $"HSV_PM_{level}_{CurrentBar}_{barsAgo}_{eventTime.Ticks}";
 
                 DebugLog(
                   $"DRAW | Type=Ellipse | Level={level} | BarsAgo={barsAgo} | " +
-                  $"Start={barsAgo + 1} | End={barsAgo} | Price={price:F2}"
+                  $"Left={barsLeft} | Right={barsRight}"
                 );
                 Draw.Ellipse(
                     this,
                     tag,
-                    false,
-                    barsAgo + 1,
+                    true,
+                    barsLeft,
                     top,
-                    barsAgo,
+                    barsRight,
                     bottom,
-                    invisibleStroke,
+                    strokeBrush,
                     fillBrush,
-                    0
+                    1
                 );
 
                 DebugLog("DrawPrintMarker END");
