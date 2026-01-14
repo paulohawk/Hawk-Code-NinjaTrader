@@ -43,6 +43,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private bool showTime = false;
         private string alertSoundFile = "Alert4.wav";
         private double markerScale = 1.0;
+        private bool useGradientFill = true;
         private long lastAlertEventKey = -1;
         #endregion
 
@@ -65,6 +66,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     level1Brush = new SolidColorBrush(Color.FromRgb(80, 80, 80));
                     level2Brush = new SolidColorBrush(Colors.DimGray);
                     level3Brush = new SolidColorBrush(Colors.DarkGoldenrod);
+                    useGradientFill = false;
                     Initialize();
                     break;
             }
@@ -144,41 +146,176 @@ namespace NinjaTrader.NinjaScript.Indicators
             int baseSize = level == 1 ? 3 : level == 2 ? 4 : 5;
             int scaledSize = Math.Max(1, (int)Math.Round(baseSize * markerScale));
             int heightTicks = scaledSize * 2;
+
             double centerPrice = Median[0];
             double top = centerPrice + (heightTicks * TickSize);
             double bottom = centerPrice - (heightTicks * TickSize);
 
-            Brush gradientBrush = BuildGradientBrush(levelBrush);
+            // NOTE: No outline. We intentionally avoid any stroke to prevent border artifacts.
+            // Build 3-layer radial overlay stack:
+            // 1) Core (densest)
+            // 2) Mid (fade)
+            // 3) Highlight (small, slightly offset) for 3D depth
+            byte coreAlpha = level == 3 ? (byte)225 : level == 2 ? (byte)200 : (byte)175;
+            byte midAlpha = level == 3 ? (byte)130 : level == 2 ? (byte)105 : (byte)85;
+            byte boostAmount = level == 3 ? (byte)42 : level == 2 ? (byte)28 : (byte)18;
 
+            Brush core;
+            Brush mid;
+            Brush hi;
+
+            if (useGradientFill)
+            {
+                core = BuildOverlayBrushSafe(levelBrush, coreAlpha, 0, boostAmount);
+                mid = BuildOverlayBrushSafe(levelBrush, midAlpha, 0, (byte)(boostAmount - 8));
+                hi = BuildOverlayBrushSafe(levelBrush, (byte)(midAlpha + 10), 0, (byte)(boostAmount + 12), highlight: true);
+            }
+            else
+            {
+                // Forced fallback: Solid overlays (guaranteed visible)
+                Color baseColor = (levelBrush as SolidColorBrush)?.Color ?? Colors.White;
+
+                Color cCore = BoostColor(baseColor, boostAmount, false);
+                Color cMid = BoostColor(baseColor, (byte)Math.Max(0, boostAmount - 8), false);
+                Color cHi = BoostColor(baseColor, (byte)Math.Min(255, boostAmount + 12), true);
+
+                core = new SolidColorBrush(Color.FromArgb(coreAlpha, cCore.R, cCore.G, cCore.B));
+                mid = new SolidColorBrush(Color.FromArgb(midAlpha, cMid.R, cMid.G, cMid.B));
+                hi = new SolidColorBrush(Color.FromArgb((byte)(midAlpha + 10), cHi.R, cHi.G, cHi.B));
+            }
+
+            // Layer 1: Core (largest)
             Draw.Ellipse(
                 this,
-                $"HSV_PrintMarker_{level}_{CurrentBar}",
+                $"HSV_PM_CORE_{level}_{CurrentBar}",
                 true,
                 scaledSize,
                 top,
                 -scaledSize,
                 bottom,
-                null,
-                gradientBrush,
+                Brushes.Transparent,
+                core,
+                0);
+
+            // Layer 2: Mid (slightly smaller)
+            int midSize = Math.Max(1, scaledSize - 1);
+            Draw.Ellipse(
+                this,
+                $"HSV_PM_MID_{level}_{CurrentBar}",
+                true,
+                midSize,
+                top,
+                -midSize,
+                bottom,
+                Brushes.Transparent,
+                mid,
+                0);
+
+            // Layer 3: Highlight (small + subtle offset for 3D)
+            int hiSize = Math.Max(1, scaledSize - 2);
+            double hiTop = centerPrice + ((heightTicks - 1) * TickSize);
+            double hiBottom = centerPrice - ((heightTicks - 3) * TickSize);
+
+            Draw.Ellipse(
+                this,
+                $"HSV_PM_HI_{level}_{CurrentBar}",
+                true,
+                hiSize,
+                hiTop,
+                -hiSize,
+                hiBottom,
+                Brushes.Transparent,
+                hi,
                 0);
         }
 
-        private Brush BuildGradientBrush(Brush levelBrush)
+        private Brush BuildRadialOverlayBrush(
+            Brush baseBrush,
+            byte centerAlpha,
+            byte edgeAlpha,
+            byte saturateBoost,
+            bool highlight = false)
         {
-            Color color = (levelBrush as SolidColorBrush)?.Color ?? Colors.White;
-            Color centerColor = Color.FromArgb(180, color.R, color.G, color.B);
-            Color edgeColor = Color.FromArgb(30, color.R, color.G, color.B);
+            Color baseColor = (baseBrush as SolidColorBrush)?.Color ?? Colors.White;
+
+            // Boost saturation/brightness slightly to keep level colors distinguishable on dark backgrounds,
+            // especially bronze which otherwise collapses to gray under transparency.
+            Color boosted = BoostColor(baseColor, saturateBoost, highlight);
+
+            // Center is denser; edges dissolve.
+            Color center = Color.FromArgb(centerAlpha, boosted.R, boosted.G, boosted.B);
+            Color edge = Color.FromArgb(edgeAlpha, boosted.R, boosted.G, boosted.B);
 
             var gradient = new RadialGradientBrush();
-            gradient.GradientOrigin = new Point(0.5, 0.5);
-            gradient.Center = new Point(0.5, 0.5);
-            gradient.RadiusX = 0.5;
-            gradient.RadiusY = 0.5;
-            gradient.GradientStops.Add(new GradientStop(centerColor, 0));
-            gradient.GradientStops.Add(new GradientStop(edgeColor, 1));
+            if (highlight)
+            {
+                gradient.GradientOrigin = new Point(0.35, 0.35);
+                gradient.Center = new Point(0.35, 0.35);
+            }
+            else
+            {
+                // subtle asymmetry to avoid perfect rings
+                gradient.GradientOrigin = new Point(0.48, 0.52);
+                gradient.Center = new Point(0.50, 0.50);
+            }
+            gradient.RadiusX = highlight ? 0.45 : 0.55;
+            gradient.RadiusY = highlight ? 0.45 : 0.55;
+            gradient.GradientStops.Add(new GradientStop(center, 0.0));
+            gradient.GradientStops.Add(new GradientStop(edge, 1.0));
             gradient.Freeze();
 
             return gradient;
+        }
+
+        private Brush BuildOverlayBrushSafe(
+            Brush baseBrush,
+            byte centerAlpha,
+            byte edgeAlpha,
+            byte saturateBoost,
+            bool highlight = false)
+        {
+            // 1) Tenta RadialGradientBrush (premium)
+            try
+            {
+                return BuildRadialOverlayBrush(baseBrush, centerAlpha, edgeAlpha, saturateBoost, highlight);
+            }
+            catch
+            {
+                // 2) Fallback: SolidColorBrush (garante render)
+                Color baseColor = (baseBrush as SolidColorBrush)?.Color ?? Colors.White;
+                Color boosted = BoostColor(baseColor, saturateBoost, highlight);
+                return new SolidColorBrush(Color.FromArgb(centerAlpha, boosted.R, boosted.G, boosted.B));
+            }
+        }
+
+        private Color BoostColor(Color color, byte boost, bool highlight)
+        {
+            int r = color.R;
+            int g = color.G;
+            int b = color.B;
+
+            bool isGray = Math.Abs(r - g) < 8 && Math.Abs(g - b) < 8;
+
+            if (isGray)
+            {
+                r = Math.Min(255, r + boost);
+                g = Math.Min(255, g + boost);
+                b = Math.Min(255, b + boost);
+            }
+            else
+            {
+                r = Math.Min(255, r + boost);
+                g = Math.Min(255, g + (int)(boost * 0.75));
+                b = Math.Min(255, b + (int)(boost * 0.15));
+            }
+
+            if (highlight)
+            {
+                r = Math.Min(255, r + 10);
+                g = Math.Min(255, g + 10);
+            }
+
+            return Color.FromRgb((byte)r, (byte)g, (byte)b);
         }
 
         private void TriggerAlert(int level, Brush levelBrush)
@@ -443,6 +580,18 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             get { return markerScale; }
             set { markerScale = Math.Max(0.5, value); }
+        }
+
+        [NinjaScriptProperty]
+        [Display(
+            Name = "Use Gradient Fill (Usar preenchimento com gradiente)",
+            Description = "Use radial gradient fill for markers. Disable if markers do not render on your system (Usar preenchimento radial. Desative se os marcadores não aparecerem).",
+            GroupName = "Visual Settings",
+            Order = 17)]
+        public bool UseGradientFill
+        {
+            get { return useGradientFill; }
+            set { useGradientFill = value; }
         }
         #endregion
     }
