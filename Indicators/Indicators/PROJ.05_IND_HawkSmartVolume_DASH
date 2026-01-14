@@ -16,6 +16,10 @@ using NinjaTrader.Gui.Chart;
 using NinjaTrader.Gui.Tools;
 using NinjaTrader.NinjaScript.DrawingTools;
 using NinjaTrader.NinjaScript.Indicators;
+using SharpDX;
+using D2D = SharpDX.Direct2D1;
+using DW = SharpDX.DirectWrite;
+using Media = System.Windows.Media;
 #endregion
 
 // This namespace holds all indicators and is required. Do not change it.
@@ -49,6 +53,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private bool alertLevel3Enabled = true;
         private bool showPrintMarkers = true;
         private bool showTime = false;
+        private bool showInfoPanel = true;
         private string alertSoundFile = "Alert4.wav";
         private double markerScale = 1.0;
         private double markerOpacity = 70;
@@ -65,6 +70,36 @@ namespace NinjaTrader.NinjaScript.Indicators
         private bool debugDraw = false;
         private int maxPending = 2000;
         private readonly Queue<PrintEvent> pending = new Queue<PrintEvent>();
+
+        // ===== Info Panel State =====
+        private int lastPrintLevel = 0;
+        private DateTime lastPrintTime = DateTime.MinValue;
+
+        // Maior print do dia
+        private double maxDayVolume = 0;
+        private int maxDayLevel = 0;
+        private double maxDayPrice = double.NaN;
+        private DateTime maxDayTime = DateTime.MinValue;
+        private DateTime currentSessionDate = DateTime.MinValue;
+
+        // Texto do painel
+        private string infoPanelText = string.Empty;
+
+        // ===== Hawk Info Panel (SharpDX) =====
+        private DW.Factory _dwriteFactory;
+        private DW.TextFormat _textFormat;
+        private D2D.SolidColorBrush _dxBorderBrush;
+        private D2D.SolidColorBrush _dxTextBrush;
+        private D2D.LinearGradientBrush _dxGradientBrush;
+        private D2D.GradientStopCollection _dxGradientStops;
+        private D2D.SolidColorBrush _dxHighlightBrush;
+
+        private const float PanelMargin = 8f;
+        private const float PanelLift = 45f;
+        private const float PanelPadding = 10f;
+        private const float PanelCornerRadius = 4f;
+        private const string PanelFont = "Segoe UI";
+        private const float PanelFontSize = 10f;
         #endregion
 
         protected override void OnStateChange()
@@ -92,12 +127,17 @@ namespace NinjaTrader.NinjaScript.Indicators
                     markerFontSizeLevel1 = 12;
                     markerFontSizeLevel2 = 16;
                     markerFontSizeLevel3 = 20;
+                    showInfoPanel = true;
                     break;
             }
 
             if (State == State.Configure)
             {
                 AddDataSeries(BarsPeriodType.Second, 1);
+            }
+            else if (State == State.Terminated)
+            {
+                DisposeDx();
             }
         }
 
@@ -159,6 +199,26 @@ namespace NinjaTrader.NinjaScript.Indicators
                             Level = level,
                             Volume = Volume[0]
                         };
+
+                        lastPrintLevel = ev.Level;
+                        lastPrintTime = ev.Time;
+
+                        if (currentSessionDate.Date != ev.Time.Date)
+                        {
+                            currentSessionDate = ev.Time.Date;
+                            maxDayVolume = 0;
+                            maxDayLevel = 0;
+                            maxDayPrice = double.NaN;
+                            maxDayTime = DateTime.MinValue;
+                        }
+
+                        if (ev.Volume > maxDayVolume)
+                        {
+                            maxDayVolume = ev.Volume;
+                            maxDayLevel = ev.Level;
+                            maxDayPrice = ev.Price;
+                            maxDayTime = ev.Time;
+                        }
 
                         pending.Enqueue(ev);
                         while (pending.Count > maxPending)
@@ -222,7 +282,31 @@ namespace NinjaTrader.NinjaScript.Indicators
                         TriggerAlert(ev.Level, brush, ev.Time);
                     }
                 }
+
+                UpdateInfoPanelText();
             }
+        }
+
+        private void UpdateInfoPanelText()
+        {
+            if (!showInfoPanel)
+            {
+                infoPanelText = string.Empty;
+                return;
+            }
+
+            string line1 = lastPrintTime == DateTime.MinValue
+                ? "Fluxo: -"
+                : $"Fluxo: Nível {lastPrintLevel} | Último print há {Math.Max(0, (int)(DateTime.Now - lastPrintTime).TotalSeconds)}s";
+
+            string line2 =
+                $"Filtro: {VolumeThresholdLevel1} / {VolumeThresholdLevel2} / {VolumeThresholdLevel3}";
+
+            string line3 = maxDayVolume <= 0
+                ? "Maior print: -"
+                : $"Maior print: L{maxDayLevel} | {maxDayVolume:N0} | {maxDayPrice:N2} | {maxDayTime:HH:mm}";
+
+            infoPanelText = $"{line1}\n{line2}\n{line3}";
         }
 
         private void DrawLevelText_OnPrimary(int level, double price, int barsAgo, DateTime eventTime, double eventVolume)
@@ -343,6 +427,118 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
 
             return invisibleStroke;
+        }
+
+        public override void OnRenderTargetChanged()
+        {
+            DisposeDx();
+
+            if (RenderTarget != null)
+            {
+                _dwriteFactory = new DW.Factory();
+
+                _textFormat = new DW.TextFormat(_dwriteFactory, PanelFont, PanelFontSize)
+                {
+                    TextAlignment = DW.TextAlignment.Leading,
+                    ParagraphAlignment = DW.ParagraphAlignment.Near
+                };
+
+                _dxBorderBrush = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0xFF, 0xD4, 0xA0, 0x17)));
+                _dxTextBrush = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0xE6, 0xCC, 0xCC, 0xCC)));
+
+                var stops = new[]
+                {
+                    new D2D.GradientStop { Color = ToColor4(Media.Color.FromArgb(0xC0, 0x50, 0x50, 0x50)), Position = 0.0f },
+                    new D2D.GradientStop { Color = ToColor4(Media.Color.FromArgb(0xB4, 0x28, 0x28, 0x28)), Position = 1.0f }
+                };
+                _dxGradientStops = new D2D.GradientStopCollection(RenderTarget, stops, D2D.Gamma.StandardRgb, D2D.ExtendMode.Clamp);
+
+                _dxGradientBrush = new D2D.LinearGradientBrush(
+                    RenderTarget,
+                    new D2D.LinearGradientBrushProperties
+                    {
+                        StartPoint = new Vector2(0f, 0f),
+                        EndPoint = new Vector2(0f, 1f)
+                    },
+                    _dxGradientStops);
+
+                _dxHighlightBrush = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)));
+            }
+
+            base.OnRenderTargetChanged();
+        }
+
+        protected override void OnRender(ChartControl chartControl, ChartScale chartScale)
+        {
+            base.OnRender(chartControl, chartScale);
+
+            if (!showInfoPanel || string.IsNullOrEmpty(infoPanelText))
+                return;
+
+            if (RenderTarget == null || ChartPanel == null)
+                return;
+
+            using (var textLayout = new DW.TextLayout(_dwriteFactory, infoPanelText, _textFormat, float.MaxValue, float.MaxValue))
+            {
+                float boxW = (float)textLayout.Metrics.Width + 2f * PanelPadding;
+                float boxH = (float)textLayout.Metrics.Height + 2f * PanelPadding;
+
+                float x = (float)Math.Floor(ChartPanel.X + PanelMargin) + 0.5f;
+                float y = (float)Math.Floor(ChartPanel.Y + ChartPanel.H - PanelLift - boxH) + 0.5f;
+
+                var rect = new D2D.RoundedRectangle
+                {
+                    Rect = new RectangleF(x, y, boxW, boxH),
+                    RadiusX = PanelCornerRadius,
+                    RadiusY = PanelCornerRadius
+                };
+
+                if (_dxGradientBrush != null)
+                {
+                    _dxGradientBrush.StartPoint = new Vector2(x, y);
+                    _dxGradientBrush.EndPoint = new Vector2(x, y + boxH);
+                }
+
+                RenderTarget.FillRoundedRectangle(rect, _dxGradientBrush);
+                RenderTarget.DrawLine(new Vector2(x + PanelCornerRadius, y + 1f), new Vector2(x + boxW - PanelCornerRadius, y + 1f), _dxHighlightBrush, 1.0f);
+                RenderTarget.DrawRoundedRectangle(rect, _dxBorderBrush, 1.4f);
+
+                float textX = x + PanelPadding;
+                float textY = y + PanelPadding;
+                RenderTarget.DrawTextLayout(new Vector2(textX, textY), textLayout, _dxTextBrush, D2D.DrawTextOptions.None);
+            }
+        }
+
+        private static Color4 ToColor4(Media.Color c)
+        {
+            return new Color4(c.ScR, c.ScG, c.ScB, c.ScA);
+        }
+
+        private void DisposeDx()
+        {
+            try
+            {
+                _dxBorderBrush?.Dispose();
+                _dxTextBrush?.Dispose();
+                _dxGradientBrush?.Dispose();
+                _dxGradientStops?.Dispose();
+                _dxHighlightBrush?.Dispose();
+                _textFormat?.Dispose();
+                _dwriteFactory?.Dispose();
+            }
+            catch
+            {
+            }
+            finally
+            {
+                _dxBorderBrush = null;
+                _dxTextBrush = null;
+                _dxGradientBrush = null;
+                _dxGradientStops = null;
+                _dxHighlightBrush = null;
+                _textFormat = null;
+                _dwriteFactory = null;
+            }
         }
 
         // LEGACY (Paper 02): Gradient/overlay helpers retained for reference only.
@@ -793,6 +989,18 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             get { return markerFontSizeLevel3; }
             set { markerFontSizeLevel3 = Math.Max(6, Math.Min(72, value)); }
+        }
+
+        [NinjaScriptProperty]
+        [Display(
+            Name = "Show Info Panel (Exibir painel)",
+            Description = "Enable or disable the Smart Volume info panel (Exibir ou ocultar o painel informativo).",
+            GroupName = "Visual Settings",
+            Order = 21)]
+        public bool ShowInfoPanel
+        {
+            get { return showInfoPanel; }
+            set { showInfoPanel = value; }
         }
         #endregion
     }
