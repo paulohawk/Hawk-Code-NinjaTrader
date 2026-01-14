@@ -570,21 +570,33 @@ namespace NinjaTrader.NinjaScript.Indicators
         public string Level1BrushSerialize
         {
             get { return Serialize.BrushToString(level1Brush); }
-            set { level1Brush = Serialize.StringToBrush(value); }
+            set
+            {
+                level1Brush = Serialize.StringToBrush(value)?.Clone();
+                level1Brush?.Freeze();
+            }
         }
 
         [Browsable(false)]
         public string Level2BrushSerialize
         {
             get { return Serialize.BrushToString(level2Brush); }
-            set { level2Brush = Serialize.StringToBrush(value); }
+            set
+            {
+                level2Brush = Serialize.StringToBrush(value)?.Clone();
+                level2Brush?.Freeze();
+            }
         }
 
         [Browsable(false)]
         public string Level3BrushSerialize
         {
             get { return Serialize.BrushToString(level3Brush); }
-            set { level3Brush = Serialize.StringToBrush(value); }
+            set
+            {
+                level3Brush = Serialize.StringToBrush(value)?.Clone();
+                level3Brush?.Freeze();
+            }
         }
 
         [NinjaScriptProperty]
@@ -608,7 +620,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         public string TextBrushSerialize
         {
             get { return Serialize.BrushToString(TextBrush); }
-            set { TextBrush = Serialize.StringToBrush(value); }
+            set
+            {
+                textBrush = Serialize.StringToBrush(value)?.Clone();
+                textBrush?.Freeze();
+            }
         }
 
         [NinjaScriptProperty]
