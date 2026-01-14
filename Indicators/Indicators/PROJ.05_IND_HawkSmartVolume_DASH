@@ -107,7 +107,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             switch (State)
             {
                 case State.SetDefaults:
-                    Name = "Hawk Smart Volume";
+                    Name = "HawkSmartVolume";
                     Description = "Hawk Smart Volume - Detects large trade volumes with visual markers.";
                     Calculate = Calculate.OnEachTick;
                     IsOverlay = true;
@@ -296,9 +296,14 @@ namespace NinjaTrader.NinjaScript.Indicators
                 return;
             }
 
+            int minutesAgo = Math.Max(
+                1,
+                (int)Math.Floor((DateTime.Now - lastPrintTime).TotalMinutes)
+            );
+
             string line1 = lastPrintTime == DateTime.MinValue
                 ? "Fluxo: -"
-                : $"Fluxo: Nível {lastPrintLevel} | Último print há {Math.Max(0, (int)(DateTime.Now - lastPrintTime).TotalSeconds)}s";
+                : $"Fluxo: Nível {lastPrintLevel} | Último print há {minutesAgo} min";
 
             string line2 =
                 $"Filtro: {VolumeThresholdLevel1} / {VolumeThresholdLevel2} / {VolumeThresholdLevel3}";
