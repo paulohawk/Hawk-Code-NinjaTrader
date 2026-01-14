@@ -740,6 +740,18 @@ namespace NinjaTrader.NinjaScript.Indicators
             get { return markerFontSizeLevel3; }
             set { markerFontSizeLevel3 = Math.Max(6, Math.Min(72, value)); }
         }
+
+        [NinjaScriptProperty]
+        [Display(
+            Name = "Marker Opacity (Opacidade do marcador)",
+            Description = "Opacity of the print marker (0.05 = 5%, 0.20 = 20%)",
+            GroupName = "Visual Settings",
+            Order = 18)]
+        public double MarkerOpacity
+        {
+            get { return markerOpacity; }
+            set { markerOpacity = Math.Min(0.30, Math.Max(0.05, value)); }
+        }
         #endregion
     }
 }
