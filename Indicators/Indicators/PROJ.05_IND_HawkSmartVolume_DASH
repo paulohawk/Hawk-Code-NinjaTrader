@@ -51,6 +51,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private bool showTime = false;
         private string alertSoundFile = "Alert4.wav";
         private double markerScale = 1.0;
+        private double markerOpacity = 0.10;
         private bool useGradientFill = true;
         private long lastAlertEventKey = -1;
         private bool debugDraw = false;
@@ -63,7 +64,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         /// </summary>
         private void Initialize()
         {
-            Calculate = Calculate.OnBarClose;
+            Calculate = Calculate.OnEachTick;
             IsOverlay = true;
         }
 
@@ -74,9 +75,10 @@ namespace NinjaTrader.NinjaScript.Indicators
                 case State.SetDefaults:
                     Name = "Hawk Smart Volume";
                     Description = "Hawk Smart Volume - Detects large trade volumes with visual markers (Detecta grandes volumes com marcadores visuais).";
-                    level1Brush = new SolidColorBrush(Color.FromRgb(80, 80, 80));
+                    level1Brush = ResolveDefaultLevel1Brush();
                     level2Brush = new SolidColorBrush(Colors.DimGray);
                     level3Brush = new SolidColorBrush(Colors.DarkGoldenrod);
+                    textBrush = Brushes.DarkGray;
                     useGradientFill = false;
                     Initialize();
                     break;
@@ -142,7 +144,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                         var ev = new PrintEvent
                         {
                             Time = Time[0],
-                            Price = Median[0],
+                            Price = Close[0],
                             Level = level,
                             Volume = Volume[0]
                         };
@@ -161,83 +163,50 @@ namespace NinjaTrader.NinjaScript.Indicators
                     Print($"[HSV][DBG] BIP={BarsInProgress} | CB0={CurrentBars[0]} | CB1={(BarsArray.Length > 1 ? CurrentBars[1] : -1)} | Time={Time[0]:HH:mm:ss} | Vol={Volume[0]}");
                 }
 
-                while (pending.Count > 0)
+                if (pending.Count == 0)
+                    // Single-event-per-tick design: return if nothing to process for this primary bar.
+                    return;
+
+                var ev = pending.Dequeue();
+
+                int barIdx = BarsArray[0].GetBar(ev.Time);
+                if (barIdx < 0)
+                    barIdx = BarsArray[0].GetBar(Time[0]);
+
+                if (barIdx < 0)
                 {
-                    var ev = pending.Dequeue();
-
-                    int barIdx = BarsArray[0].GetBar(ev.Time);
-                    if (barIdx < 0)
-                    {
-                        DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo=-1");
-                        continue;
-                    }
-
-                    int barsAgo = CurrentBar - barIdx;
-                    if (barsAgo < 0)
-                    {
-                        DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
-                        continue;
-                    }
-
-                    if (barsAgo > CurrentBar)
-                    {
-                        DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
-                        continue;
-                    }
-
-                    if (barsAgo >= BarsArray[0].Count)
-                    {
-                        DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
-                        continue;
-                    }
-
-                    DebugLog(
-                      $"EVENT | Level={ev.Level} | Vol={ev.Volume} | " +
-                      $"EventTime={ev.Time:HH:mm:ss.fff} | BarIdx={barIdx} | BarsAgo={barsAgo}"
-                    );
-
-                    Brush brush = ev.Level == 3 ? level3Brush : ev.Level == 2 ? level2Brush : level1Brush;
-
-                    bool drawn = false;
-                    if (showPrintMarkers)
-                        drawn = DrawPrintMarker_OnPrimary(ev.Level, brush, ev.Price, barsAgo, ev.Time);
-
-                    if (drawn)
-                    {
-                        DrawLevelText_OnPrimary(ev.Level, ev.Price, barsAgo, ev.Time, ev.Volume);
-                        TriggerAlert(ev.Level, brush);
-                    }
-                }
-            }
-
-            if (BarsInProgress == 0)
-            {
-                if (debugDraw)
-                {
-                    Print($"[HSV][DBG] BIP={BarsInProgress} | CB0={CurrentBars[0]} | CB1={(BarsArray.Length > 1 ? CurrentBars[1] : -1)} | Time={Time[0]:HH:mm:ss} | Vol={Volume[0]}");
+                    DebugLog("DROP | Reason=InvalidBarsAgo | BarsAgo=-1");
+                    return;
                 }
 
-                while (pending.Count > 0)
+                int barsAgo = CurrentBar - barIdx;
+                if (barsAgo < 0)
                 {
-                    var ev = pending.Dequeue();
+                    DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
+                    return;
+                }
 
-                    int barIdx = BarsArray[0].GetBar(ev.Time);
-                    if (barIdx < 0)
-                        continue;
+                if (barsAgo > CurrentBar)
+                {
+                    DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
+                    return;
+                }
 
-                    int barsAgo = CurrentBar - barIdx;
-                    if (barsAgo < 0 || barsAgo > CurrentBar)
-                        continue;
+                DebugLog(
+                  $"EVENT | Level={ev.Level} | Vol={ev.Volume} | " +
+                  $"EventTime={ev.Time:HH:mm:ss.fff} | BarIdx={barIdx} | BarsAgo={barsAgo}"
+                );
 
-                    DebugLog($"Dequeue event | Level={ev.Level} | EventTime={ev.Time:HH:mm:ss} | BarIdx={barIdx} | BarsAgo={barsAgo}");
+                Brush brush = ev.Level == 3 ? level3Brush : ev.Level == 2 ? level2Brush : level1Brush;
 
-                    Brush brush = ev.Level == 3 ? level3Brush : ev.Level == 2 ? level2Brush : level1Brush;
+                bool drawn = false;
+                if (showPrintMarkers)
+                    drawn = DrawPrintMarker_OnPrimary(ev.Level, brush, ev.Price, barsAgo, ev.Time);
 
-                    if (showPrintMarkers)
-                        DrawPrintMarker_OnPrimary(ev.Level, brush, ev.Price, barsAgo, ev.Time);
-
+                if (drawn)
+                {
                     DrawLevelText_OnPrimary(ev.Level, ev.Price, barsAgo, ev.Time, ev.Volume);
-                    TriggerAlert(ev.Level, brush);
+                    TriggerAlert(ev.Level, brush, ev.Time);
                 }
             }
         }
@@ -269,19 +238,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             try
             {
                 DebugLog($"DrawPrintMarker START | Level={level} | BarsAgo={barsAgo}");
-                if (barsAgo < 0)
-                {
-                    DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
-                    return false;
-                }
-
-                if (barsAgo > CurrentBar)
-                {
-                    DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
-                    return false;
-                }
-
-                if (barsAgo >= BarsArray[0].Count)
+                if (barsAgo < 0 || barsAgo > CurrentBar)
                 {
                     DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
                     return false;
@@ -298,107 +255,37 @@ namespace NinjaTrader.NinjaScript.Indicators
                     $"Coords | Center={price:F2} | Top={top:F2} | Bottom={bottom:F2} | " +
                     $"ScaledSize={scaledSize} | TickSize={TickSize}");
 
-                // NOTE: No outline. We intentionally avoid any stroke to prevent border artifacts.
-                // Build 3-layer radial overlay stack:
-                // 1) Core (densest)
-                // 2) Mid (fade)
-                // 3) Highlight (small, slightly offset) for 3D depth
-                byte coreAlpha = level == 3 ? (byte)225 : level == 2 ? (byte)200 : (byte)175;
-                byte midAlpha = level == 3 ? (byte)130 : level == 2 ? (byte)105 : (byte)85;
-                byte boostAmount = level == 3 ? (byte)42 : level == 2 ? (byte)28 : (byte)18;
+                Color baseColor = ((SolidColorBrush)levelBrush).Color;
+                byte alpha = (byte)(255 * markerOpacity);
 
-                Brush core;
-                Brush mid;
-                Brush hi;
+                Brush fillBrush = new SolidColorBrush(
+                    Color.FromArgb(alpha, baseColor.R, baseColor.G, baseColor.B)
+                );
+
+                DebugLog(
+                    $"Brushes | Fill={fillBrush.GetType().Name} | Opacity={markerOpacity:F2}"
+                );
+
                 Brush invisibleStroke = CreateInvisibleStroke();
 
-                if (useGradientFill)
-                {
-                    core = BuildOverlayBrushSafe(levelBrush, coreAlpha, boostAmount);
-                    mid = BuildOverlayBrushSafe(levelBrush, midAlpha, (byte)(boostAmount - 8));
-                    hi = BuildOverlayBrushSafe(levelBrush, (byte)(midAlpha + 10), (byte)(boostAmount + 12), highlight: true);
-                }
-                else
-                {
-                    // Forced fallback: Solid overlays (guaranteed visible)
-                    Color baseColor = (levelBrush as SolidColorBrush)?.Color ?? Colors.White;
+                string tag = $"HSV_PM_{level}_{CurrentBar}_{barsAgo}_{eventTime.Ticks}";
 
-                    Color cCore = BoostColor(baseColor, boostAmount, false);
-                    Color cMid = BoostColor(baseColor, (byte)Math.Max(0, boostAmount - 8), false);
-                    Color cHi = BoostColor(baseColor, (byte)Math.Min(255, boostAmount + 12), true);
-
-                    core = new SolidColorBrush(Color.FromArgb(coreAlpha, cCore.R, cCore.G, cCore.B));
-                    mid = new SolidColorBrush(Color.FromArgb(midAlpha, cMid.R, cMid.G, cMid.B));
-                    hi = new SolidColorBrush(Color.FromArgb((byte)(midAlpha + 10), cHi.R, cHi.G, cHi.B));
-                }
-
-                DebugLog(
-                    $"Brushes | Core={core.GetType().Name} | Mid={mid.GetType().Name} | Hi={hi.GetType().Name} | " +
-                    $"Gradient={useGradientFill}");
-
-                string tagKey = $"{CurrentBar}_{barsAgo}_{eventTime.Ticks}";
-
-                int startBarsAgo = Math.Min(CurrentBar, barsAgo + 1);
-                int endBarsAgo = barsAgo;
-
-                if (startBarsAgo <= endBarsAgo)
-                    startBarsAgo = endBarsAgo + 1;
-
-                // Layer 1: Core (largest)
                 DebugLog(
                   $"DRAW | Type=Ellipse | Level={level} | BarsAgo={barsAgo} | " +
-                  $"Start={startBarsAgo} | End={endBarsAgo} | Price={price:F2}"
+                  $"Start={barsAgo + 1} | End={barsAgo} | Price={price:F2}"
                 );
                 Draw.Ellipse(
                     this,
-                    $"HSV_PM_CORE_{level}_{tagKey}",
+                    tag,
                     false,
-                    startBarsAgo,
+                    barsAgo + 1,
                     top,
-                    endBarsAgo,
+                    barsAgo,
                     bottom,
                     invisibleStroke,
-                    core,
-                    0);
-
-                // Layer 2: Mid (slightly smaller)
-                int midSize = Math.Max(1, scaledSize - 1);
-                DebugLog(
-                  $"DRAW | Type=Ellipse | Level={level} | BarsAgo={barsAgo} | " +
-                  $"Start={startBarsAgo} | End={endBarsAgo} | Price={price:F2}"
+                    fillBrush,
+                    0
                 );
-                Draw.Ellipse(
-                    this,
-                    $"HSV_PM_MID_{level}_{tagKey}",
-                    false,
-                    startBarsAgo,
-                    top,
-                    endBarsAgo,
-                    bottom,
-                    invisibleStroke,
-                    mid,
-                    0);
-
-                // Layer 3: Highlight (small + subtle offset for 3D)
-                int hiSize = Math.Max(1, scaledSize - 2);
-                double hiTop = price + ((heightTicks - 1) * TickSize);
-                double hiBottom = price - ((heightTicks - 3) * TickSize);
-
-                DebugLog(
-                  $"DRAW | Type=Ellipse | Level={level} | BarsAgo={barsAgo} | " +
-                  $"Start={startBarsAgo} | End={endBarsAgo} | Price={price:F2}"
-                );
-                Draw.Ellipse(
-                    this,
-                    $"HSV_PM_HI_{level}_{tagKey}",
-                    false,
-                    startBarsAgo,
-                    hiTop,
-                    endBarsAgo,
-                    hiBottom,
-                    invisibleStroke,
-                    hi,
-                    0);
 
                 DebugLog("DrawPrintMarker END");
                 return true;
@@ -406,9 +293,25 @@ namespace NinjaTrader.NinjaScript.Indicators
             catch (Exception ex)
             {
                 Print($"[HSV][ERROR][DrawPrintMarker] {ex.Message}");
-                Print(ex.StackTrace);
                 return false;
             }
+        }
+
+        private Brush ResolveDefaultLevel1Brush()
+        {
+            try
+            {
+                var converter = new BrushConverter();
+                var brush = converter.ConvertFromString("Gradient Brush") as SolidColorBrush;
+                if (brush != null)
+                    return brush;
+            }
+            catch
+            {
+                // Fall back to a neutral solid brush if the named color is unavailable.
+            }
+
+            return new SolidColorBrush(Colors.Gray);
         }
 
         private void DebugLog(string message)
@@ -518,7 +421,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             return Color.FromRgb((byte)r, (byte)g, (byte)b);
         }
 
-        private void TriggerAlert(int level, Brush levelBrush)
+        private void TriggerAlert(int level, Brush levelBrush, DateTime evTime)
         {
             if (!enableAlerts)
                 return;
@@ -526,7 +429,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             if ((level == 1 && !alertLevel1Enabled) || (level == 2 && !alertLevel2Enabled) || (level == 3 && !alertLevel3Enabled))
                 return;
 
-            long eventKey = GetAlertEventKey();
+            long eventKey = GetAlertEventKey(evTime);
             if (lastAlertEventKey == eventKey)
                 return;
 
@@ -543,9 +446,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                 levelBrush);
         }
 
-        private long GetAlertEventKey()
+        private long GetAlertEventKey(DateTime evTime)
         {
-            return ((long)BarsInProgress << 56) ^ Time[0].Ticks;
+            return ((long)BarsInProgress << 56) ^ evTime.Ticks;
         }
 
         #region Properties
@@ -804,6 +707,18 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             get { return useGradientFill; }
             set { useGradientFill = value; }
+        }
+
+        [NinjaScriptProperty]
+        [Display(
+            Name = "Marker Opacity (Opacidade do marcador)",
+            Description = "Opacity of the print marker (0.05 = 5%, 0.20 = 20%)",
+            GroupName = "Visual Settings",
+            Order = 18)]
+        public double MarkerOpacity
+        {
+            get { return markerOpacity; }
+            set { markerOpacity = Math.Min(0.30, Math.Max(0.05, value)); }
         }
         #endregion
     }
