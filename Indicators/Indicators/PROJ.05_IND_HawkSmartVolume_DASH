@@ -640,26 +640,41 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private void TriggerAlert(int level, Brush levelBrush, DateTime evTime)
         {
+            if (debugDraw)
+                Print($"[HSV][ALERT] Enter | Level={level} | Time={evTime:HH:mm:ss.fff}");
+
             if (!enableAlerts)
+            {
+                if (debugDraw) Print("[HSV][ALERT] Skipped | EnableAlerts=false");
                 return;
+            }
 
             if ((level == 1 && !alertLevel1Enabled) || (level == 2 && !alertLevel2Enabled) || (level == 3 && !alertLevel3Enabled))
+            {
+                if (debugDraw) Print("[HSV][ALERT] Skipped | Level disabled");
                 return;
+            }
 
             long eventKey = GetAlertEventKey(evTime);
             if (lastAlertEventKey == eventKey)
+            {
+                if (debugDraw) Print("[HSV][ALERT] Skipped | Duplicate eventKey");
                 return;
+            }
 
             lastAlertEventKey = eventKey;
 
-            string message = $"Hawk Smart Volume - Level {level} print detected (Print nível {level} detectado).";
             string soundToUse = SoundFileExists(alertSoundFile)
                 ? alertSoundFile
                 : "Alert1.wav";
+
+            if (debugDraw)
+                Print($"[HSV][ALERT] FIRE | Sound={soundToUse}");
+
             Alert(
                 $"HSV_Alert_{level}_{eventKey}",
                 Priority.High,
-                message,
+                $"Hawk Smart Volume - Level {level} print detected.",
                 soundToUse,
                 0,
                 levelBrush,
