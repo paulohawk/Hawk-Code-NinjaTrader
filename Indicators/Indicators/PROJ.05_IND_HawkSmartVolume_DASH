@@ -47,7 +47,6 @@ namespace NinjaTrader.NinjaScript.Indicators
             public DateTime SessionDate;
             public double Price;
             public int Level;
-            public bool IsActive;
             public bool WasConsumed;
             public bool SeenAbove;
             public bool SeenBelow;
@@ -244,7 +243,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                         // Proteção defensiva: evita estado inválido antes do primeiro BIP 0
                         if (currentSessionDate == DateTime.MinValue)
-                            currentSessionDate = Time[0].Date;
+                            currentSessionDate = GetSessionKey(Time[0]);
 
                         if (ev.Volume > maxDayVolume)
                         {
@@ -274,7 +273,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     // SESSION KEY (Paper 4.x)
                     // Por definição atual, a sessão é baseada no dia civil do gráfico.
                     // A migração para TradingHours será tratada no Paper 5.
-                    currentSessionDate = Time[0].Date;
+                    currentSessionDate = GetSessionKey(Time[0]);
                     maxDayVolume = 0;
                     maxDayLevel = 0;
                     maxDayPrice = double.NaN;
@@ -525,7 +524,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                 SessionDate = sessionKey,
                 Price = ev.Price,
                 Level = ev.Level,
-                IsActive = true,
                 WasConsumed = false,
                 SeenAbove = false,
                 SeenBelow = false,
@@ -564,9 +562,11 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (!enableTradeLocation)
                 return;
 
+            tradeLocationTags.Clear();
             for (int i = 0; i < tradeLocations.Count; i++)
             {
                 var tl = tradeLocations[i];
+                tradeLocationTags.Add(tl.Tag);
 
                 // Normaliza endTime antes de redesenhar
                 if (tl.WasConsumed && tl.ConsumedSessionDate != DateTime.MinValue)
