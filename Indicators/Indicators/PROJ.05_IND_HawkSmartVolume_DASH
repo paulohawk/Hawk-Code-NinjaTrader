@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Media;
@@ -81,6 +82,9 @@ namespace NinjaTrader.NinjaScript.Indicators
         private bool debugDraw = false;
         private int maxPending = 2000;
         private readonly Queue<PrintEvent> pending = new Queue<PrintEvent>();
+        // ================================
+        // TRADE LOCATION (TL) – Paper 04
+        // ================================
         private readonly List<TradeLocation> tradeLocations = new List<TradeLocation>();
 
         // ===== Info Panel State =====
@@ -448,7 +452,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             string tag = $"HSV_TL_L{ev.Level}_{ev.Time.Ticks}";
 
-            DateTime endTime = ev.Time.AddYears(tlExtendYears);
+            // PROTEÇÃO: evita criar TL duplicada para o mesmo evento
+            if (tradeLocations.Any(t => t.Tag == tag))
+                return;
+
+            DateTime endTime = Bars.GetTime(CurrentBar).AddDays(1);
 
             Brush brush =
                 ev.Level == 3 ? level3Brush :
@@ -1128,11 +1136,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         }
 
         [NinjaScriptProperty]
-        [Range(1, 5)]
-        [Display(
-            Name = "TL Extend Years",
-            GroupName = "Trade Location",
-            Order = 24)]
+        [Browsable(false)]
+        [XmlIgnore]
+        // LEGACY (Paper 04.2)
+        // Este parâmetro foi mantido apenas para compatibilidade visual e histórica.
+        // Atualmente NÃO afeta a lógica de Trade Location (TL).
         public int TLExtendYears
         {
             get { return tlExtendYears; }
