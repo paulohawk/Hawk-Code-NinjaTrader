@@ -318,7 +318,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                         OnPrintConfirmed(ev);
                 }
 
-                if (BarsInProgress == 0 && IsLastTickOfBar)
+                if (BarsInProgress == 0 && !IsFirstTickOfBar)
                     EvaluateTradeLocationConsumption();
 
                 UpdateInfoPanelText();
