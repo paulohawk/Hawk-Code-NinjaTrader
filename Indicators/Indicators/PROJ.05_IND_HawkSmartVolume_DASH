@@ -39,6 +39,14 @@ namespace NinjaTrader.NinjaScript.Indicators
             public double Volume;
         }
 
+        private struct TradeLocation
+        {
+            public string Tag;
+            public DateTime Time;
+            public double Price;
+            public int Level;
+        }
+
         private int volumeThresholdLevel1 = 900;
         private int volumeThresholdLevel2 = 1500;
         private int volumeThresholdLevel3 = 2500;
@@ -57,6 +65,9 @@ namespace NinjaTrader.NinjaScript.Indicators
         private string alertSoundFile = "Alert4.wav";
         private double markerScale = 1.0;
         private double markerOpacity = 70;
+        private bool enableTradeLocation = false;
+        private int tlThickness = 1;
+        private int tlExtendYears = 1;
         // ================================
         // KELCH BULLET MARKER (Paper 02.3)
         // ================================
@@ -70,6 +81,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private bool debugDraw = false;
         private int maxPending = 2000;
         private readonly Queue<PrintEvent> pending = new Queue<PrintEvent>();
+        private readonly List<TradeLocation> tradeLocations = new List<TradeLocation>();
 
         // ===== Info Panel State =====
         private int lastPrintLevel = 0;
@@ -128,6 +140,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                     markerFontSizeLevel2 = 16;
                     markerFontSizeLevel3 = 20;
                     showInfoPanel = true;
+                    enableTradeLocation = false;
+                    tlThickness = 1;
+                    tlExtendYears = 1;
                     break;
             }
 
@@ -230,6 +245,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             if (BarsInProgress == 0)
             {
+                if (Bars.IsFirstBarOfSession)
+                    ClearTradeLocations();
+
                 if (debugDraw)
                 {
                     Print($"[HSV][DBG] BIP={BarsInProgress} | CB0={CurrentBars[0]} | CB1={(BarsArray.Length > 1 ? CurrentBars[1] : -1)} | Time={Time[0]:HH:mm:ss} | Vol={Volume[0]}");
@@ -281,6 +299,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                     {
                         DrawLevelText_OnPrimary(ev.Level, ev.Price, barsAgo, ev.Time, ev.Volume);
                         TriggerAlert(ev.Level, brush, ev.Time);
+
+                        if (enableTradeLocation)
+                            CreateTradeLocation(ev);
                     }
                 }
 
@@ -421,6 +442,48 @@ namespace NinjaTrader.NinjaScript.Indicators
                 return;
 
             Print($"[HSV][DRAW][{BarsInProgress}][Bar:{CurrentBar}] {message}");
+        }
+
+        private void CreateTradeLocation(PrintEvent ev)
+        {
+            string tag = $"HSV_TL_L{ev.Level}_{ev.Time.Ticks}";
+
+            DateTime endTime = ev.Time.AddYears(tlExtendYears);
+
+            Brush brush =
+                ev.Level == 3 ? level3Brush :
+                ev.Level == 2 ? level2Brush :
+                                level1Brush;
+
+            Draw.Line(
+                this,
+                tag,
+                false,
+                ev.Time,
+                ev.Price,
+                endTime,
+                ev.Price,
+                brush,
+                DashStyleHelper.Solid,
+                tlThickness
+            );
+
+            tradeLocations.Add(new TradeLocation
+            {
+                Tag = tag,
+                Time = ev.Time,
+                Price = ev.Price,
+                Level = ev.Level
+            });
+        }
+
+        private void ClearTradeLocations()
+        {
+            foreach (var tl in tradeLocations)
+            {
+                try { RemoveDrawObject(tl.Tag); } catch { }
+            }
+            tradeLocations.Clear();
         }
 
         private Brush CreateInvisibleStroke()
@@ -1040,6 +1103,41 @@ namespace NinjaTrader.NinjaScript.Indicators
             get { return showInfoPanel; }
             set { showInfoPanel = value; }
         }
+
+        [NinjaScriptProperty]
+        [Display(
+            Name = "Enable Trade Location (TL)",
+            GroupName = "Trade Location",
+            Order = 22)]
+        public bool EnableTradeLocation
+        {
+            get { return enableTradeLocation; }
+            set { enableTradeLocation = value; }
+        }
+
+        [NinjaScriptProperty]
+        [Range(1, 5)]
+        [Display(
+            Name = "TL Line Thickness",
+            GroupName = "Trade Location",
+            Order = 23)]
+        public int TLThickness
+        {
+            get { return tlThickness; }
+            set { tlThickness = Math.Max(1, Math.Min(5, value)); }
+        }
+
+        [NinjaScriptProperty]
+        [Range(1, 5)]
+        [Display(
+            Name = "TL Extend Years",
+            GroupName = "Trade Location",
+            Order = 24)]
+        public int TLExtendYears
+        {
+            get { return tlExtendYears; }
+            set { tlExtendYears = Math.Max(1, Math.Min(5, value)); }
+        }
         #endregion
     }
 }
@@ -1051,18 +1149,18 @@ namespace NinjaTrader.NinjaScript.Indicators
     public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
     {
         private HawkSamartVolume[] cacheHawkSamartVolume;
-        public HawkSamartVolume HawkSamartVolume(int volumeThresholdLevel1, int volumeThresholdLevel2, int volumeThresholdLevel3, int timeWindowSeconds, Brush level1Brush, Brush level2Brush, Brush level3Brush, Brush textBrush, bool showEllipses, bool showTime, bool enableAlerts, bool alertLevel1Enabled, bool alertLevel2Enabled, bool alertLevel3Enabled, string alertSoundFile, double markerScale, double markerOpacity, int markerFontSizeLevel1, int markerFontSizeLevel2, int markerFontSizeLevel3)
+        public HawkSamartVolume HawkSamartVolume(int volumeThresholdLevel1, int volumeThresholdLevel2, int volumeThresholdLevel3, int timeWindowSeconds, Brush level1Brush, Brush level2Brush, Brush level3Brush, Brush textBrush, bool showEllipses, bool showTime, bool enableAlerts, bool alertLevel1Enabled, bool alertLevel2Enabled, bool alertLevel3Enabled, string alertSoundFile, double markerScale, double markerOpacity, int markerFontSizeLevel1, int markerFontSizeLevel2, int markerFontSizeLevel3, bool enableTradeLocation, int tLThickness, int tLExtendYears)
         {
-            return HawkSamartVolume(Input, volumeThresholdLevel1, volumeThresholdLevel2, volumeThresholdLevel3, timeWindowSeconds, level1Brush, level2Brush, level3Brush, textBrush, showEllipses, showTime, enableAlerts, alertLevel1Enabled, alertLevel2Enabled, alertLevel3Enabled, alertSoundFile, markerScale, markerOpacity, markerFontSizeLevel1, markerFontSizeLevel2, markerFontSizeLevel3);
+            return HawkSamartVolume(Input, volumeThresholdLevel1, volumeThresholdLevel2, volumeThresholdLevel3, timeWindowSeconds, level1Brush, level2Brush, level3Brush, textBrush, showEllipses, showTime, enableAlerts, alertLevel1Enabled, alertLevel2Enabled, alertLevel3Enabled, alertSoundFile, markerScale, markerOpacity, markerFontSizeLevel1, markerFontSizeLevel2, markerFontSizeLevel3, enableTradeLocation, tLThickness, tLExtendYears);
         }
 
-        public HawkSamartVolume HawkSamartVolume(ISeries<double> input, int volumeThresholdLevel1, int volumeThresholdLevel2, int volumeThresholdLevel3, int timeWindowSeconds, Brush level1Brush, Brush level2Brush, Brush level3Brush, Brush textBrush, bool showEllipses, bool showTime, bool enableAlerts, bool alertLevel1Enabled, bool alertLevel2Enabled, bool alertLevel3Enabled, string alertSoundFile, double markerScale, double markerOpacity, int markerFontSizeLevel1, int markerFontSizeLevel2, int markerFontSizeLevel3)
+        public HawkSamartVolume HawkSamartVolume(ISeries<double> input, int volumeThresholdLevel1, int volumeThresholdLevel2, int volumeThresholdLevel3, int timeWindowSeconds, Brush level1Brush, Brush level2Brush, Brush level3Brush, Brush textBrush, bool showEllipses, bool showTime, bool enableAlerts, bool alertLevel1Enabled, bool alertLevel2Enabled, bool alertLevel3Enabled, string alertSoundFile, double markerScale, double markerOpacity, int markerFontSizeLevel1, int markerFontSizeLevel2, int markerFontSizeLevel3, bool enableTradeLocation, int tLThickness, int tLExtendYears)
         {
             if (cacheHawkSamartVolume != null)
                 for (int idx = 0; idx < cacheHawkSamartVolume.Length; idx++)
-                    if (cacheHawkSamartVolume[idx] != null && cacheHawkSamartVolume[idx].VolumeThresholdLevel1 == volumeThresholdLevel1 && cacheHawkSamartVolume[idx].VolumeThresholdLevel2 == volumeThresholdLevel2 && cacheHawkSamartVolume[idx].VolumeThresholdLevel3 == volumeThresholdLevel3 && cacheHawkSamartVolume[idx].TimeWindowSeconds == timeWindowSeconds && cacheHawkSamartVolume[idx].Level1Brush == level1Brush && cacheHawkSamartVolume[idx].Level2Brush == level2Brush && cacheHawkSamartVolume[idx].Level3Brush == level3Brush && cacheHawkSamartVolume[idx].TextBrush == textBrush && cacheHawkSamartVolume[idx].ShowEllipses == showEllipses && cacheHawkSamartVolume[idx].ShowTime == showTime && cacheHawkSamartVolume[idx].EnableAlerts == enableAlerts && cacheHawkSamartVolume[idx].AlertLevel1Enabled == alertLevel1Enabled && cacheHawkSamartVolume[idx].AlertLevel2Enabled == alertLevel2Enabled && cacheHawkSamartVolume[idx].AlertLevel3Enabled == alertLevel3Enabled && cacheHawkSamartVolume[idx].AlertSoundFile == alertSoundFile && cacheHawkSamartVolume[idx].MarkerScale == markerScale && cacheHawkSamartVolume[idx].MarkerOpacity == markerOpacity && cacheHawkSamartVolume[idx].MarkerFontSizeLevel1 == markerFontSizeLevel1 && cacheHawkSamartVolume[idx].MarkerFontSizeLevel2 == markerFontSizeLevel2 && cacheHawkSamartVolume[idx].MarkerFontSizeLevel3 == markerFontSizeLevel3 && cacheHawkSamartVolume[idx].EqualsInput(input))
+                    if (cacheHawkSamartVolume[idx] != null && cacheHawkSamartVolume[idx].VolumeThresholdLevel1 == volumeThresholdLevel1 && cacheHawkSamartVolume[idx].VolumeThresholdLevel2 == volumeThresholdLevel2 && cacheHawkSamartVolume[idx].VolumeThresholdLevel3 == volumeThresholdLevel3 && cacheHawkSamartVolume[idx].TimeWindowSeconds == timeWindowSeconds && cacheHawkSamartVolume[idx].Level1Brush == level1Brush && cacheHawkSamartVolume[idx].Level2Brush == level2Brush && cacheHawkSamartVolume[idx].Level3Brush == level3Brush && cacheHawkSamartVolume[idx].TextBrush == textBrush && cacheHawkSamartVolume[idx].ShowEllipses == showEllipses && cacheHawkSamartVolume[idx].ShowTime == showTime && cacheHawkSamartVolume[idx].EnableAlerts == enableAlerts && cacheHawkSamartVolume[idx].AlertLevel1Enabled == alertLevel1Enabled && cacheHawkSamartVolume[idx].AlertLevel2Enabled == alertLevel2Enabled && cacheHawkSamartVolume[idx].AlertLevel3Enabled == alertLevel3Enabled && cacheHawkSamartVolume[idx].AlertSoundFile == alertSoundFile && cacheHawkSamartVolume[idx].MarkerScale == markerScale && cacheHawkSamartVolume[idx].MarkerOpacity == markerOpacity && cacheHawkSamartVolume[idx].MarkerFontSizeLevel1 == markerFontSizeLevel1 && cacheHawkSamartVolume[idx].MarkerFontSizeLevel2 == markerFontSizeLevel2 && cacheHawkSamartVolume[idx].MarkerFontSizeLevel3 == markerFontSizeLevel3 && cacheHawkSamartVolume[idx].EnableTradeLocation == enableTradeLocation && cacheHawkSamartVolume[idx].TLThickness == tLThickness && cacheHawkSamartVolume[idx].TLExtendYears == tLExtendYears && cacheHawkSamartVolume[idx].EqualsInput(input))
                         return cacheHawkSamartVolume[idx];
-            return CacheIndicator<HawkSamartVolume>(new HawkSamartVolume() { VolumeThresholdLevel1 = volumeThresholdLevel1, VolumeThresholdLevel2 = volumeThresholdLevel2, VolumeThresholdLevel3 = volumeThresholdLevel3, TimeWindowSeconds = timeWindowSeconds, Level1Brush = level1Brush, Level2Brush = level2Brush, Level3Brush = level3Brush, TextBrush = textBrush, ShowEllipses = showEllipses, ShowTime = showTime, EnableAlerts = enableAlerts, AlertLevel1Enabled = alertLevel1Enabled, AlertLevel2Enabled = alertLevel2Enabled, AlertLevel3Enabled = alertLevel3Enabled, AlertSoundFile = alertSoundFile, MarkerScale = markerScale, MarkerOpacity = markerOpacity, MarkerFontSizeLevel1 = markerFontSizeLevel1, MarkerFontSizeLevel2 = markerFontSizeLevel2, MarkerFontSizeLevel3 = markerFontSizeLevel3 }, input, ref cacheHawkSamartVolume);
+            return CacheIndicator<HawkSamartVolume>(new HawkSamartVolume() { VolumeThresholdLevel1 = volumeThresholdLevel1, VolumeThresholdLevel2 = volumeThresholdLevel2, VolumeThresholdLevel3 = volumeThresholdLevel3, TimeWindowSeconds = timeWindowSeconds, Level1Brush = level1Brush, Level2Brush = level2Brush, Level3Brush = level3Brush, TextBrush = textBrush, ShowEllipses = showEllipses, ShowTime = showTime, EnableAlerts = enableAlerts, AlertLevel1Enabled = alertLevel1Enabled, AlertLevel2Enabled = alertLevel2Enabled, AlertLevel3Enabled = alertLevel3Enabled, AlertSoundFile = alertSoundFile, MarkerScale = markerScale, MarkerOpacity = markerOpacity, MarkerFontSizeLevel1 = markerFontSizeLevel1, MarkerFontSizeLevel2 = markerFontSizeLevel2, MarkerFontSizeLevel3 = markerFontSizeLevel3, EnableTradeLocation = enableTradeLocation, TLThickness = tLThickness, TLExtendYears = tLExtendYears }, input, ref cacheHawkSamartVolume);
         }
     }
 }
@@ -1071,14 +1169,14 @@ namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
 {
     public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
     {
-        public Indicators.HawkSamartVolume HawkSamartVolume(int volumeThresholdLevel1, int volumeThresholdLevel2, int volumeThresholdLevel3, int timeWindowSeconds, Brush level1Brush, Brush level2Brush, Brush level3Brush, Brush textBrush, bool showEllipses, bool showTime, bool enableAlerts, bool alertLevel1Enabled, bool alertLevel2Enabled, bool alertLevel3Enabled, string alertSoundFile, double markerScale, double markerOpacity, int markerFontSizeLevel1, int markerFontSizeLevel2, int markerFontSizeLevel3)
+        public Indicators.HawkSamartVolume HawkSamartVolume(int volumeThresholdLevel1, int volumeThresholdLevel2, int volumeThresholdLevel3, int timeWindowSeconds, Brush level1Brush, Brush level2Brush, Brush level3Brush, Brush textBrush, bool showEllipses, bool showTime, bool enableAlerts, bool alertLevel1Enabled, bool alertLevel2Enabled, bool alertLevel3Enabled, string alertSoundFile, double markerScale, double markerOpacity, int markerFontSizeLevel1, int markerFontSizeLevel2, int markerFontSizeLevel3, bool enableTradeLocation, int tLThickness, int tLExtendYears)
         {
-            return indicator.HawkSamartVolume(Input, volumeThresholdLevel1, volumeThresholdLevel2, volumeThresholdLevel3, timeWindowSeconds, level1Brush, level2Brush, level3Brush, textBrush, showEllipses, showTime, enableAlerts, alertLevel1Enabled, alertLevel2Enabled, alertLevel3Enabled, alertSoundFile, markerScale, markerOpacity, markerFontSizeLevel1, markerFontSizeLevel2, markerFontSizeLevel3);
+            return indicator.HawkSamartVolume(Input, volumeThresholdLevel1, volumeThresholdLevel2, volumeThresholdLevel3, timeWindowSeconds, level1Brush, level2Brush, level3Brush, textBrush, showEllipses, showTime, enableAlerts, alertLevel1Enabled, alertLevel2Enabled, alertLevel3Enabled, alertSoundFile, markerScale, markerOpacity, markerFontSizeLevel1, markerFontSizeLevel2, markerFontSizeLevel3, enableTradeLocation, tLThickness, tLExtendYears);
         }
 
-        public Indicators.HawkSamartVolume HawkSamartVolume(ISeries<double> input, int volumeThresholdLevel1, int volumeThresholdLevel2, int volumeThresholdLevel3, int timeWindowSeconds, Brush level1Brush, Brush level2Brush, Brush level3Brush, Brush textBrush, bool showEllipses, bool showTime, bool enableAlerts, bool alertLevel1Enabled, bool alertLevel2Enabled, bool alertLevel3Enabled, string alertSoundFile, double markerScale, double markerOpacity, int markerFontSizeLevel1, int markerFontSizeLevel2, int markerFontSizeLevel3)
+        public Indicators.HawkSamartVolume HawkSamartVolume(ISeries<double> input, int volumeThresholdLevel1, int volumeThresholdLevel2, int volumeThresholdLevel3, int timeWindowSeconds, Brush level1Brush, Brush level2Brush, Brush level3Brush, Brush textBrush, bool showEllipses, bool showTime, bool enableAlerts, bool alertLevel1Enabled, bool alertLevel2Enabled, bool alertLevel3Enabled, string alertSoundFile, double markerScale, double markerOpacity, int markerFontSizeLevel1, int markerFontSizeLevel2, int markerFontSizeLevel3, bool enableTradeLocation, int tLThickness, int tLExtendYears)
         {
-            return indicator.HawkSamartVolume(input, volumeThresholdLevel1, volumeThresholdLevel2, volumeThresholdLevel3, timeWindowSeconds, level1Brush, level2Brush, level3Brush, textBrush, showEllipses, showTime, enableAlerts, alertLevel1Enabled, alertLevel2Enabled, alertLevel3Enabled, alertSoundFile, markerScale, markerOpacity, markerFontSizeLevel1, markerFontSizeLevel2, markerFontSizeLevel3);
+            return indicator.HawkSamartVolume(input, volumeThresholdLevel1, volumeThresholdLevel2, volumeThresholdLevel3, timeWindowSeconds, level1Brush, level2Brush, level3Brush, textBrush, showEllipses, showTime, enableAlerts, alertLevel1Enabled, alertLevel2Enabled, alertLevel3Enabled, alertSoundFile, markerScale, markerOpacity, markerFontSizeLevel1, markerFontSizeLevel2, markerFontSizeLevel3, enableTradeLocation, tLThickness, tLExtendYears);
         }
     }
 }
@@ -1087,14 +1185,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
     public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
     {
-        public Indicators.HawkSamartVolume HawkSamartVolume(int volumeThresholdLevel1, int volumeThresholdLevel2, int volumeThresholdLevel3, int timeWindowSeconds, Brush level1Brush, Brush level2Brush, Brush level3Brush, Brush textBrush, bool showEllipses, bool showTime, bool enableAlerts, bool alertLevel1Enabled, bool alertLevel2Enabled, bool alertLevel3Enabled, string alertSoundFile, double markerScale, double markerOpacity, int markerFontSizeLevel1, int markerFontSizeLevel2, int markerFontSizeLevel3)
+        public Indicators.HawkSamartVolume HawkSamartVolume(int volumeThresholdLevel1, int volumeThresholdLevel2, int volumeThresholdLevel3, int timeWindowSeconds, Brush level1Brush, Brush level2Brush, Brush level3Brush, Brush textBrush, bool showEllipses, bool showTime, bool enableAlerts, bool alertLevel1Enabled, bool alertLevel2Enabled, bool alertLevel3Enabled, string alertSoundFile, double markerScale, double markerOpacity, int markerFontSizeLevel1, int markerFontSizeLevel2, int markerFontSizeLevel3, bool enableTradeLocation, int tLThickness, int tLExtendYears)
         {
-            return indicator.HawkSamartVolume(Input, volumeThresholdLevel1, volumeThresholdLevel2, volumeThresholdLevel3, timeWindowSeconds, level1Brush, level2Brush, level3Brush, textBrush, showEllipses, showTime, enableAlerts, alertLevel1Enabled, alertLevel2Enabled, alertLevel3Enabled, alertSoundFile, markerScale, markerOpacity, markerFontSizeLevel1, markerFontSizeLevel2, markerFontSizeLevel3);
+            return indicator.HawkSamartVolume(Input, volumeThresholdLevel1, volumeThresholdLevel2, volumeThresholdLevel3, timeWindowSeconds, level1Brush, level2Brush, level3Brush, textBrush, showEllipses, showTime, enableAlerts, alertLevel1Enabled, alertLevel2Enabled, alertLevel3Enabled, alertSoundFile, markerScale, markerOpacity, markerFontSizeLevel1, markerFontSizeLevel2, markerFontSizeLevel3, enableTradeLocation, tLThickness, tLExtendYears);
         }
 
-        public Indicators.HawkSamartVolume HawkSamartVolume(ISeries<double> input, int volumeThresholdLevel1, int volumeThresholdLevel2, int volumeThresholdLevel3, int timeWindowSeconds, Brush level1Brush, Brush level2Brush, Brush level3Brush, Brush textBrush, bool showEllipses, bool showTime, bool enableAlerts, bool alertLevel1Enabled, bool alertLevel2Enabled, bool alertLevel3Enabled, string alertSoundFile, double markerScale, double markerOpacity, int markerFontSizeLevel1, int markerFontSizeLevel2, int markerFontSizeLevel3)
+        public Indicators.HawkSamartVolume HawkSamartVolume(ISeries<double> input, int volumeThresholdLevel1, int volumeThresholdLevel2, int volumeThresholdLevel3, int timeWindowSeconds, Brush level1Brush, Brush level2Brush, Brush level3Brush, Brush textBrush, bool showEllipses, bool showTime, bool enableAlerts, bool alertLevel1Enabled, bool alertLevel2Enabled, bool alertLevel3Enabled, string alertSoundFile, double markerScale, double markerOpacity, int markerFontSizeLevel1, int markerFontSizeLevel2, int markerFontSizeLevel3, bool enableTradeLocation, int tLThickness, int tLExtendYears)
         {
-            return indicator.HawkSamartVolume(input, volumeThresholdLevel1, volumeThresholdLevel2, volumeThresholdLevel3, timeWindowSeconds, level1Brush, level2Brush, level3Brush, textBrush, showEllipses, showTime, enableAlerts, alertLevel1Enabled, alertLevel2Enabled, alertLevel3Enabled, alertSoundFile, markerScale, markerOpacity, markerFontSizeLevel1, markerFontSizeLevel2, markerFontSizeLevel3);
+            return indicator.HawkSamartVolume(input, volumeThresholdLevel1, volumeThresholdLevel2, volumeThresholdLevel3, timeWindowSeconds, level1Brush, level2Brush, level3Brush, textBrush, showEllipses, showTime, enableAlerts, alertLevel1Enabled, alertLevel2Enabled, alertLevel3Enabled, alertSoundFile, markerScale, markerOpacity, markerFontSizeLevel1, markerFontSizeLevel2, markerFontSizeLevel3, enableTradeLocation, tLThickness, tLExtendYears);
         }
     }
 }
