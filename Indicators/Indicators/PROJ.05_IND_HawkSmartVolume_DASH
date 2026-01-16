@@ -48,6 +48,9 @@ namespace NinjaTrader.NinjaScript.Indicators
             public double Price;
             public int Level;
             public bool IsActive;
+            public bool WasConsumed;
+            public bool SeenAbove;
+            public bool SeenBelow;
         }
 
         private int volumeThresholdLevel1 = 900;
@@ -71,6 +74,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private bool enableTradeLocation = false;
         private int tlThickness = 1;
         private int tlExtendYears = 1;
+        private int tlMaxHistoryDays = 5;
         private bool tlLevel1Enabled = true;
         private bool tlLevel2Enabled = true;
         private bool tlLevel3Enabled = true;
@@ -262,7 +266,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     maxDayTime = DateTime.MinValue;
                     // Trade Locations são válidas apenas para a sessão atual (D ou D+1).
                     // Persistência e lógica de expiração serão tratadas no Paper 5.
-                    ClearTradeLocations();
+                    CleanupTradeLocationsBySession();
                 }
 
                 if (debugDraw)
@@ -313,6 +317,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                     if (drawn)
                         OnPrintConfirmed(ev);
                 }
+
+                if (BarsInProgress == 0 && IsLastTickOfBar)
+                    EvaluateTradeLocationConsumption();
 
                 UpdateInfoPanelText();
             }
@@ -496,7 +503,10 @@ namespace NinjaTrader.NinjaScript.Indicators
                 SessionDate = currentSessionDate,
                 Price = ev.Price,
                 Level = ev.Level,
-                IsActive = true
+                IsActive = true,
+                WasConsumed = false,
+                SeenAbove = false,
+                SeenBelow = false
             };
         }
 
@@ -518,14 +528,67 @@ namespace NinjaTrader.NinjaScript.Indicators
             );
         }
 
-        private void ClearTradeLocations()
+        private void EvaluateTradeLocationConsumption()
         {
-            foreach (var tl in tradeLocations)
+            for (int i = 0; i < tradeLocations.Count; i++)
             {
-                try { RemoveDrawObject(tl.Tag); } catch { }
+                var tl = tradeLocations[i];
+
+                // Ignora TLs da sessão atual
+                if (tl.SessionDate == currentSessionDate)
+                    continue;
+
+                // Ignora TLs já marcadas
+                if (tl.WasConsumed)
+                    continue;
+
+                if (Close[0] > tl.Price)
+                    tl.SeenAbove = true;
+
+                if (Close[0] < tl.Price)
+                    tl.SeenBelow = true;
+
+                bool touched =
+                    High[0] >= tl.Price &&
+                    Low[0] <= tl.Price;
+
+                if (touched && tl.SeenAbove && tl.SeenBelow)
+                {
+                    tl.WasConsumed = true;
+                    tradeLocations[i] = tl;
+                }
+                else
+                {
+                    tradeLocations[i] = tl;
+                }
             }
-            tradeLocations.Clear();
-            tradeLocationTags.Clear();
+        }
+
+        private void CleanupTradeLocationsBySession()
+        {
+            DateTime cutoffDate = currentSessionDate.AddDays(-TLMaxHistoryDays);
+
+            for (int i = tradeLocations.Count - 1; i >= 0; i--)
+            {
+                var tl = tradeLocations[i];
+
+                // Remove se ultrapassar limite histórico
+                if (tl.SessionDate < cutoffDate)
+                {
+                    try { RemoveDrawObject(tl.Tag); } catch { }
+                    tradeLocations.RemoveAt(i);
+                    tradeLocationTags.Remove(tl.Tag);
+                    continue;
+                }
+
+                // Remove se consumida em sessão anterior
+                if (tl.WasConsumed && tl.SessionDate < currentSessionDate)
+                {
+                    try { RemoveDrawObject(tl.Tag); } catch { }
+                    tradeLocations.RemoveAt(i);
+                    tradeLocationTags.Remove(tl.Tag);
+                }
+            }
         }
 
         private Brush CreateInvisibleStroke()
@@ -1198,6 +1261,19 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             get { return tlLevel3Enabled; }
             set { tlLevel3Enabled = value; }
+        }
+
+        [NinjaScriptProperty]
+        [Range(1, 10)]
+        [Display(
+            Name = "Trade Location History (Days)",
+            Description = "Quantidade máxima de sessões para manter Trade Locations. Máximo permitido: 10.",
+            GroupName = "Trade Location",
+            Order = 27)]
+        public int TLMaxHistoryDays
+        {
+            get { return tlMaxHistoryDays; }
+            set { tlMaxHistoryDays = Math.Max(1, Math.Min(10, value)); }
         }
 
         [NinjaScriptProperty]
