@@ -342,12 +342,21 @@ namespace NinjaTrader.NinjaScript.Indicators
                 return;
             }
 
-            DateTime chartNow = Time[0];
+            int minutesAgo = 0;
 
-            int minutesAgo = Math.Max(
-                1,
-                (int)Math.Floor((chartNow - lastPrintTime).TotalMinutes)
-            );
+            if (lastPrintTime != DateTime.MinValue)
+            {
+                DateTime chartNow = Time[0];
+                double deltaMin = (chartNow - lastPrintTime).TotalMinutes;
+
+                if (deltaMin < 0)
+                    deltaMin = 0;
+
+                minutesAgo = (int)Math.Floor(deltaMin);
+
+                if (minutesAgo < 1)
+                    minutesAgo = 1;
+            }
 
             string line1 = lastPrintTime == DateTime.MinValue
                 ? "Fluxo: -"
