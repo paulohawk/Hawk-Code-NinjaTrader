@@ -229,6 +229,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                         lastPrintLevel = ev.Level;
                         lastPrintTime = ev.Time;
 
+                        // Proteção defensiva: evita estado inválido antes do primeiro BIP 0
                         if (currentSessionDate == DateTime.MinValue)
                             currentSessionDate = Time[0].Date;
 
@@ -251,6 +252,9 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 if (Bars.IsFirstBarOfSession)
                 {
+                    // SESSION KEY (Paper 4.x)
+                    // Por definição atual, a sessão é baseada no dia civil do gráfico.
+                    // A migração para TradingHours será tratada no Paper 5.
                     currentSessionDate = Time[0].Date;
                     maxDayVolume = 0;
                     maxDayLevel = 0;
@@ -338,9 +342,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                 return;
             }
 
+            DateTime chartNow = Time[0];
+
             int minutesAgo = Math.Max(
                 1,
-                (int)Math.Floor((DateTime.Now - lastPrintTime).TotalMinutes)
+                (int)Math.Floor((chartNow - lastPrintTime).TotalMinutes)
             );
 
             string line1 = lastPrintTime == DateTime.MinValue
