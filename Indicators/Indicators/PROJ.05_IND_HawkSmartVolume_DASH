@@ -229,6 +229,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                         lastPrintLevel = ev.Level;
                         lastPrintTime = ev.Time;
 
+                        if (currentSessionDate == DateTime.MinValue)
+                            currentSessionDate = Time[0].Date;
+
                         if (ev.Volume > maxDayVolume)
                         {
                             maxDayVolume = ev.Volume;
@@ -1144,6 +1147,42 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             get { return enableTradeLocation; }
             set { enableTradeLocation = value; }
+        }
+
+        [NinjaScriptProperty]
+        [Display(
+            Name = "TL Level 1 Enabled",
+            Description = "Enable Trade Location creation for Level 1 prints.",
+            GroupName = "Trade Location",
+            Order = 24)]
+        public bool TLLevel1Enabled
+        {
+            get { return tlLevel1Enabled; }
+            set { tlLevel1Enabled = value; }
+        }
+
+        [NinjaScriptProperty]
+        [Display(
+            Name = "TL Level 2 Enabled",
+            Description = "Enable Trade Location creation for Level 2 prints.",
+            GroupName = "Trade Location",
+            Order = 25)]
+        public bool TLLevel2Enabled
+        {
+            get { return tlLevel2Enabled; }
+            set { tlLevel2Enabled = value; }
+        }
+
+        [NinjaScriptProperty]
+        [Display(
+            Name = "TL Level 3 Enabled",
+            Description = "Enable Trade Location creation for Level 3 prints.",
+            GroupName = "Trade Location",
+            Order = 26)]
+        public bool TLLevel3Enabled
+        {
+            get { return tlLevel3Enabled; }
+            set { tlLevel3Enabled = value; }
         }
 
         [NinjaScriptProperty]
