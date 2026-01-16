@@ -91,6 +91,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         // TRADE LOCATION (TL) – Paper 04
         // ================================
         private readonly List<TradeLocation> tradeLocations = new List<TradeLocation>();
+        private readonly HashSet<string> tradeLocationTags = new HashSet<string>();
 
         // ===== Info Panel State =====
         private int lastPrintLevel = 0;
@@ -228,16 +229,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                         lastPrintLevel = ev.Level;
                         lastPrintTime = ev.Time;
 
-                        DateTime sessionDate = Bars.TradingHours.Sessions.GetNextBeginTime(ev.Time, true);
-                        if (currentSessionDate != sessionDate)
-                        {
-                            currentSessionDate = sessionDate;
-                            maxDayVolume = 0;
-                            maxDayLevel = 0;
-                            maxDayPrice = double.NaN;
-                            maxDayTime = DateTime.MinValue;
-                        }
-
                         if (ev.Volume > maxDayVolume)
                         {
                             maxDayVolume = ev.Volume;
@@ -256,9 +247,16 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (BarsInProgress == 0)
             {
                 if (Bars.IsFirstBarOfSession)
+                {
+                    currentSessionDate = Time[0].Date;
+                    maxDayVolume = 0;
+                    maxDayLevel = 0;
+                    maxDayPrice = double.NaN;
+                    maxDayTime = DateTime.MinValue;
                     // Trade Locations são válidas apenas para a sessão atual (D ou D+1).
                     // Persistência e lógica de expiração serão tratadas no Paper 5.
                     ClearTradeLocations();
+                }
 
                 if (debugDraw)
                 {
@@ -321,8 +319,11 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (enableTradeLocation && IsTradeLocationAllowed(ev.Level))
             {
                 var tl = BuildTradeLocation(ev);
-                RenderTradeLocation(tl);
-                tradeLocations.Add(tl);
+                if (tradeLocationTags.Add(tl.Tag))
+                {
+                    RenderTradeLocation(tl);
+                    tradeLocations.Add(tl);
+                }
             }
         }
 
@@ -463,9 +464,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private bool IsTradeLocationAllowed(int level)
         {
-            return level == 1 && tlLevel1Enabled
-                || level == 2 && tlLevel2Enabled
-                || level == 3 && tlLevel3Enabled;
+            return (level == 1 && tlLevel1Enabled)
+                || (level == 2 && tlLevel2Enabled)
+                || (level == 3 && tlLevel3Enabled);
         }
 
         private TradeLocation BuildTradeLocation(PrintEvent ev)
@@ -506,6 +507,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 try { RemoveDrawObject(tl.Tag); } catch { }
             }
             tradeLocations.Clear();
+            tradeLocationTags.Clear();
         }
 
         private Brush CreateInvisibleStroke()
