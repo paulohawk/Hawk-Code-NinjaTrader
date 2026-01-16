@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Diagnostics.CodeAnalysis;
-using System.Linq;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Media;
@@ -38,14 +37,17 @@ namespace NinjaTrader.NinjaScript.Indicators
             public double Price;
             public int Level;
             public double Volume;
+            public int BarsAgo;
         }
 
         private struct TradeLocation
         {
             public string Tag;
             public DateTime Time;
+            public DateTime SessionDate;
             public double Price;
             public int Level;
+            public bool IsActive;
         }
 
         private int volumeThresholdLevel1 = 900;
@@ -69,6 +71,9 @@ namespace NinjaTrader.NinjaScript.Indicators
         private bool enableTradeLocation = false;
         private int tlThickness = 1;
         private int tlExtendYears = 1;
+        private bool tlLevel1Enabled = true;
+        private bool tlLevel2Enabled = true;
+        private bool tlLevel3Enabled = true;
         // ================================
         // KELCH BULLET MARKER (Paper 02.3)
         // ================================
@@ -86,6 +91,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         // TRADE LOCATION (TL) – Paper 04
         // ================================
         private readonly List<TradeLocation> tradeLocations = new List<TradeLocation>();
+        private readonly HashSet<string> tradeLocationTags = new HashSet<string>();
 
         // ===== Info Panel State =====
         private int lastPrintLevel = 0;
@@ -223,14 +229,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                         lastPrintLevel = ev.Level;
                         lastPrintTime = ev.Time;
 
-                        if (currentSessionDate.Date != ev.Time.Date)
-                        {
-                            currentSessionDate = ev.Time.Date;
-                            maxDayVolume = 0;
-                            maxDayLevel = 0;
-                            maxDayPrice = double.NaN;
-                            maxDayTime = DateTime.MinValue;
-                        }
+                        // Proteção defensiva: evita estado inválido antes do primeiro BIP 0
+                        if (currentSessionDate == DateTime.MinValue)
+                            currentSessionDate = Time[0].Date;
 
                         if (ev.Volume > maxDayVolume)
                         {
@@ -250,7 +251,19 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (BarsInProgress == 0)
             {
                 if (Bars.IsFirstBarOfSession)
+                {
+                    // SESSION KEY (Paper 4.x)
+                    // Por definição atual, a sessão é baseada no dia civil do gráfico.
+                    // A migração para TradingHours será tratada no Paper 5.
+                    currentSessionDate = Time[0].Date;
+                    maxDayVolume = 0;
+                    maxDayLevel = 0;
+                    maxDayPrice = double.NaN;
+                    maxDayTime = DateTime.MinValue;
+                    // Trade Locations são válidas apenas para a sessão atual (D ou D+1).
+                    // Persistência e lógica de expiração serão tratadas no Paper 5.
                     ClearTradeLocations();
+                }
 
                 if (debugDraw)
                 {
@@ -278,15 +291,13 @@ namespace NinjaTrader.NinjaScript.Indicators
                         DebugLog($"DROP | Reason=InvalidBarsAgo | BarsAgo={barsAgo}");
                         continue;
                     }
+                    ev.BarsAgo = barsAgo;
 
                     DebugLog(
                       $"EVENT | Level={ev.Level} | Vol={ev.Volume} | " +
                       $"EventTime={ev.Time:HH:mm:ss.fff} | BarIdx={barIdx} | BarsAgo={barsAgo}"
                     );
-                    Brush brush =
-                        ev.Level == 3 ? level3Brush :
-                        ev.Level == 2 ? level2Brush :
-                                        level1Brush;
+                    Brush brush = GetLevelBrush(ev.Level);
 
                     bool drawn = false;
 
@@ -300,16 +311,26 @@ namespace NinjaTrader.NinjaScript.Indicators
                         );
 
                     if (drawn)
-                    {
-                        DrawLevelText_OnPrimary(ev.Level, ev.Price, barsAgo, ev.Time, ev.Volume);
-                        TriggerAlert(ev.Level, brush, ev.Time);
-
-                        if (enableTradeLocation)
-                            CreateTradeLocation(ev);
-                    }
+                        OnPrintConfirmed(ev);
                 }
 
                 UpdateInfoPanelText();
+            }
+        }
+
+        private void OnPrintConfirmed(PrintEvent ev)
+        {
+            DrawLevelText_OnPrimary(ev.Level, ev.Price, ev.BarsAgo, ev.Time, ev.Volume);
+            TriggerAlert(ev.Level, GetLevelBrush(ev.Level), ev.Time);
+
+            if (enableTradeLocation && IsTradeLocationAllowed(ev.Level))
+            {
+                var tl = BuildTradeLocation(ev);
+                if (tradeLocationTags.Add(tl.Tag))
+                {
+                    RenderTradeLocation(tl);
+                    tradeLocations.Add(tl);
+                }
             }
         }
 
@@ -321,10 +342,21 @@ namespace NinjaTrader.NinjaScript.Indicators
                 return;
             }
 
-            int minutesAgo = Math.Max(
-                1,
-                (int)Math.Floor((DateTime.Now - lastPrintTime).TotalMinutes)
-            );
+            int minutesAgo = 0;
+
+            if (lastPrintTime != DateTime.MinValue)
+            {
+                DateTime chartNow = Time[0];
+                double deltaMin = (chartNow - lastPrintTime).TotalMinutes;
+
+                if (deltaMin < 0)
+                    deltaMin = 0;
+
+                minutesAgo = (int)Math.Floor(deltaMin);
+
+                if (minutesAgo < 1)
+                    minutesAgo = 1;
+            }
 
             string line1 = lastPrintTime == DateTime.MinValue
                 ? "Fluxo: -"
@@ -448,41 +480,42 @@ namespace NinjaTrader.NinjaScript.Indicators
             Print($"[HSV][DRAW][{BarsInProgress}][Bar:{CurrentBar}] {message}");
         }
 
-        private void CreateTradeLocation(PrintEvent ev)
+        private bool IsTradeLocationAllowed(int level)
         {
-            string tag = $"HSV_TL_L{ev.Level}_{ev.Time.Ticks}";
+            return (level == 1 && tlLevel1Enabled)
+                || (level == 2 && tlLevel2Enabled)
+                || (level == 3 && tlLevel3Enabled);
+        }
 
-            // PROTEÇÃO: evita criar TL duplicada para o mesmo evento
-            if (tradeLocations.Any(t => t.Tag == tag))
-                return;
+        private TradeLocation BuildTradeLocation(PrintEvent ev)
+        {
+            return new TradeLocation
+            {
+                Tag = $"HSV_TL_L{ev.Level}_{ev.Time.Ticks}",
+                Time = ev.Time,
+                SessionDate = currentSessionDate,
+                Price = ev.Price,
+                Level = ev.Level,
+                IsActive = true
+            };
+        }
 
+        private void RenderTradeLocation(TradeLocation tl)
+        {
             DateTime endTime = Bars.GetTime(CurrentBar).AddDays(1);
-
-            Brush brush =
-                ev.Level == 3 ? level3Brush :
-                ev.Level == 2 ? level2Brush :
-                                level1Brush;
 
             Draw.Line(
                 this,
-                tag,
+                tl.Tag,
                 false,
-                ev.Time,
-                ev.Price,
+                tl.Time,
+                tl.Price,
                 endTime,
-                ev.Price,
-                brush,
+                tl.Price,
+                GetLevelBrush(tl.Level),
                 DashStyleHelper.Solid,
                 tlThickness
             );
-
-            tradeLocations.Add(new TradeLocation
-            {
-                Tag = tag,
-                Time = ev.Time,
-                Price = ev.Price,
-                Level = ev.Level
-            });
         }
 
         private void ClearTradeLocations()
@@ -492,6 +525,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 try { RemoveDrawObject(tl.Tag); } catch { }
             }
             tradeLocations.Clear();
+            tradeLocationTags.Clear();
         }
 
         private Brush CreateInvisibleStroke()
@@ -504,6 +538,13 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
 
             return invisibleStroke;
+        }
+
+        private Brush GetLevelBrush(int level)
+        {
+            return level == 3 ? level3Brush
+                 : level == 2 ? level2Brush
+                              : level1Brush;
         }
 
         public override void OnRenderTargetChanged()
@@ -1121,6 +1162,42 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             get { return enableTradeLocation; }
             set { enableTradeLocation = value; }
+        }
+
+        [NinjaScriptProperty]
+        [Display(
+            Name = "TL Level 1 Enabled",
+            Description = "Enable Trade Location creation for Level 1 prints.",
+            GroupName = "Trade Location",
+            Order = 24)]
+        public bool TLLevel1Enabled
+        {
+            get { return tlLevel1Enabled; }
+            set { tlLevel1Enabled = value; }
+        }
+
+        [NinjaScriptProperty]
+        [Display(
+            Name = "TL Level 2 Enabled",
+            Description = "Enable Trade Location creation for Level 2 prints.",
+            GroupName = "Trade Location",
+            Order = 25)]
+        public bool TLLevel2Enabled
+        {
+            get { return tlLevel2Enabled; }
+            set { tlLevel2Enabled = value; }
+        }
+
+        [NinjaScriptProperty]
+        [Display(
+            Name = "TL Level 3 Enabled",
+            Description = "Enable Trade Location creation for Level 3 prints.",
+            GroupName = "Trade Location",
+            Order = 26)]
+        public bool TLLevel3Enabled
+        {
+            get { return tlLevel3Enabled; }
+            set { tlLevel3Enabled = value; }
         }
 
         [NinjaScriptProperty]
