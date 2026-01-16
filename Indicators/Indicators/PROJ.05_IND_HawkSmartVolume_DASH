@@ -162,6 +162,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                     tlThickness = 1;
                     tlExtendYears = 1;
                     break;
+                case State.Realtime:
+                    // Paper 6.1: Após rebuild (historical) -> realtime, garante que todas as TLs
+                    // existentes estejam desenhadas com LineEndTime correto.
+                    RebuildTradeLocationDrawObjects();
+                    break;
             }
 
             if (State == State.Configure)
@@ -250,8 +255,14 @@ namespace NinjaTrader.NinjaScript.Indicators
                         }
 
                         pending.Enqueue(ev);
-                        while (pending.Count > maxPending)
-                            pending.Dequeue();
+
+                        // Paper 6.1: Em rebuild (State.Historical) NÃO podemos perder eventos,
+                        // senão TLs antigas não serão reconstruídas após Reload NinjaScript.
+                        if (!IsRebuildMode())
+                        {
+                            while (pending.Count > maxPending)
+                                pending.Dequeue();
+                        }
                     }
                 }
             }
@@ -278,7 +289,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                     Print($"[HSV][DBG] BIP={BarsInProgress} | CB0={CurrentBars[0]} | CB1={(BarsArray.Length > 1 ? CurrentBars[1] : -1)} | Time={Time[0]:HH:mm:ss} | Vol={Volume[0]}");
                 }
 
-                int maxPerTick = 3;
+                // Paper 6.1: No rebuild histórico (Reload NinjaScript), drenar agressivamente
+                // para reconstruir todas as TLs e markers no carregamento.
+                int maxPerTick = IsRebuildMode() ? int.MaxValue : 3;
                 while (pending.Count > 0 && maxPerTick-- > 0)
                 {
                     var ev = pending.Dequeue();
@@ -546,6 +559,29 @@ namespace NinjaTrader.NinjaScript.Indicators
             RenderTradeLocation(tl);
         }
 
+        private void RebuildTradeLocationDrawObjects()
+        {
+            if (!enableTradeLocation)
+                return;
+
+            for (int i = 0; i < tradeLocations.Count; i++)
+            {
+                var tl = tradeLocations[i];
+
+                // Normaliza endTime antes de redesenhar
+                if (tl.WasConsumed && tl.ConsumedSessionDate != DateTime.MinValue)
+                    tl.LineEndTime = EndOfSession(tl.ConsumedSessionDate);
+                else if (!tl.WasConsumed && tl.ExpireSessionDate != DateTime.MinValue)
+                    tl.LineEndTime = EndOfSession(tl.ExpireSessionDate);
+
+                // Remove e redesenha
+                try { RemoveDrawObject(tl.Tag); } catch { }
+                RenderTradeLocation(tl);
+
+                tradeLocations[i] = tl;
+            }
+        }
+
         private void EvaluateTradeLocationConsumptionOnClose()
         {
             // Garante que existe candle anterior
@@ -602,11 +638,18 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 var tl = tradeLocations[i];
 
-                // Normaliza LineEndTime em caso de reload/estado parcial
+                // Paper 6.1: Normaliza LineEndTime em caso de reload/estado parcial
+                // e REDESENHA caso o endTime mude (evita TL "infinita" após reload).
+                DateTime prevEnd = tl.LineEndTime;
+
                 if (tl.WasConsumed && tl.ConsumedSessionDate != DateTime.MinValue)
                     tl.LineEndTime = EndOfSession(tl.ConsumedSessionDate);
                 else if (!tl.WasConsumed && tl.ExpireSessionDate != DateTime.MinValue)
                     tl.LineEndTime = EndOfSession(tl.ExpireSessionDate);
+
+                // Redraw apenas quando necessário
+                if (prevEnd != tl.LineEndTime)
+                    RedrawTradeLocation(tl);
 
                 tradeLocations[i] = tl;
 
@@ -668,6 +711,13 @@ namespace NinjaTrader.NinjaScript.Indicators
             // Fim do dia civil (23:59:59.999) como proxy do fechamento da sessão do gráfico.
             // Migração para TradingHours (exato) fica para paper futuro.
             return sessionDate.Date.AddDays(1).AddMilliseconds(-1);
+        }
+
+        // Paper 6.1: Modo histórico / rebuild (Reload NinjaScript)
+        // Em State.Historical o indicador precisa reconstruir TODAS as TLs sem perder eventos no queue.
+        private bool IsRebuildMode()
+        {
+            return State == State.Historical;
         }
 
         public override void OnRenderTargetChanged()
