@@ -239,7 +239,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                         lastPrintTime = ev.Time;
 
                         // Proteção defensiva: evita estado inválido antes do primeiro BIP 0
-                        if (currentSessionStartTime == DateTime.MinValue)
+                        if (currentSessionStartTime == DateTime.MinValue && Bars.IsFirstBarOfSession)
                             currentSessionStartTime = Time[0];
 
                         if (ev.Volume > maxDayVolume)
@@ -668,7 +668,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (tl.IsFinalized)
                     continue;
 
-                if (tl.LineEndTime == currentTime)
+                if (tl.LineEndTime >= currentTime)
                     continue;
 
                 tl.LineEndTime = currentTime;
@@ -684,6 +684,10 @@ namespace NinjaTrader.NinjaScript.Indicators
             for (int i = tradeLocations.Count - 1; i >= 0; i--)
             {
                 var tl = tradeLocations[i];
+
+                // Paper 6.4 — NÃO remover TLs ainda ativas
+                if (!tl.IsFinalized)
+                    continue;
 
                 if (tl.StartTime >= cutoff)
                     continue;
