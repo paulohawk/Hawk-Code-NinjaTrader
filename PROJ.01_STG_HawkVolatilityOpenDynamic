@@ -1671,6 +1671,13 @@ namespace NinjaTrader.NinjaScript.Strategies
         [NinjaScriptProperty, Category("Parameters"), DisplayName("BreakEven Lock (R múltiplos)")]
         public double BreakEvenLockRR { get; set; }
 
+        [NinjaScriptProperty]
+        [Display(Name = "Use Midas Filter", GroupName = "Entry Filters", Order = 100)]
+        public bool UseMidasFilter { get; set; }
+        [NinjaScriptProperty]
+        [Display(Name = "Midas Entry Offset (ticks)", GroupName = "Entry Filters", Order = 110)]
+        public int MidasEntryOffsetTicks { get; set; }
+
         [NinjaScriptProperty, Category("SuperTrend"), DisplayName("Ativar filtro SuperTrend")]
         public bool UseSuperTrend { get; set; }
         [NinjaScriptProperty, Category("SuperTrend"), DisplayName("SuperTrend TimeFrame (min)")]
@@ -1690,6 +1697,9 @@ namespace NinjaTrader.NinjaScript.Strategies
         public bool AutoCloseEnabled { get; set; }
         [NinjaScriptProperty, Category("Risk / Session"), DisplayName("Auto-close time (HH:mm:ss Brasilia)")]
         public string AutoCloseTimeHHmmss { get; set; }
+        [NinjaScriptProperty]
+        [Display(Name = "Cancel Pending Entry At Hour", GroupName = "Risk / Orders", Order = 120)]
+        public int CancelPendingEntryHour { get; set; }
 
         [NinjaScriptProperty, Category("Parameters"), DisplayName("Panel StrategyKey (opcional)")]
         public string PanelStrategyKey { get; set; }
@@ -1740,6 +1750,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         private Order ordemStopShort;
         private Order ordemTPLong;
         private Order ordemTPShort;
+        private Order pendingEntryOrder;
 
         private int actualContractsForDay;
         private int lastBracketQty = 0; // qty usada no último bracket (para re-sync em parciais)
@@ -1753,6 +1764,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         private DateTime lastAutoCloseDate = DateTime.MinValue;
         private double lastAtrVal = 0.0;
+        private AnchoredMidasIndicator midasIndicator;
 
         // Painel embutido exclusivo
         private HVO_PanelHelper panelHelper;
@@ -1859,6 +1871,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 InvertStopOffsetTicks = 2;
                 BreakEvenAtRR = 4.0;
                 BreakEvenLockRR = 1.0;
+                UseMidasFilter = false;
+                MidasEntryOffsetTicks = 10;
 
                 UseSuperTrend = true;
                 STTimeFrame = 5;
@@ -1870,6 +1884,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 AutoCloseEnabled = true;
                 AutoCloseTimeHHmmss = "17:55:00";
+                CancelPendingEntryHour = 14;
 
                 LineLengthBars = 30;
                 LabelTickOffset = 2;
@@ -1918,6 +1933,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                     };
                     panelHelper.Init(ChartControl);
                 }
+
+                midasIndicator = AnchoredMidasIndicator(0, 1, true, true, false, false, true, false, 60, null, true, true, 20.0);
             }
             else if (State == State.Realtime)
             {
@@ -2438,6 +2455,25 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
         }
 
+        private void CancelPendingEntryIfScheduled(DateTime barTime)
+        {
+            if (CancelPendingEntryHour <= 0) return;
+            if (pendingEntryOrder == null) return;
+            if (Position == null || Position.MarketPosition != MarketPosition.Flat) return;
+
+            DateTime brasiliaNow = ConvertToBrasilia(barTime);
+            TimeSpan scheduled = new TimeSpan(CancelPendingEntryHour, 0, 0);
+            if (brasiliaNow.TimeOfDay < scheduled) return;
+
+            try { if (IsOrderActive(pendingEntryOrder)) CancelOrder(pendingEntryOrder); } catch { }
+            pendingEntryOrder = null;
+            tradedToday = true;
+            lastTradeDate = GetTradingDay(barTime);
+
+            Audit("PendingEntryCancelled",
+                $"scheduled={scheduled} brNow={brasiliaNow:HH\\:mm\\:ss}");
+        }
+
         private void ResetDayCaches(DateTime tradingDay)
         {
             if (invertPlanArmed)
@@ -2453,6 +2489,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             ordemStopShort = null;
             ordemTPLong = null;
             ordemTPShort = null;
+            try { if (pendingEntryOrder != null) CancelOrder(pendingEntryOrder); } catch { }
+            pendingEntryOrder = null;
             actualContractsForDay = 0;
             lastTradeDate = tradingDay;
             memoSuperTrendReady = false;
@@ -2710,6 +2748,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             TryAutoCloseIfScheduled(closeTime);
             EvaluateInvertPlanLifecycle(closeTime, tradingDay);
+            CancelPendingEntryIfScheduled(closeTime);
 
             string entryHms = IsUsaDst(closeTime) ? EntryTimeDstUsaHHmmss : EntryTimeNormalHHmmss;
 
@@ -2868,19 +2907,121 @@ namespace NinjaTrader.NinjaScript.Strategies
                     }
                     else if (entrarLong)
                     {
-                        Audit("EntrySubmit", $"side=Long qty={actualContractsForDay} signal=AutoLong");
-                        EnterLong(actualContractsForDay, "AutoLong");
-                        contextoHojeIsLong = true;
-                        tradedToday = true;
-                        lastTradeDate = tradingDay;
+                        if (UseMidasFilter && midasIndicator != null && midasIndicator.IsReady)
+                        {
+                            double upper = midasIndicator.Values[0][0];
+                            double median = midasIndicator.Values[1][0];
+                            double lower = midasIndicator.Values[2][0];
+                            double close = Close[0];
+                            double offset = MidasEntryOffsetTicks * tickSize;
+
+                            if (!double.IsNaN(upper) && !double.IsNaN(median) && !double.IsNaN(lower))
+                            {
+                                if (close < upper && close < median && close < lower)
+                                {
+                                    double entryPrice = upper + offset;
+                                    Audit("EntrySubmit", $"side=Long qty={actualContractsForDay} signal=AutoLong type=Stop price={F0(entryPrice)}");
+                                    pendingEntryOrder = EnterLongStopMarket(0, true, actualContractsForDay, entryPrice, "AutoLong");
+                                    contextoHojeIsLong = true;
+                                    tradedToday = true;
+                                    lastTradeDate = tradingDay;
+                                }
+                                else if (close > upper && close > median && close > lower)
+                                {
+                                    double entryPrice = upper + offset;
+                                    Audit("EntrySubmit", $"side=Long qty={actualContractsForDay} signal=AutoLong type=Limit price={F0(entryPrice)}");
+                                    pendingEntryOrder = EnterLongLimit(0, true, actualContractsForDay, entryPrice, "AutoLong");
+                                    contextoHojeIsLong = true;
+                                    tradedToday = true;
+                                    lastTradeDate = tradingDay;
+                                }
+                                else
+                                {
+                                    tradedToday = true;
+                                    lastTradeDate = tradingDay;
+                                    Audit("EntrySkipped", $"reason=MidasRange side=Long close={F0(close)} upper={F0(upper)} median={F0(median)} lower={F0(lower)}");
+                                }
+                            }
+                            else
+                            {
+                                tradedToday = true;
+                                lastTradeDate = tradingDay;
+                                Audit("EntrySkipped", "reason=MidasNaN side=Long");
+                            }
+                        }
+                        else if (UseMidasFilter)
+                        {
+                            tradedToday = true;
+                            lastTradeDate = tradingDay;
+                            Audit("EntrySkipped", "reason=MidasNotReady side=Long");
+                        }
+                        else
+                        {
+                            Audit("EntrySubmit", $"side=Long qty={actualContractsForDay} signal=AutoLong");
+                            EnterLong(actualContractsForDay, "AutoLong");
+                            contextoHojeIsLong = true;
+                            tradedToday = true;
+                            lastTradeDate = tradingDay;
+                        }
                     }
                     else if (entrarShort)
                     {
-                        Audit("EntrySubmit", $"side=Short qty={actualContractsForDay} signal=AutoShort");
-                        EnterShort(actualContractsForDay, "AutoShort");
-                        contextoHojeIsShort = true;
-                        tradedToday = true;
-                        lastTradeDate = tradingDay;
+                        if (UseMidasFilter && midasIndicator != null && midasIndicator.IsReady)
+                        {
+                            double upper = midasIndicator.Values[0][0];
+                            double median = midasIndicator.Values[1][0];
+                            double lower = midasIndicator.Values[2][0];
+                            double close = Close[0];
+                            double offset = MidasEntryOffsetTicks * tickSize;
+
+                            if (!double.IsNaN(upper) && !double.IsNaN(median) && !double.IsNaN(lower))
+                            {
+                                if (close > upper && close > median && close > lower)
+                                {
+                                    double entryPrice = lower - offset;
+                                    Audit("EntrySubmit", $"side=Short qty={actualContractsForDay} signal=AutoShort type=Stop price={F0(entryPrice)}");
+                                    pendingEntryOrder = EnterShortStopMarket(0, true, actualContractsForDay, entryPrice, "AutoShort");
+                                    contextoHojeIsShort = true;
+                                    tradedToday = true;
+                                    lastTradeDate = tradingDay;
+                                }
+                                else if (close < upper && close < median && close < lower)
+                                {
+                                    double entryPrice = lower - offset;
+                                    Audit("EntrySubmit", $"side=Short qty={actualContractsForDay} signal=AutoShort type=Limit price={F0(entryPrice)}");
+                                    pendingEntryOrder = EnterShortLimit(0, true, actualContractsForDay, entryPrice, "AutoShort");
+                                    contextoHojeIsShort = true;
+                                    tradedToday = true;
+                                    lastTradeDate = tradingDay;
+                                }
+                                else
+                                {
+                                    tradedToday = true;
+                                    lastTradeDate = tradingDay;
+                                    Audit("EntrySkipped", $"reason=MidasRange side=Short close={F0(close)} upper={F0(upper)} median={F0(median)} lower={F0(lower)}");
+                                }
+                            }
+                            else
+                            {
+                                tradedToday = true;
+                                lastTradeDate = tradingDay;
+                                Audit("EntrySkipped", "reason=MidasNaN side=Short");
+                            }
+                        }
+                        else if (UseMidasFilter)
+                        {
+                            tradedToday = true;
+                            lastTradeDate = tradingDay;
+                            Audit("EntrySkipped", "reason=MidasNotReady side=Short");
+                        }
+                        else
+                        {
+                            Audit("EntrySubmit", $"side=Short qty={actualContractsForDay} signal=AutoShort");
+                            EnterShort(actualContractsForDay, "AutoShort");
+                            contextoHojeIsShort = true;
+                            tradedToday = true;
+                            lastTradeDate = tradingDay;
+                        }
                     }
                     else
                     {
@@ -3218,6 +3359,12 @@ namespace NinjaTrader.NinjaScript.Strategies
                     CancelInvertPlan("EOD", tradingDay);
                 }
                 return;
+            }
+
+            if (order == pendingEntryOrder)
+            {
+                if (order.OrderState == OrderState.Filled || order.OrderState == OrderState.PartFilled)
+                    pendingEntryOrder = null;
             }
 
             if (orderName.Equals("AutoLong", StringComparison.OrdinalIgnoreCase)
