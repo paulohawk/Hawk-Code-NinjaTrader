@@ -2908,6 +2908,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (position.Account != Account || position.Instrument != Instrument)
                 return;
 
+            DateTime tradingDay = GetTradingDay(Times[0][0]);
+
             if (marketPosition == MarketPosition.Flat)
             {
                 bool drawn = false;
@@ -2964,8 +2966,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 if (exitReason == "Unknown")
                 {
-                    DateTime td = GetTradingDay(GetSafeTime());
-                    if (exitReasonHint != null && exitReasonHintTradingDay.Date == td.Date)
+                    if (exitReasonHint != null && exitReasonHintTradingDay.Date == tradingDay.Date)
                         exitReason = exitReasonHint;
                 }
 
@@ -3002,14 +3003,13 @@ namespace NinjaTrader.NinjaScript.Strategies
             int posQtyAbs = Math.Abs(position.Quantity);
             if (posQtyAbs <= 0) return;
 
-            DateTime td = GetTradingDay(Times[0][0]);
             if (string.IsNullOrEmpty(activeEntrySignal))
             {
                 if (invertStopTriggered)
                     activeEntrySignal = "InvertStopEntry";
                 else
                     activeEntrySignal = (position.MarketPosition == MarketPosition.Long) ? "AutoLong" : "AutoShort";
-                activeEntrySignalDay = td.Date;
+                activeEntrySignalDay = tradingDay.Date;
             }
 
             Order stopRef = (position.MarketPosition == MarketPosition.Long) ? ordemStopLong : ordemStopShort;
@@ -3097,7 +3097,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 bool bracketSubmitted = false;
 
-                string fromSignal = GetActiveEntrySignal(td);
+                string fromSignal = GetActiveEntrySignal(tradingDay);
 
                 if (position.MarketPosition == MarketPosition.Long)
                 {
