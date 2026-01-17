@@ -1633,6 +1633,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
     public class HawkVolatilityOpenDynamic : Strategy
     {
+        public enum InvertModeType
+        {
+            Disabled,
+            InvertedImmediate,
+            InvertedStopEntry
+        }
+
         [NinjaScriptProperty, Category("Parameters"), DisplayName("Contract Quantity (máx)")]
         public int Contracts { get; set; }
         [NinjaScriptProperty, Category("Parameters"), DisplayName("Stop fixo ($/contract)")]
@@ -1655,6 +1662,10 @@ namespace NinjaTrader.NinjaScript.Strategies
         public double TargetFactor { get; set; }
         [NinjaScriptProperty, Category("Parameters"), DisplayName("Entrar Invertido (hedge)")]
         public bool EnterInverted { get; set; }
+        [NinjaScriptProperty, Category("Parameters"), DisplayName("Invert Mode")]
+        public InvertModeType InvertMode { get; set; }
+        [NinjaScriptProperty, Category("Parameters"), DisplayName("Invert Stop Offset (ticks)")]
+        public int InvertStopOffsetTicks { get; set; }
         [NinjaScriptProperty, Category("Parameters"), DisplayName("BreakEven At (R múltiplos)")]
         public double BreakEvenAtRR { get; set; }
         [NinjaScriptProperty, Category("Parameters"), DisplayName("BreakEven Lock (R múltiplos)")]
@@ -1784,6 +1795,23 @@ namespace NinjaTrader.NinjaScript.Strategies
         private bool autoCloseTriggeredToday = false;
         private string lastExitReason = "Unknown";
 
+        // Invert stop-entry (paper 07)
+        private bool invertPlanArmed = false;
+        private bool invertStopTriggered = false;
+        private bool invertPlanBeArmed = false;
+        private Order invertStopEntryOrder;
+        private MarketPosition plannedDirection = MarketPosition.Flat;
+        private int plannedQty = 0;
+        private double plannedStopTicks = 0;
+        private double plannedTargetTicks = 0;
+        private double plannedBreakEvenAtRR = 0;
+        private double plannedBreakEvenLockRR = 0;
+        private double plannedEntryPriceReference = 0;
+        private double plannedStopPrice = 0;
+        private double plannedTargetPrice = 0;
+        private DateTime plannedTradeDate = DateTime.MinValue;
+        private DateTime lastInvertPlanCancelDate = DateTime.MinValue;
+
         // Cache para PositionClosed enriquecer
         private string lastOpenSide = "Flat";
         private int lastOpenQty = 0;
@@ -1823,6 +1851,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 TargetFactor = 5.0;
 
                 EnterInverted = false;
+                InvertMode = InvertModeType.Disabled;
+                InvertStopOffsetTicks = 2;
                 BreakEvenAtRR = 4.0;
                 BreakEvenLockRR = 1.0;
 
@@ -2386,6 +2416,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         private void ResetDayCaches(DateTime tradingDay)
         {
+            if (invertPlanArmed)
+                CancelInvertPlan("EOD", tradingDay);
+
             tradedToday = false;
             contextoHojeIsLong = false;
             contextoHojeIsShort = false;
@@ -2405,6 +2438,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             lastExitReason = "Unknown";
             exitReasonHint = null;
             exitReasonHintTradingDay = DateTime.MinValue;
+            invertStopTriggered = false;
+            invertPlanBeArmed = false;
 
             dayStatus = "Waiting";
             dayQtyCache = null;
@@ -2413,6 +2448,161 @@ namespace NinjaTrader.NinjaScript.Strategies
             dayBreakevenDollars = "-";
 
             Audit("DayReset", $"td={tradingDay:yyyy-MM-dd}");
+        }
+
+        private InvertModeType GetEffectiveInvertMode()
+        {
+            if (InvertMode != InvertModeType.Disabled)
+                return InvertMode;
+
+            return EnterInverted ? InvertModeType.InvertedImmediate : InvertModeType.Disabled;
+        }
+
+        private void ClearInvertPlanSnapshot()
+        {
+            invertPlanArmed = false;
+            invertStopTriggered = false;
+            invertPlanBeArmed = false;
+            invertStopEntryOrder = null;
+            plannedDirection = MarketPosition.Flat;
+            plannedQty = 0;
+            plannedStopTicks = 0;
+            plannedTargetTicks = 0;
+            plannedBreakEvenAtRR = 0;
+            plannedBreakEvenLockRR = 0;
+            plannedEntryPriceReference = 0;
+            plannedStopPrice = 0;
+            plannedTargetPrice = 0;
+            plannedTradeDate = DateTime.MinValue;
+        }
+
+        private void CancelInvertPlan(string reason, DateTime tradingDay)
+        {
+            try { if (invertStopEntryOrder != null) CancelOrder(invertStopEntryOrder); } catch { }
+            invertStopEntryOrder = null;
+            invertPlanArmed = false;
+            invertPlanBeArmed = false;
+            invertStopTriggered = false;
+            lastInvertPlanCancelDate = tradingDay.Date;
+
+            if (reason == "TP")
+                Audit("InvertPlanCancelled_TP", $"td={tradingDay:yyyy-MM-dd}");
+            else if (reason == "BE")
+                Audit("InvertPlanCancelled_BE", $"td={tradingDay:yyyy-MM-dd}");
+            else if (reason == "EOD")
+                Audit("InvertPlanCancelled_EOD", $"td={tradingDay:yyyy-MM-dd}");
+
+            ClearInvertPlanSnapshot();
+        }
+
+        private void ArmInvertPlan(DateTime tradingDay, MarketPosition direction, int qty, double stopTicks, double targetTicks,
+            double breakEvenAtRR, double breakEvenLockRR, double entryReference, double stopPrice, double targetPrice)
+        {
+            plannedDirection = direction;
+            plannedQty = qty;
+            plannedStopTicks = stopTicks;
+            plannedTargetTicks = targetTicks;
+            plannedBreakEvenAtRR = breakEvenAtRR;
+            plannedBreakEvenLockRR = breakEvenLockRR;
+            plannedEntryPriceReference = entryReference;
+            plannedStopPrice = stopPrice;
+            plannedTargetPrice = targetPrice;
+            plannedTradeDate = tradingDay;
+            invertPlanArmed = true;
+            invertPlanBeArmed = false;
+            invertStopTriggered = false;
+
+            Audit("InvertPlanArmed",
+                $"td={tradingDay:yyyy-MM-dd} dir={direction} qty={qty} entryRef={F0(entryReference)} stopPx={F0(stopPrice)} targetPx={F0(targetPrice)} stopTicks={stopTicks} targetTicks={targetTicks}");
+
+            double tickSize = Instrument.MasterInstrument.TickSize;
+            int offsetTicks = Math.Max(1, InvertStopOffsetTicks);
+            double stopEntryPrice;
+
+            if (direction == MarketPosition.Long)
+            {
+                stopEntryPrice = stopPrice - offsetTicks * tickSize;
+                invertStopEntryOrder = EnterShortStopMarket(0, true, qty, stopEntryPrice, "InvertStopEntry");
+            }
+            else if (direction == MarketPosition.Short)
+            {
+                stopEntryPrice = stopPrice + offsetTicks * tickSize;
+                invertStopEntryOrder = EnterLongStopMarket(0, true, qty, stopEntryPrice, "InvertStopEntry");
+            }
+
+            Audit("InvertStopOrderPlaced",
+                $"td={tradingDay:yyyy-MM-dd} dir={direction} stopEntry={F0(stopEntryPrice)} offsetTicks={offsetTicks}");
+        }
+
+        private void EvaluateInvertPlanLifecycle(DateTime closeTime, DateTime tradingDay)
+        {
+            if (!invertPlanArmed || invertStopTriggered || plannedDirection == MarketPosition.Flat)
+                return;
+
+            double tickSize = Instrument.MasterInstrument.TickSize;
+            double riskPx = plannedStopTicks * tickSize;
+
+            if (!invertPlanBeArmed && plannedBreakEvenAtRR > 0 && plannedBreakEvenLockRR > 0)
+            {
+                if (plannedDirection == MarketPosition.Long)
+                {
+                    if (High[0] >= plannedEntryPriceReference + riskPx * plannedBreakEvenAtRR)
+                        invertPlanBeArmed = true;
+                }
+                else if (plannedDirection == MarketPosition.Short)
+                {
+                    if (Low[0] <= plannedEntryPriceReference - riskPx * plannedBreakEvenAtRR)
+                        invertPlanBeArmed = true;
+                }
+            }
+
+            if (plannedDirection == MarketPosition.Long)
+            {
+                if (High[0] >= plannedTargetPrice)
+                {
+                    CancelInvertPlan("TP", tradingDay);
+                    return;
+                }
+
+                if (invertPlanBeArmed)
+                {
+                    double beStop = plannedEntryPriceReference + riskPx * plannedBreakEvenLockRR;
+                    if (beStop > plannedTargetPrice) beStop = plannedTargetPrice;
+                    if (Low[0] <= beStop)
+                        CancelInvertPlan("BE", tradingDay);
+                }
+            }
+            else if (plannedDirection == MarketPosition.Short)
+            {
+                if (Low[0] <= plannedTargetPrice)
+                {
+                    CancelInvertPlan("TP", tradingDay);
+                    return;
+                }
+
+                if (invertPlanBeArmed)
+                {
+                    double beStop = plannedEntryPriceReference - riskPx * plannedBreakEvenLockRR;
+                    if (beStop < plannedTargetPrice) beStop = plannedTargetPrice;
+                    if (High[0] >= beStop)
+                        CancelInvertPlan("BE", tradingDay);
+                }
+            }
+
+            if (AutoCloseEnabled && lastInvertPlanCancelDate.Date != tradingDay.Date)
+            {
+                DateTime brasiliaNow = ConvertToBrasilia(closeTime);
+                TimeSpan scheduled;
+                try
+                {
+                    var parts = AutoCloseTimeHHmmss.Split(':');
+                    scheduled = new TimeSpan(int.Parse(parts[0]), int.Parse(parts[1]), int.Parse(parts[2]));
+                }
+                catch { scheduled = new TimeSpan(17, 55, 0); }
+
+                if (brasiliaNow.TimeOfDay >= scheduled)
+                    CancelInvertPlan("EOD", tradingDay);
+            }
         }
 
         protected override void OnBarUpdate()
@@ -2475,6 +2665,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
 
             TryAutoCloseIfScheduled(closeTime);
+            EvaluateInvertPlanLifecycle(closeTime, tradingDay);
 
             string entryHms = IsUsaDst(closeTime) ? EntryTimeDstUsaHHmmss : EntryTimeNormalHHmmss;
 
@@ -2545,8 +2736,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (Position.MarketPosition != MarketPosition.Flat &&
                 riscoPrecoAtual > 0 &&
                 !breakevenAtivado &&
-                BreakEvenAtRR > 0 &&
-                BreakEvenLockRR > 0)
+                GetEffectiveBreakEvenAtRR() > 0 &&
+                GetEffectiveBreakEvenLockRR() > 0)
             {
                 AplicarBreakEvenSeAtingiuRR();
             }
@@ -2583,16 +2774,55 @@ namespace NinjaTrader.NinjaScript.Strategies
                     bool sinalCompra = liberarLong;
                     bool sinalVenda = liberarShort;
 
-                    bool entrarLong = EnterInverted ? sinalVenda : sinalCompra;
-                    bool entrarShort = EnterInverted ? sinalCompra : sinalVenda;
+                    double tickSize = Instrument.MasterInstrument.TickSize;
+                    double tickValue = Instrument.MasterInstrument.PointValue * tickSize;
+                    double stopTicks = Math.Round(stopDollarsPerContract / tickValue, 0);
+                    double targetTicks = stopTicks * TargetFactor;
+
+                    InvertModeType invertMode = GetEffectiveInvertMode();
+                    bool entrarLong = false;
+                    bool entrarShort = false;
+
+                    if (invertMode == InvertModeType.Disabled)
+                    {
+                        entrarLong = sinalCompra;
+                        entrarShort = sinalVenda;
+                    }
+                    else if (invertMode == InvertModeType.InvertedImmediate)
+                    {
+                        entrarLong = sinalVenda;
+                        entrarShort = sinalCompra;
+                    }
 
                     string chosen = entrarLong ? "Long" : (entrarShort ? "Short" : "None");
+                    if (invertMode == InvertModeType.InvertedStopEntry && (sinalCompra || sinalVenda))
+                        chosen = sinalCompra ? "InvertStopEntryLong" : "InvertStopEntryShort";
 
                     // Garantia de decisão antes do submit
                     Audit("EntryDecision",
-                        $"scheduled={entryHms} enterInverted={EnterInverted} useST={UseSuperTrend} stOnClose={SuperTrendOnBarClose} stReady={memoSuperTrendReady} stBull={memoSuperTrendUpTrend} stBear={memoSuperTrendDownTrend} liberarLong={liberarLong} liberarShort={liberarShort} chosen={chosen} qtyPlanned={actualContractsForDay} stopPerCt={F(stopDollarsPerContract)} atr={F(lastAtrVal, "0.000")} atrFactor={F(ATRFactor)}");
+                        $"scheduled={entryHms} invertMode={invertMode} enterInverted={EnterInverted} useST={UseSuperTrend} stOnClose={SuperTrendOnBarClose} stReady={memoSuperTrendReady} stBull={memoSuperTrendUpTrend} stBear={memoSuperTrendDownTrend} liberarLong={liberarLong} liberarShort={liberarShort} chosen={chosen} qtyPlanned={actualContractsForDay} stopPerCt={F(stopDollarsPerContract)} atr={F(lastAtrVal, "0.000")} atrFactor={F(ATRFactor)}");
 
-                    if (entrarLong)
+                    if (invertMode == InvertModeType.InvertedStopEntry && (sinalCompra || sinalVenda))
+                    {
+                        if (!invertPlanArmed && !invertStopTriggered)
+                        {
+                            MarketPosition planDirection = sinalCompra ? MarketPosition.Long : MarketPosition.Short;
+                            double entryRef = Close[0];
+                            double stopPrice = planDirection == MarketPosition.Long
+                                ? entryRef - stopTicks * tickSize
+                                : entryRef + stopTicks * tickSize;
+                            double targetPrice = planDirection == MarketPosition.Long
+                                ? entryRef + targetTicks * tickSize
+                                : entryRef - targetTicks * tickSize;
+
+                            ArmInvertPlan(tradingDay, planDirection, actualContractsForDay, stopTicks, targetTicks,
+                                BreakEvenAtRR, BreakEvenLockRR, entryRef, stopPrice, targetPrice);
+                        }
+
+                        tradedToday = true;
+                        lastTradeDate = tradingDay;
+                    }
+                    else if (entrarLong)
                     {
                         Audit("EntrySubmit", $"side=Long qty={actualContractsForDay} signal=AutoLong");
                         EnterLong(actualContractsForDay, "AutoLong");
@@ -2713,6 +2943,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 exitReasonHint = null;
                 exitReasonHintTradingDay = DateTime.MinValue;
+                if (invertStopTriggered)
+                    ClearInvertPlanSnapshot();
 
                 PublishPanelSnapshot("OnPositionUpdate_flat");
                 return;
@@ -2744,17 +2976,29 @@ namespace NinjaTrader.NinjaScript.Strategies
             double tickValue = Instrument.MasterInstrument.PointValue * tickSize;
 
             double stopDollars;
-            if (UseStopATR && lastAtrVal > 0)
+            double stopTicks;
+            double targetTicks;
+
+            if (invertStopTriggered && plannedStopTicks > 0 && plannedTargetTicks > 0)
             {
-                stopDollars = lastAtrVal * ATRFactor;
+                stopTicks = plannedStopTicks;
+                targetTicks = plannedTargetTicks;
+                stopDollars = stopTicks * tickValue;
             }
             else
             {
-                stopDollars = StopPerContract;
-            }
+                if (UseStopATR && lastAtrVal > 0)
+                {
+                    stopDollars = lastAtrVal * ATRFactor;
+                }
+                else
+                {
+                    stopDollars = StopPerContract;
+                }
 
-            double stopTicks = Math.Round(stopDollars / tickValue, 0);
-            double targetTicks = stopTicks * TargetFactor;
+                stopTicks = Math.Round(stopDollars / tickValue, 0);
+                targetTicks = stopTicks * TargetFactor;
+            }
 
             riscoPrecoAtual = stopTicks * tickSize;
             precoEntradaAtual = averagePrice;
@@ -2880,6 +3124,40 @@ namespace NinjaTrader.NinjaScript.Strategies
                 return;
 
             string orderName = order.Name ?? string.Empty;
+
+            if (order == invertStopEntryOrder)
+            {
+                if (order.OrderState == OrderState.Filled || order.OrderState == OrderState.PartFilled)
+                {
+                    invertStopTriggered = true;
+                    invertPlanArmed = false;
+                    invertPlanBeArmed = false;
+                    invertStopEntryOrder = null;
+
+                    if (plannedDirection == MarketPosition.Long)
+                    {
+                        contextoHojeIsShort = true;
+                        contextoHojeIsLong = false;
+                    }
+                    else if (plannedDirection == MarketPosition.Short)
+                    {
+                        contextoHojeIsLong = true;
+                        contextoHojeIsShort = false;
+                    }
+
+                    Audit("InvertStopTriggered",
+                        $"dir={plannedDirection} execId={executionId} qty={quantity} price={F0(price)}");
+                }
+                else if (order.OrderState == OrderState.Cancelled || order.OrderState == OrderState.Rejected)
+                {
+                    DateTime tradingDay = GetTradingDay(time);
+                    Audit("InvertPlanCancelled_EOD",
+                        $"td={tradingDay:yyyy-MM-dd} state={order.OrderState} execId={executionId}");
+                    CancelInvertPlan("EOD", tradingDay);
+                }
+                return;
+            }
+
             bool isStop = orderName.Equals("StopLoss", StringComparison.OrdinalIgnoreCase)
                 || orderName.Equals("BreakEven", StringComparison.OrdinalIgnoreCase);
             bool isTp = orderName.Equals("TakeProfit", StringComparison.OrdinalIgnoreCase);
@@ -2908,13 +3186,16 @@ namespace NinjaTrader.NinjaScript.Strategies
             double high = High[0];
             double low = Low[0];
 
-            if (Position.MarketPosition == MarketPosition.Long && ordemStopLong != null && !breakevenAtivado && BreakEvenAtRR > 0 && BreakEvenLockRR > 0)
+            double effectiveAtRR = GetEffectiveBreakEvenAtRR();
+            double effectiveLockRR = GetEffectiveBreakEvenLockRR();
+
+            if (Position.MarketPosition == MarketPosition.Long && ordemStopLong != null && !breakevenAtivado && effectiveAtRR > 0 && effectiveLockRR > 0)
             {
-                double trigger = precoEntradaAtual + riscoPrecoAtual * BreakEvenAtRR;
+                double trigger = precoEntradaAtual + riscoPrecoAtual * effectiveAtRR;
 
                 if (high >= trigger)
                 {
-                    double novoStop = precoEntradaAtual + riscoPrecoAtual * BreakEvenLockRR;
+                    double novoStop = precoEntradaAtual + riscoPrecoAtual * effectiveLockRR;
                     double maxStop = precoEntradaAtual + riscoPrecoAtual * TargetFactor;
                     if (novoStop > maxStop) novoStop = maxStop;
 
@@ -2961,18 +3242,18 @@ namespace NinjaTrader.NinjaScript.Strategies
                     exitReasonHint = "BE";
                     exitReasonHintTradingDay = GetTradingDay(Times[0][0]);
 
-                    Audit("BreakEvenTriggered", $"side=Long trigger={F0(trigger)} entry={F0(precoEntradaAtual)} riskPx={F(riscoPrecoAtual)} newStop={F0(novoStop)} lockedDollars={F0(locked)} rrTrigger={F(BreakEvenAtRR)} rrLock={F(BreakEvenLockRR)}");
+                    Audit("BreakEvenTriggered", $"side=Long trigger={F0(trigger)} entry={F0(precoEntradaAtual)} riskPx={F(riscoPrecoAtual)} newStop={F0(novoStop)} lockedDollars={F0(locked)} rrTrigger={F(effectiveAtRR)} rrLock={F(effectiveLockRR)}");
 
                     PublishPanelSnapshot("BreakEven_Long");
                 }
             }
-            else if (Position.MarketPosition == MarketPosition.Short && ordemStopShort != null && !breakevenAtivado && BreakEvenAtRR > 0 && BreakEvenLockRR > 0)
+            else if (Position.MarketPosition == MarketPosition.Short && ordemStopShort != null && !breakevenAtivado && effectiveAtRR > 0 && effectiveLockRR > 0)
             {
-                double trigger = precoEntradaAtual - riscoPrecoAtual * BreakEvenAtRR;
+                double trigger = precoEntradaAtual - riscoPrecoAtual * effectiveAtRR;
 
                 if (low <= trigger)
                 {
-                    double novoStop = precoEntradaAtual - riscoPrecoAtual * BreakEvenLockRR;
+                    double novoStop = precoEntradaAtual - riscoPrecoAtual * effectiveLockRR;
                     double minStop = precoEntradaAtual - riscoPrecoAtual * TargetFactor;
                     if (novoStop < minStop) novoStop = minStop;
 
@@ -3019,7 +3300,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     exitReasonHint = "BE";
                     exitReasonHintTradingDay = GetTradingDay(Times[0][0]);
 
-                    Audit("BreakEvenTriggered", $"side=Short trigger={F0(trigger)} entry={F0(precoEntradaAtual)} riskPx={F(riscoPrecoAtual)} newStop={F0(novoStop)} lockedDollars={F0(locked)} rrTrigger={F(BreakEvenAtRR)} rrLock={F(BreakEvenLockRR)}");
+                    Audit("BreakEvenTriggered", $"side=Short trigger={F0(trigger)} entry={F0(precoEntradaAtual)} riskPx={F(riscoPrecoAtual)} newStop={F0(novoStop)} lockedDollars={F0(locked)} rrTrigger={F(effectiveAtRR)} rrLock={F(effectiveLockRR)}");
 
                     PublishPanelSnapshot("BreakEven_Short");
                 }
@@ -3034,6 +3315,16 @@ namespace NinjaTrader.NinjaScript.Strategies
                 || order.OrderState == OrderState.Accepted
                 || order.OrderState == OrderState.Submitted
                 || order.OrderState == OrderState.PartFilled;
+        }
+
+        private double GetEffectiveBreakEvenAtRR()
+        {
+            return invertStopTriggered ? plannedBreakEvenAtRR : BreakEvenAtRR;
+        }
+
+        private double GetEffectiveBreakEvenLockRR()
+        {
+            return invertStopTriggered ? plannedBreakEvenLockRR : BreakEvenLockRR;
         }
 
         private bool IsUsaDst(DateTime dataBrasilia)
