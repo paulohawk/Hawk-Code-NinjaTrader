@@ -43,16 +43,14 @@ namespace NinjaTrader.NinjaScript.Indicators
         private struct TradeLocation
         {
             public string Tag;
-            public DateTime Time;
-            public DateTime SessionDate;
+            public DateTime StartTime;
             public double Price;
             public int Level;
             public bool WasConsumed;
+            public DateTime LineEndTime;
             public bool SeenAbove;
             public bool SeenBelow;
-            public DateTime ConsumedSessionDate;
-            public DateTime ExpireSessionDate;
-            public DateTime LineEndTime;
+            public bool IsFinalized;
         }
 
         private int volumeThresholdLevel1 = 900;
@@ -77,7 +75,6 @@ namespace NinjaTrader.NinjaScript.Indicators
         private int tlThickness = 1;
         private int tlExtendYears = 1;
         private int tlMaxHistoryDays = 5;
-        private int tlForwardLimitDays = 20;
         private bool tlLevel1Enabled = true;
         private bool tlLevel2Enabled = true;
         private bool tlLevel3Enabled = true;
@@ -109,7 +106,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private int maxDayLevel = 0;
         private double maxDayPrice = double.NaN;
         private DateTime maxDayTime = DateTime.MinValue;
-        private DateTime currentSessionDate = DateTime.MinValue;
+        private DateTime currentSessionStartTime = DateTime.MinValue;
 
         // Texto do painel
         private string infoPanelText = string.Empty;
@@ -242,8 +239,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                         lastPrintTime = ev.Time;
 
                         // Proteção defensiva: evita estado inválido antes do primeiro BIP 0
-                        if (currentSessionDate == DateTime.MinValue)
-                            currentSessionDate = GetSessionKey(Time[0]);
+                        if (currentSessionStartTime == DateTime.MinValue)
+                            currentSessionStartTime = Time[0];
 
                         if (ev.Volume > maxDayVolume)
                         {
@@ -270,17 +267,15 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 if (Bars.IsFirstBarOfSession)
                 {
-                    // SESSION KEY (Paper 4.x)
-                    // Por definição atual, a sessão é baseada no dia civil do gráfico.
-                    // A migração para TradingHours será tratada no Paper 5.
-                    currentSessionDate = GetSessionKey(Time[0]);
+                    FinalizeConsumedTradeLocations();
+                    // SESSION KEY (Paper 6.3)
+                    // Sessão definida exclusivamente pelo primeiro candle (Bars.IsFirstBarOfSession).
+                    currentSessionStartTime = Time[0];
                     maxDayVolume = 0;
                     maxDayLevel = 0;
                     maxDayPrice = double.NaN;
                     maxDayTime = DateTime.MinValue;
-                    // Trade Locations são válidas apenas para a sessão atual (D ou D+1).
-                    // Persistência e lógica de expiração serão tratadas no Paper 5.
-                    CleanupTradeLocationsBySession();
+                    CleanupTradeLocationsByHistory();
                 }
 
                 if (debugDraw)
@@ -338,6 +333,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                 // Como não existe IsLastTickOfBar aqui, usamos IsFirstTickOfBar e processamos o candle anterior (barsAgo=1).
                 if (BarsInProgress == 0 && IsFirstTickOfBar)
                     EvaluateTradeLocationConsumptionOnClose();
+
+                if (IsFirstTickOfBar)
+                    ExtendActiveTradeLocationsToCurrentBar();
 
                 UpdateInfoPanelText();
             }
@@ -514,34 +512,29 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private TradeLocation BuildTradeLocation(PrintEvent ev)
         {
-            DateTime sessionKey = currentSessionDate;
-            DateTime expireSession = sessionKey.AddDays(TLForwardLimitDays);
-
             return new TradeLocation
             {
                 Tag = $"HSV_TL_L{ev.Level}_{ev.Time.Ticks}",
-                Time = ev.Time,
-                SessionDate = sessionKey,
+                StartTime = ev.Time,
                 Price = ev.Price,
                 Level = ev.Level,
                 WasConsumed = false,
                 SeenAbove = false,
                 SeenBelow = false,
-                ConsumedSessionDate = DateTime.MinValue,
-                ExpireSessionDate = expireSession,
-                LineEndTime = EndOfSession(expireSession)
+                IsFinalized = false,
+                LineEndTime = ev.Time
             };
         }
 
         private void RenderTradeLocation(TradeLocation tl)
         {
-            DateTime endTime = tl.LineEndTime;
+            DateTime endTime = tl.IsFinalized ? tl.LineEndTime : Time[0];
 
             Draw.Line(
                 this,
                 tl.Tag,
                 false,
-                tl.Time,
+                tl.StartTime,
                 tl.Price,
                 endTime,
                 tl.Price,
@@ -568,11 +561,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 var tl = tradeLocations[i];
                 tradeLocationTags.Add(tl.Tag);
 
-                // Normaliza endTime antes de redesenhar
-                if (tl.WasConsumed && tl.ConsumedSessionDate != DateTime.MinValue)
-                    tl.LineEndTime = EndOfSession(tl.ConsumedSessionDate);
-                else if (!tl.WasConsumed && tl.ExpireSessionDate != DateTime.MinValue)
-                    tl.LineEndTime = EndOfSession(tl.ExpireSessionDate);
+                if (!tl.IsFinalized && tl.LineEndTime == default(DateTime))
+                    tl.LineEndTime = tl.StartTime;
 
                 // Remove e redesenha
                 try { RemoveDrawObject(tl.Tag); } catch { }
@@ -592,14 +582,14 @@ namespace NinjaTrader.NinjaScript.Indicators
             double close = Close[1];
             double high = High[1];
             double low = Low[1];
-            DateTime sessionKeyNow = currentSessionDate;
+            DateTime sessionStartNow = currentSessionStartTime;
 
             for (int i = 0; i < tradeLocations.Count; i++)
             {
                 var tl = tradeLocations[i];
 
                 // Ignora TLs criadas na sessão atual (D0 não elimina D0)
-                if (tl.SessionDate == sessionKeyNow)
+                if (tl.StartTime >= sessionStartNow)
                     continue;
 
                 // Ignora já consumidas
@@ -619,65 +609,88 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (touched && tl.SeenAbove && tl.SeenBelow)
                 {
                     tl.WasConsumed = true;
-                    tl.ConsumedSessionDate = sessionKeyNow;
-                    tl.LineEndTime = EndOfSession(sessionKeyNow);
-
-                    // Atualiza desenho para "morrer" no fim da sessão de consumo
-                    RedrawTradeLocation(tl);
                 }
 
                 tradeLocations[i] = tl;
             }
         }
 
-        private void CleanupTradeLocationsBySession()
+        private void FinalizeConsumedTradeLocations()
         {
-            DateTime cutoffDate = currentSessionDate.AddDays(-TLMaxHistoryDays);
+            if (CurrentBars[0] < 2)
+                return;
+
+            // O último candle da sessão encerrada é sempre o bar anterior
+            DateTime sessionEndTime = Time[1];
+
+            for (int i = 0; i < tradeLocations.Count; i++)
+            {
+                var tl = tradeLocations[i];
+
+                if (!tl.WasConsumed || tl.IsFinalized)
+                    continue;
+
+                tl.LineEndTime = sessionEndTime;
+                tl.IsFinalized = true;
+
+                // Redesenha a TL para morrer exatamente no fim da sessão
+                try
+                {
+                    RemoveDrawObject(tl.Tag);
+                }
+                catch { }
+
+                Draw.Line(
+                    this,
+                    tl.Tag,
+                    false,
+                    tl.StartTime,
+                    tl.Price,
+                    tl.LineEndTime,
+                    tl.Price,
+                    GetLevelBrush(tl.Level),
+                    DashStyleHelper.Solid,
+                    tlThickness
+                );
+
+                tradeLocations[i] = tl;
+            }
+        }
+
+        private void ExtendActiveTradeLocationsToCurrentBar()
+        {
+            DateTime currentTime = Time[0];
+
+            for (int i = 0; i < tradeLocations.Count; i++)
+            {
+                var tl = tradeLocations[i];
+
+                if (tl.IsFinalized)
+                    continue;
+
+                if (tl.LineEndTime == currentTime)
+                    continue;
+
+                tl.LineEndTime = currentTime;
+                RedrawTradeLocation(tl);
+                tradeLocations[i] = tl;
+            }
+        }
+
+        private void CleanupTradeLocationsByHistory()
+        {
+            DateTime cutoff = Time[0].AddDays(-TLMaxHistoryDays);
 
             for (int i = tradeLocations.Count - 1; i >= 0; i--)
             {
                 var tl = tradeLocations[i];
 
-                // Paper 6.1: Normaliza LineEndTime em caso de reload/estado parcial
-                // e REDESENHA caso o endTime mude (evita TL "infinita" após reload).
-                DateTime prevEnd = tl.LineEndTime;
-
-                if (tl.WasConsumed && tl.ConsumedSessionDate != DateTime.MinValue)
-                    tl.LineEndTime = EndOfSession(tl.ConsumedSessionDate);
-                else if (!tl.WasConsumed && tl.ExpireSessionDate != DateTime.MinValue)
-                    tl.LineEndTime = EndOfSession(tl.ExpireSessionDate);
-
-                // Redraw apenas quando necessário
-                if (prevEnd != tl.LineEndTime)
-                    RedrawTradeLocation(tl);
-
-                tradeLocations[i] = tl;
-
-                // Remove se ultrapassar limite histórico
-                if (tl.SessionDate < cutoffDate)
-                {
-                    try { RemoveDrawObject(tl.Tag); } catch { }
-                    tradeLocations.RemoveAt(i);
-                    tradeLocationTags.Remove(tl.Tag);
+                if (tl.StartTime >= cutoff)
                     continue;
-                }
 
-                // Remove se consumida e já passou a sessão de consumo
-                if (tl.WasConsumed && tl.ConsumedSessionDate != DateTime.MinValue && currentSessionDate > tl.ConsumedSessionDate)
-                {
-                    try { RemoveDrawObject(tl.Tag); } catch { }
-                    tradeLocations.RemoveAt(i);
-                    tradeLocationTags.Remove(tl.Tag);
-                    continue;
-                }
-
-                // Remove se expirou (não consumida até o limite futuro)
-                if (!tl.WasConsumed && tl.ExpireSessionDate != DateTime.MinValue && currentSessionDate > tl.ExpireSessionDate)
-                {
-                    try { RemoveDrawObject(tl.Tag); } catch { }
-                    tradeLocations.RemoveAt(i);
-                    tradeLocationTags.Remove(tl.Tag);
-                }
+                try { RemoveDrawObject(tl.Tag); } catch { }
+                tradeLocations.RemoveAt(i);
+                tradeLocationTags.Remove(tl.Tag);
             }
         }
 
@@ -698,19 +711,6 @@ namespace NinjaTrader.NinjaScript.Indicators
             return level == 3 ? level3Brush
                  : level == 2 ? level2Brush
                               : level1Brush;
-        }
-
-        private DateTime GetSessionKey(DateTime t)
-        {
-            // Paper 6: sessão baseada no dia civil do gráfico (como já definido em Paper 4/5)
-            return t.Date;
-        }
-
-        private DateTime EndOfSession(DateTime sessionDate)
-        {
-            // Fim do dia civil (23:59:59.999) como proxy do fechamento da sessão do gráfico.
-            // Migração para TradingHours (exato) fica para paper futuro.
-            return sessionDate.Date.AddDays(1).AddMilliseconds(-1);
         }
 
         // Paper 6.1: Modo histórico / rebuild (Reload NinjaScript)
@@ -1386,18 +1386,6 @@ namespace NinjaTrader.NinjaScript.Indicators
             set { tlMaxHistoryDays = Math.Max(1, Math.Min(10, value)); }
         }
 
-        [NinjaScriptProperty]
-        [Range(1, 50)]
-        [Display(
-            Name = "Trade Location Forward Limit (Days)",
-            Description = "Quantidade máxima de sessões futuras que uma TL pode se estender se não for consumida. Ex: 20. Máximo: 50.",
-            GroupName = "Trade Location",
-            Order = 28)]
-        public int TLForwardLimitDays
-        {
-            get { return tlForwardLimitDays; }
-            set { tlForwardLimitDays = Math.Max(1, Math.Min(50, value)); }
-        }
         [NinjaScriptProperty]
         [Range(1, 5)]
         [Display(
