@@ -1949,8 +1949,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     nextSeriesIndex++;
                 }
 
-                if ((MidasBarsPeriodType == BarsPeriodType.Second || MidasBarsPeriodType == BarsPeriodType.Minute) &&
-                    MidasBarsPeriodValue > 0)
+                if (MidasBarsPeriodValue > 0)
                 {
                     if (IsSameAsPrimaryTimeframe(MidasBarsPeriodType, MidasBarsPeriodValue))
                     {
@@ -2064,7 +2063,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         private int GetMidasTimeFrameMinutes()
         {
             if (MidasBarsPeriodType == BarsPeriodType.Second)
-                return Math.Max(1, (int)Math.Round(MidasBarsPeriodValue / 60.0));
+                return Math.Max(1, (int)Math.Ceiling(MidasBarsPeriodValue / 60.0));
             if (MidasBarsPeriodType == BarsPeriodType.Minute)
                 return Math.Max(1, MidasBarsPeriodValue);
             return Math.Max(1, MidasBarsPeriodValue);
@@ -3060,9 +3059,16 @@ namespace NinjaTrader.NinjaScript.Strategies
                     if (invertMode == InvertModeType.InvertedStopEntry && (sinalCompra || sinalVenda))
                         chosen = sinalCompra ? "InvertStopEntryLong" : "InvertStopEntryShort";
 
+                    double midasSnapUpper;
+                    double midasSnapMedian;
+                    double midasSnapLower;
+                    TryGetMidasSnapshot(out midasSnapUpper, out midasSnapMedian, out midasSnapLower);
+                    int curBars0 = CurrentBar;
+                    int curBarsMidas = (CurrentBars != null && CurrentBars.Length > midasBip) ? CurrentBars[midasBip] : -1;
+
                     // Garantia de decisão antes do submit
                     Audit("EntryDecision",
-                        $"scheduled={entryHms} invertMode={invertMode} enterInverted={EnterInverted} useST={UseSuperTrend} stOnClose={SuperTrendOnBarClose} stReady={memoSuperTrendReady} stBull={memoSuperTrendUpTrend} stBear={memoSuperTrendDownTrend} liberarLong={liberarLong} liberarShort={liberarShort} chosen={chosen} qtyPlanned={actualContractsForDay} stopPerCt={F(stopDollarsPerContract)} atr={F(lastAtrVal, "0.000")} atrFactor={F(ATRFactor)}");
+                        $"scheduled={entryHms} invertMode={invertMode} enterInverted={EnterInverted} useST={UseSuperTrend} stOnClose={SuperTrendOnBarClose} stReady={memoSuperTrendReady} stBull={memoSuperTrendUpTrend} stBear={memoSuperTrendDownTrend} liberarLong={liberarLong} liberarShort={liberarShort} chosen={chosen} qtyPlanned={actualContractsForDay} stopPerCt={F(stopDollarsPerContract)} atr={F(lastAtrVal, "0.000")} atrFactor={F(ATRFactor)} useMidas={UseMidasFilter} midasNull={(midasIndicator == null)} midasBip={midasBip} curBars0={curBars0} curBarsMidas={curBarsMidas} midasUpper={FormatMidasValue(midasSnapUpper)} midasMedian={FormatMidasValue(midasSnapMedian)} midasLower={FormatMidasValue(midasSnapLower)} midasHasCache={midasHasValidValues} lastMidasUpdateBar={lastMidasUpdateBar} lastMidasUpdateTime={lastMidasUpdateTime:O}");
 
                     if (invertMode == InvertModeType.InvertedStopEntry && (sinalCompra || sinalVenda))
                     {
@@ -3093,17 +3099,12 @@ namespace NinjaTrader.NinjaScript.Strategies
                             double lower = lastMidasLower;
                             double close = Close[0];
                             double offset = MidasEntryOffsetTicks * tickSize;
-
                             if (!AreMidasBandsConfigured())
                             {
-                                tradedToday = true;
-                                lastTradeDate = tradingDay;
                                 Audit("EntrySkipped", "reason=MidasBandsDisabled side=Long");
                             }
                             else if (midasIndicator == null)
                             {
-                                tradedToday = true;
-                                lastTradeDate = tradingDay;
                                 Audit("EntrySkipped", "reason=MidasNull side=Long");
                             }
                             else if (!midasHasValidValues)
@@ -3114,44 +3115,38 @@ namespace NinjaTrader.NinjaScript.Strategies
                                 TryGetMidasSnapshot(out snapUpper, out snapMedian, out snapLower);
                                 Audit("EntryDeferred",
                                     $"reason=MidasNoCacheYet side=Long midasBip={midasBip} midasBars={CurrentBars[midasBip]} upper={FormatMidasValue(snapUpper)} median={FormatMidasValue(snapMedian)} lower={FormatMidasValue(snapLower)}");
-                                return;
                             }
-                            else if (midasHasValidValues && lastMidasUpdateBar >= 0)
+                            else if (lastMidasUpdateTime < Times[0][0] || lastMidasUpdateBar != CurrentBars[midasBip])
                             {
-                                int barsSinceAnchor = lastMidasUpdateBar - MidasAnchorBarIndex;
-                                if (barsSinceAnchor < 2)
-                                {
-                                    Audit("EntryDeferred",
-                                        $"reason=MidasWarmingUp side=Long barsSinceAnchor={barsSinceAnchor} midasBip={midasBip} midasBars={CurrentBars[midasBip]}");
-                                    return;
-                                }
+                                Audit("EntryDeferred",
+                                    $"reason=MidasOutOfSync side=Long midasBip={midasBip} midasBars={CurrentBars[midasBip]} lastMidasUpdateBar={lastMidasUpdateBar} lastMidasUpdateTime={lastMidasUpdateTime:O} barTime={Times[0][0]:O}");
+                            }
+                            else if (CurrentBars[midasBip] <= MidasAnchorBarIndex + 1)
+                            {
+                                Audit("EntryDeferred",
+                                    $"reason=MidasWarmingUp side=Long midasBip={midasBip} midasBars={CurrentBars[midasBip]} anchorIndex={MidasAnchorBarIndex}");
+                            }
+                            else if (IsBelowSelectedMidasBands(close, upper, median, lower))
+                            {
+                                double entryPrice = upper + offset;
+                                Audit("EntrySubmit", $"side=Long qty={actualContractsForDay} signal=AutoLong type=Stop price={F0(entryPrice)}");
+                                pendingEntryOrder = EnterLongStopMarket(0, true, actualContractsForDay, entryPrice, "AutoLong");
+                                contextoHojeIsLong = true;
+                                tradedToday = true;
+                                lastTradeDate = tradingDay;
+                            }
+                            else if (IsAboveSelectedMidasBands(close, upper, median, lower))
+                            {
+                                double entryPrice = upper + offset;
+                                Audit("EntrySubmit", $"side=Long qty={actualContractsForDay} signal=AutoLong type=Limit price={F0(entryPrice)}");
+                                pendingEntryOrder = EnterLongLimit(0, true, actualContractsForDay, entryPrice, "AutoLong");
+                                contextoHojeIsLong = true;
+                                tradedToday = true;
+                                lastTradeDate = tradingDay;
                             }
                             else
                             {
-                                if (IsBelowSelectedMidasBands(close, upper, median, lower))
-                                {
-                                    double entryPrice = upper + offset;
-                                    Audit("EntrySubmit", $"side=Long qty={actualContractsForDay} signal=AutoLong type=Stop price={F0(entryPrice)}");
-                                    pendingEntryOrder = EnterLongStopMarket(0, true, actualContractsForDay, entryPrice, "AutoLong");
-                                    contextoHojeIsLong = true;
-                                    tradedToday = true;
-                                    lastTradeDate = tradingDay;
-                                }
-                                else if (IsAboveSelectedMidasBands(close, upper, median, lower))
-                                {
-                                    double entryPrice = upper + offset;
-                                    Audit("EntrySubmit", $"side=Long qty={actualContractsForDay} signal=AutoLong type=Limit price={F0(entryPrice)}");
-                                    pendingEntryOrder = EnterLongLimit(0, true, actualContractsForDay, entryPrice, "AutoLong");
-                                    contextoHojeIsLong = true;
-                                    tradedToday = true;
-                                    lastTradeDate = tradingDay;
-                                }
-                                else
-                                {
-                                    tradedToday = true;
-                                    lastTradeDate = tradingDay;
-                                    Audit("EntrySkipped", $"reason=MidasRange side=Long close={F0(close)} upper={F0(upper)} median={F0(median)} lower={F0(lower)}");
-                                }
+                                Audit("EntrySkipped", $"reason=MidasRange side=Long close={F0(close)} upper={F0(upper)} median={F0(median)} lower={F0(lower)}");
                             }
                         }
                         else
@@ -3172,17 +3167,12 @@ namespace NinjaTrader.NinjaScript.Strategies
                             double lower = lastMidasLower;
                             double close = Close[0];
                             double offset = MidasEntryOffsetTicks * tickSize;
-
                             if (!AreMidasBandsConfigured())
                             {
-                                tradedToday = true;
-                                lastTradeDate = tradingDay;
                                 Audit("EntrySkipped", "reason=MidasBandsDisabled side=Short");
                             }
                             else if (midasIndicator == null)
                             {
-                                tradedToday = true;
-                                lastTradeDate = tradingDay;
                                 Audit("EntrySkipped", "reason=MidasNull side=Short");
                             }
                             else if (!midasHasValidValues)
@@ -3193,44 +3183,38 @@ namespace NinjaTrader.NinjaScript.Strategies
                                 TryGetMidasSnapshot(out snapUpper, out snapMedian, out snapLower);
                                 Audit("EntryDeferred",
                                     $"reason=MidasNoCacheYet side=Short midasBip={midasBip} midasBars={CurrentBars[midasBip]} upper={FormatMidasValue(snapUpper)} median={FormatMidasValue(snapMedian)} lower={FormatMidasValue(snapLower)}");
-                                return;
                             }
-                            else if (midasHasValidValues && lastMidasUpdateBar >= 0)
+                            else if (lastMidasUpdateTime < Times[0][0] || lastMidasUpdateBar != CurrentBars[midasBip])
                             {
-                                int barsSinceAnchor = lastMidasUpdateBar - MidasAnchorBarIndex;
-                                if (barsSinceAnchor < 2)
-                                {
-                                    Audit("EntryDeferred",
-                                        $"reason=MidasWarmingUp side=Short barsSinceAnchor={barsSinceAnchor} midasBip={midasBip} midasBars={CurrentBars[midasBip]}");
-                                    return;
-                                }
+                                Audit("EntryDeferred",
+                                    $"reason=MidasOutOfSync side=Short midasBip={midasBip} midasBars={CurrentBars[midasBip]} lastMidasUpdateBar={lastMidasUpdateBar} lastMidasUpdateTime={lastMidasUpdateTime:O} barTime={Times[0][0]:O}");
+                            }
+                            else if (CurrentBars[midasBip] <= MidasAnchorBarIndex + 1)
+                            {
+                                Audit("EntryDeferred",
+                                    $"reason=MidasWarmingUp side=Short midasBip={midasBip} midasBars={CurrentBars[midasBip]} anchorIndex={MidasAnchorBarIndex}");
+                            }
+                            else if (IsAboveSelectedMidasBands(close, upper, median, lower))
+                            {
+                                double entryPrice = lower - offset;
+                                Audit("EntrySubmit", $"side=Short qty={actualContractsForDay} signal=AutoShort type=Stop price={F0(entryPrice)}");
+                                pendingEntryOrder = EnterShortStopMarket(0, true, actualContractsForDay, entryPrice, "AutoShort");
+                                contextoHojeIsShort = true;
+                                tradedToday = true;
+                                lastTradeDate = tradingDay;
+                            }
+                            else if (IsBelowSelectedMidasBands(close, upper, median, lower))
+                            {
+                                double entryPrice = lower - offset;
+                                Audit("EntrySubmit", $"side=Short qty={actualContractsForDay} signal=AutoShort type=Limit price={F0(entryPrice)}");
+                                pendingEntryOrder = EnterShortLimit(0, true, actualContractsForDay, entryPrice, "AutoShort");
+                                contextoHojeIsShort = true;
+                                tradedToday = true;
+                                lastTradeDate = tradingDay;
                             }
                             else
                             {
-                                if (IsAboveSelectedMidasBands(close, upper, median, lower))
-                                {
-                                    double entryPrice = lower - offset;
-                                    Audit("EntrySubmit", $"side=Short qty={actualContractsForDay} signal=AutoShort type=Stop price={F0(entryPrice)}");
-                                    pendingEntryOrder = EnterShortStopMarket(0, true, actualContractsForDay, entryPrice, "AutoShort");
-                                    contextoHojeIsShort = true;
-                                    tradedToday = true;
-                                    lastTradeDate = tradingDay;
-                                }
-                                else if (IsBelowSelectedMidasBands(close, upper, median, lower))
-                                {
-                                    double entryPrice = lower - offset;
-                                    Audit("EntrySubmit", $"side=Short qty={actualContractsForDay} signal=AutoShort type=Limit price={F0(entryPrice)}");
-                                    pendingEntryOrder = EnterShortLimit(0, true, actualContractsForDay, entryPrice, "AutoShort");
-                                    contextoHojeIsShort = true;
-                                    tradedToday = true;
-                                    lastTradeDate = tradingDay;
-                                }
-                                else
-                                {
-                                    tradedToday = true;
-                                    lastTradeDate = tradingDay;
-                                    Audit("EntrySkipped", $"reason=MidasRange side=Short close={F0(close)} upper={F0(upper)} median={F0(median)} lower={F0(lower)}");
-                                }
+                                Audit("EntrySkipped", $"reason=MidasRange side=Short close={F0(close)} upper={F0(upper)} median={F0(median)} lower={F0(lower)}");
                             }
                         }
                         else
@@ -3244,8 +3228,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                     }
                     else
                     {
-                        tradedToday = true;
-                        lastTradeDate = tradingDay;
                     }
                 }
             }
