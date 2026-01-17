@@ -3033,10 +3033,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                             tradedToday = true;
                             lastTradeDate = tradingDay;
                             Audit("EntrySkipped", $"reason={midasNotReadyReason}");
-                            return;
                         }
-
-                        if (UseMidasFilter && midasOperational)
+                        else if (UseMidasFilter)
                         {
                             double upper = midasIndicator.Values[0][0];
                             double median = midasIndicator.Values[1][0];
@@ -3103,10 +3101,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                             tradedToday = true;
                             lastTradeDate = tradingDay;
                             Audit("EntrySkipped", $"reason={midasNotReadyReason}");
-                            return;
                         }
-
-                        if (UseMidasFilter && midasOperational)
+                        else if (UseMidasFilter)
                         {
                             double upper = midasIndicator.Values[0][0];
                             double median = midasIndicator.Values[1][0];
