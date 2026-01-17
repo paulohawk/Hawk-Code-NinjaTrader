@@ -1696,18 +1696,6 @@ namespace NinjaTrader.NinjaScript.Strategies
         [NinjaScriptProperty]
         [Display(Name = "Midas Entry Offset (ticks)", GroupName = "Entry Filters - MIDAS", Order = 110)]
         public int MidasEntryOffsetTicks { get; set; }
-        [NinjaScriptProperty]
-        [Display(Name = "Midas Min Bars After Anchor", GroupName = "Entry Filters - MIDAS (Advanced)", Order = 200)]
-        public int MidasMinBarsAfterAnchor { get; set; }
-        [NinjaScriptProperty]
-        [Display(Name = "Midas Use Last Bar If Index Too Large", GroupName = "Entry Filters - MIDAS (Advanced)", Order = 201)]
-        public bool MidasUseLastBarIfIndexTooLarge { get; set; }
-        [NinjaScriptProperty]
-        [Display(Name = "Midas Plot Only Next Session", GroupName = "Entry Filters - MIDAS (Advanced)", Order = 202)]
-        public bool MidasPlotOnlyNextSession { get; set; }
-        [NinjaScriptProperty]
-        [Display(Name = "Midas Fallback To Nearest Session", GroupName = "Entry Filters - MIDAS (Advanced)", Order = 203)]
-        public bool MidasFallbackToNearestSession { get; set; }
         [NinjaScriptProperty, Category("SuperTrend"), DisplayName("Ativar filtro SuperTrend")]
         public bool UseSuperTrend { get; set; }
         [NinjaScriptProperty, Category("SuperTrend"), DisplayName("SuperTrend TimeFrame (min)")]
@@ -1910,10 +1898,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 MidasUseMedianBand = true;
                 MidasUseLowerBand = true;
                 MidasEntryOffsetTicks = 10;
-                MidasMinBarsAfterAnchor = 4;
-                MidasUseLastBarIfIndexTooLarge = true;
-                MidasPlotOnlyNextSession = true;
-                MidasFallbackToNearestSession = true;
 
                 UseSuperTrend = true;
                 STTimeFrame = 5;
@@ -2009,11 +1993,11 @@ namespace NinjaTrader.NinjaScript.Strategies
                     Closes[midasBip],
                     0,
                     MidasAnchorBarIndex,
-                    MidasUseLastBarIfIndexTooLarge,
-                    MidasPlotOnlyNextSession,
+                    true,
                     false,
                     false,
-                    MidasFallbackToNearestSession,
+                    false,
+                    true,
                     false,
                     60,
                     null,
@@ -2070,31 +2054,14 @@ namespace NinjaTrader.NinjaScript.Strategies
             return false;
         }
 
-        private bool IsMidasOperational(out string reason, out int barsSinceAnchor)
+        private bool IsMidasOperational(out string reason)
         {
             reason = "MidasNotReady";
-            barsSinceAnchor = -1;
 
             if (midasIndicator == null)
                 return false;
 
-            if (midasIndicator.LastUsedAnchorTime == Core.Globals.MinDate)
-                return false;
-
-            int anchorBar = Bars.GetBar(midasIndicator.LastUsedAnchorTime);
-            if (anchorBar < 0)
-                return false;
-
-            barsSinceAnchor = CurrentBar - anchorBar;
-            if (midasIndicator.IsReady)
-                return true;
-
-            int minBars = Math.Max(0, MidasMinBarsAfterAnchor);
-            if (barsSinceAnchor >= minBars)
-                return true;
-
-            reason = "MidasInsufficientBars";
-            return false;
+            return midasIndicator.IsReady;
         }
 
         private bool AreMidasBandsConfigured()
@@ -3059,8 +3026,15 @@ namespace NinjaTrader.NinjaScript.Strategies
                     else if (entrarLong)
                     {
                         string midasNotReadyReason = null;
-                        int barsSinceAnchor = -1;
-                        bool midasOperational = IsMidasOperational(out midasNotReadyReason, out barsSinceAnchor);
+                        bool midasOperational = IsMidasOperational(out midasNotReadyReason);
+
+                        if (UseMidasFilter && !midasOperational)
+                        {
+                            tradedToday = true;
+                            lastTradeDate = tradingDay;
+                            Audit("EntrySkipped", $"reason={midasNotReadyReason}");
+                            return;
+                        }
 
                         if (UseMidasFilter && midasOperational)
                         {
@@ -3110,14 +3084,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                                 Audit("EntrySkipped", "reason=MidasNaN side=Long");
                             }
                         }
-                        else if (UseMidasFilter)
-                        {
-                            tradedToday = true;
-                            lastTradeDate = tradingDay;
-                            string readyState = midasIndicator == null ? "null" : midasIndicator.IsReady.ToString();
-                            Audit("EntrySkipped",
-                                $"reason={midasNotReadyReason} side=Long barsSinceAnchor={barsSinceAnchor} minBarsAfterAnchor={MidasMinBarsAfterAnchor} isReady={readyState}");
-                        }
                         else
                         {
                             Audit("EntrySubmit", $"side=Long qty={actualContractsForDay} signal=AutoLong");
@@ -3130,8 +3096,15 @@ namespace NinjaTrader.NinjaScript.Strategies
                     else if (entrarShort)
                     {
                         string midasNotReadyReason = null;
-                        int barsSinceAnchor = -1;
-                        bool midasOperational = IsMidasOperational(out midasNotReadyReason, out barsSinceAnchor);
+                        bool midasOperational = IsMidasOperational(out midasNotReadyReason);
+
+                        if (UseMidasFilter && !midasOperational)
+                        {
+                            tradedToday = true;
+                            lastTradeDate = tradingDay;
+                            Audit("EntrySkipped", $"reason={midasNotReadyReason}");
+                            return;
+                        }
 
                         if (UseMidasFilter && midasOperational)
                         {
@@ -3180,14 +3153,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                                 lastTradeDate = tradingDay;
                                 Audit("EntrySkipped", "reason=MidasNaN side=Short");
                             }
-                        }
-                        else if (UseMidasFilter)
-                        {
-                            tradedToday = true;
-                            lastTradeDate = tradingDay;
-                            string readyState = midasIndicator == null ? "null" : midasIndicator.IsReady.ToString();
-                            Audit("EntrySkipped",
-                                $"reason={midasNotReadyReason} side=Short barsSinceAnchor={barsSinceAnchor} minBarsAfterAnchor={MidasMinBarsAfterAnchor} isReady={readyState}");
                         }
                         else
                         {
