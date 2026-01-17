@@ -2517,7 +2517,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             double tickSize = Instrument.MasterInstrument.TickSize;
             int offsetTicks = Math.Max(1, InvertStopOffsetTicks);
-            double stopEntryPrice;
+            double stopEntryPrice = 0;
 
             if (direction == MarketPosition.Long)
             {
@@ -2528,6 +2528,13 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 stopEntryPrice = stopPrice + offsetTicks * tickSize;
                 invertStopEntryOrder = EnterLongStopMarket(0, true, qty, stopEntryPrice, "InvertStopEntry");
+            }
+            else
+            {
+                Audit("InvertPlanError",
+                    $"Invalid plannedDirection={direction}. Invert plan aborted.");
+                ClearInvertPlanSnapshot();
+                return;
             }
 
             Audit("InvertStopOrderPlaced",
