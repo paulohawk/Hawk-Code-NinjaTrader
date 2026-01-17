@@ -2724,7 +2724,21 @@ namespace NinjaTrader.NinjaScript.Strategies
             int posQtyAbs = Math.Abs(position.Quantity);
             if (posQtyAbs <= 0) return;
 
-            bool mustRebuild = (posQtyAbs != lastBracketQty) || (ordemStopLong == null && ordemStopShort == null);
+            Order stopRef = (position.MarketPosition == MarketPosition.Long) ? ordemStopLong : ordemStopShort;
+            Order tpRef = (position.MarketPosition == MarketPosition.Long) ? ordemTPLong : ordemTPShort;
+
+            bool hasStopRef = stopRef != null;
+            bool hasTpRef = tpRef != null;
+
+            bool stopBad = !IsOrderActive(stopRef) || (stopRef != null && Math.Abs(stopRef.Quantity) != posQtyAbs);
+            bool tpBad = !IsOrderActive(tpRef) || (tpRef != null && Math.Abs(tpRef.Quantity) != posQtyAbs);
+
+            bool mustRebuild =
+                (posQtyAbs != lastBracketQty)
+                || !hasStopRef
+                || !hasTpRef
+                || stopBad
+                || tpBad;
 
             double tickSize = Instrument.MasterInstrument.TickSize;
             double tickValue = Instrument.MasterInstrument.PointValue * tickSize;
@@ -2766,35 +2780,125 @@ namespace NinjaTrader.NinjaScript.Strategies
                 try { if (ordemTPShort != null) CancelOrder(ordemTPShort); } catch { }
 
                 double stopPrice, targetPrice;
+                double bid = 0;
+                double ask = 0;
+                bool hasQuotes = false;
+
+                try
+                {
+                    bid = GetCurrentBid();
+                    ask = GetCurrentAsk();
+                    hasQuotes = (bid > 0 && ask > 0);
+                }
+                catch
+                {
+                    hasQuotes = false;
+                }
+
+                bool bracketSubmitted = false;
 
                 if (position.MarketPosition == MarketPosition.Long && contextoHojeIsLong)
                 {
                     stopPrice = averagePrice - stopTicks * tickSize;
                     targetPrice = averagePrice + targetTicks * tickSize;
 
+                    if (hasQuotes)
+                    {
+                        double originalStop = stopPrice;
+                        double originalTarget = targetPrice;
+
+                        if (stopPrice >= bid) stopPrice = bid - tickSize;
+                        if (targetPrice <= ask) targetPrice = ask + tickSize;
+
+                        if (Math.Abs(originalStop - stopPrice) > 0 || Math.Abs(originalTarget - targetPrice) > 0)
+                        {
+                            Audit("BracketPriceAdjusted",
+                                $"side=Long bid={F0(bid)} ask={F0(ask)} stopAdj={F0(stopPrice)} targetAdj={F0(targetPrice)}");
+                        }
+                    }
+
                     ordemStopLong = ExitLongStopMarket(0, true, posQtyAbs, stopPrice, "StopLoss", "AutoLong");
                     ordemTPLong = ExitLongLimit(0, true, posQtyAbs, targetPrice, "TakeProfit", "AutoLong");
                     ordemStopShort = null;
                     ordemTPShort = null;
+                    bracketSubmitted = true;
                 }
                 else if (position.MarketPosition == MarketPosition.Short && contextoHojeIsShort)
                 {
                     stopPrice = averagePrice + stopTicks * tickSize;
                     targetPrice = averagePrice - targetTicks * tickSize;
 
+                    if (hasQuotes)
+                    {
+                        double originalStop = stopPrice;
+                        double originalTarget = targetPrice;
+
+                        if (stopPrice <= ask) stopPrice = ask + tickSize;
+                        if (targetPrice >= bid) targetPrice = bid - tickSize;
+
+                        if (Math.Abs(originalStop - stopPrice) > 0 || Math.Abs(originalTarget - targetPrice) > 0)
+                        {
+                            Audit("BracketPriceAdjusted",
+                                $"side=Short bid={F0(bid)} ask={F0(ask)} stopAdj={F0(stopPrice)} targetAdj={F0(targetPrice)}");
+                        }
+                    }
+
                     ordemStopShort = ExitShortStopMarket(0, true, posQtyAbs, stopPrice, "StopLoss", "AutoShort");
                     ordemTPShort = ExitShortLimit(0, true, posQtyAbs, targetPrice, "TakeProfit", "AutoShort");
                     ordemStopLong = null;
                     ordemTPLong = null;
+                    bracketSubmitted = true;
                 }
 
-                lastBracketQty = posQtyAbs;
+                if (bracketSubmitted)
+                {
+                    Order stopCheck = (position.MarketPosition == MarketPosition.Long) ? ordemStopLong : ordemStopShort;
+                    Order tpCheck = (position.MarketPosition == MarketPosition.Long) ? ordemTPLong : ordemTPShort;
 
-                Audit("BracketSet",
-                    $"side={position.MarketPosition} qty={posQtyAbs} avg={F0(averagePrice)} stopPrice={F0(position.MarketPosition==MarketPosition.Long?ordemStopLong?.StopPrice??0:ordemStopShort?.StopPrice??0)} targetPrice={F0(position.MarketPosition==MarketPosition.Long?ordemTPLong?.LimitPrice??0:ordemTPShort?.LimitPrice??0)} stopTicks={stopTicks} targetTicks={targetTicks} riskDollars={F0(riskDollars)} targetDollars={F0(targetDollars)} useATR={UseStopATR} atr={F(lastAtrVal, "0.000")} stopDollars={F0(stopDollars)}");
+                    if (IsOrderActive(stopCheck) && IsOrderActive(tpCheck))
+                        lastBracketQty = posQtyAbs;
+                    else
+                        lastBracketQty = 0;
+
+                    Audit("BracketSet",
+                        $"side={position.MarketPosition} qty={posQtyAbs} avg={F0(averagePrice)} stopPrice={F0(position.MarketPosition==MarketPosition.Long?ordemStopLong?.StopPrice??0:ordemStopShort?.StopPrice??0)} targetPrice={F0(position.MarketPosition==MarketPosition.Long?ordemTPLong?.LimitPrice??0:ordemTPShort?.LimitPrice??0)} stopTicks={stopTicks} targetTicks={targetTicks} riskDollars={F0(riskDollars)} targetDollars={F0(targetDollars)} useATR={UseStopATR} atr={F(lastAtrVal, "0.000")} stopDollars={F0(stopDollars)}");
+                }
             }
 
             PublishPanelSnapshot("OnPositionUpdate_bracket");
+        }
+
+        protected override void OnOrderUpdate(Order order, double limitPrice, double stopPrice, int quantity, int filled,
+            double averageFillPrice, OrderState orderState, DateTime time, ErrorCode error, string comment)
+        {
+            if (order == null)
+                return;
+
+            if (order.Account != Account || order.Instrument != Instrument)
+                return;
+
+            string orderName = order.Name ?? string.Empty;
+            bool isStop = orderName.Equals("StopLoss", StringComparison.OrdinalIgnoreCase)
+                || orderName.Equals("BreakEven", StringComparison.OrdinalIgnoreCase);
+            bool isTp = orderName.Equals("TakeProfit", StringComparison.OrdinalIgnoreCase);
+
+            if (!isStop && !isTp)
+                return;
+
+            if (orderState == OrderState.Rejected || orderState == OrderState.Cancelled)
+            {
+                Audit("BracketOrderDead",
+                    $"name={orderName} state={orderState} error={error} comment={comment}");
+
+                if (order == ordemStopLong) ordemStopLong = null;
+                if (order == ordemStopShort) ordemStopShort = null;
+                if (order == ordemTPLong) ordemTPLong = null;
+                if (order == ordemTPShort) ordemTPShort = null;
+
+                lastBracketQty = 0;
+
+                PublishPanelSnapshot("OnOrderUpdate_dead");
+            }
         }
 
         private void AplicarBreakEvenSeAtingiuRR()
@@ -2813,8 +2917,38 @@ namespace NinjaTrader.NinjaScript.Strategies
                     if (novoStop > maxStop) novoStop = maxStop;
 
                     int qty = Math.Abs(Position.Quantity) > 0 ? Math.Abs(Position.Quantity) : Math.Abs(ordemStopLong.Quantity);
+                    double tickSize = Instrument.MasterInstrument.TickSize;
 
                     try { CancelOrder(ordemStopLong); } catch { }
+
+                    double bid = 0;
+                    double ask = 0;
+                    bool hasQuotes = false;
+
+                    try
+                    {
+                        bid = GetCurrentBid();
+                        ask = GetCurrentAsk();
+                        hasQuotes = (bid > 0 && ask > 0);
+                    }
+                    catch
+                    {
+                        hasQuotes = false;
+                    }
+
+                    if (hasQuotes)
+                    {
+                        double originalStop = novoStop;
+
+                        if (novoStop >= bid)
+                            novoStop = bid - tickSize;
+
+                        if (Math.Abs(originalStop - novoStop) > 0)
+                        {
+                            Audit("BreakEvenPriceAdjusted",
+                                $"side=Long bid={F0(bid)} ask={F0(ask)} newStop={F0(novoStop)}");
+                        }
+                    }
 
                     ordemStopLong = ExitLongStopMarket(0, true, qty, novoStop, "BreakEven", "AutoLong");
                     breakevenAtivado = true;
@@ -2841,8 +2975,38 @@ namespace NinjaTrader.NinjaScript.Strategies
                     if (novoStop < minStop) novoStop = minStop;
 
                     int qty = Math.Abs(Position.Quantity) > 0 ? Math.Abs(Position.Quantity) : Math.Abs(ordemStopShort.Quantity);
+                    double tickSize = Instrument.MasterInstrument.TickSize;
 
                     try { CancelOrder(ordemStopShort); } catch { }
+
+                    double bid = 0;
+                    double ask = 0;
+                    bool hasQuotes = false;
+
+                    try
+                    {
+                        bid = GetCurrentBid();
+                        ask = GetCurrentAsk();
+                        hasQuotes = (bid > 0 && ask > 0);
+                    }
+                    catch
+                    {
+                        hasQuotes = false;
+                    }
+
+                    if (hasQuotes)
+                    {
+                        double originalStop = novoStop;
+
+                        if (novoStop <= ask)
+                            novoStop = ask + tickSize;
+
+                        if (Math.Abs(originalStop - novoStop) > 0)
+                        {
+                            Audit("BreakEvenPriceAdjusted",
+                                $"side=Short bid={F0(bid)} ask={F0(ask)} newStop={F0(novoStop)}");
+                        }
+                    }
 
                     ordemStopShort = ExitShortStopMarket(0, true, qty, novoStop, "BreakEven", "AutoShort");
                     breakevenAtivado = true;
@@ -2858,6 +3022,16 @@ namespace NinjaTrader.NinjaScript.Strategies
                     PublishPanelSnapshot("BreakEven_Short");
                 }
             }
+        }
+
+        private bool IsOrderActive(Order order)
+        {
+            if (order == null) return false;
+
+            return order.OrderState == OrderState.Working
+                || order.OrderState == OrderState.Accepted
+                || order.OrderState == OrderState.Submitted
+                || order.OrderState == OrderState.PartFilled;
         }
 
         private bool IsUsaDst(DateTime dataBrasilia)
