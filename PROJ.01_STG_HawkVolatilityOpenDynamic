@@ -2001,8 +2001,13 @@ namespace NinjaTrader.NinjaScript.Strategies
                     panelHelper.Init(ChartControl);
                 }
 
+                // AnchoredMidasIndicator expects (ISeries<double> input, int sessionOffset, int barInSession, ...)
+                // input: use MIDAS BIP series (Closes[midasBip])
+                // sessionOffset: 0 (default)
+                // barInSession: MidasAnchorBarIndex
                 midasIndicator = AnchoredMidasIndicator(
-                    BarsArray[midasBip],
+                    Closes[midasBip],
+                    0,
                     MidasAnchorBarIndex,
                     MidasUseLastBarIfIndexTooLarge,
                     MidasPlotOnlyNextSession,
