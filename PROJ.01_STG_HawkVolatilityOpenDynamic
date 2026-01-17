@@ -2073,7 +2073,14 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (midasIndicator == null)
                 return false;
 
-            barsSinceAnchor = midasIndicator.BarsSinceAnchor;
+            if (midasIndicator.LastUsedAnchorTime == Core.Globals.MinDate)
+                return false;
+
+            int anchorBar = Bars.GetBar(midasIndicator.LastUsedAnchorTime);
+            if (anchorBar < 0)
+                return false;
+
+            barsSinceAnchor = CurrentBar - anchorBar;
             if (midasIndicator.IsReady)
                 return true;
 
