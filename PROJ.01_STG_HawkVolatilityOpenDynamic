@@ -2868,11 +2868,13 @@ namespace NinjaTrader.NinjaScript.Strategies
             PublishPanelSnapshot("OnPositionUpdate_bracket");
         }
 
-        protected override void OnOrderUpdate(Order order, double limitPrice, double stopPrice, int quantity, int filled,
-            double averageFillPrice, OrderState orderState, DateTime time, ErrorCode error, string comment)
+        protected override void OnExecutionUpdate(Execution execution, string executionId, double price, int quantity,
+            MarketPosition marketPosition, string orderId, DateTime time)
         {
-            if (order == null)
+            if (execution == null || execution.Order == null)
                 return;
+
+            Order order = execution.Order;
 
             if (order.Account != Account || order.Instrument != Instrument)
                 return;
@@ -2885,10 +2887,10 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (!isStop && !isTp)
                 return;
 
-            if (orderState == OrderState.Rejected || orderState == OrderState.Cancelled)
+            if (order.OrderState == OrderState.Rejected || order.OrderState == OrderState.Cancelled)
             {
                 Audit("BracketOrderDead",
-                    $"name={orderName} state={orderState} error={error} comment={comment}");
+                    $"name={orderName} state={order.OrderState} execId={executionId} qty={quantity} price={F0(price)}");
 
                 if (order == ordemStopLong) ordemStopLong = null;
                 if (order == ordemStopShort) ordemStopShort = null;
@@ -2897,7 +2899,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 lastBracketQty = 0;
 
-                PublishPanelSnapshot("OnOrderUpdate_dead");
+                PublishPanelSnapshot("OnExecutionUpdate_dead");
             }
         }
 
