@@ -2869,7 +2869,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         }
 
         protected override void OnOrderUpdate(Order order, double limitPrice, double stopPrice, int quantity, int filled,
-            double averageFillPrice, OrderState orderState, DateTime time)
+            double averageFillPrice, OrderState orderState, DateTime time, ErrorCode error, string comment)
         {
             if (order == null)
                 return;
@@ -2888,7 +2888,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (orderState == OrderState.Rejected || orderState == OrderState.Cancelled)
             {
                 Audit("BracketOrderDead",
-                    $"name={orderName} state={orderState} qty={quantity} filled={filled} avgFill={F0(averageFillPrice)} stop={F0(stopPrice)} limit={F0(limitPrice)}");
+                    $"name={orderName} state={orderState} error={error} comment={comment}");
 
                 if (order == ordemStopLong) ordemStopLong = null;
                 if (order == ordemStopShort) ordemStopShort = null;
