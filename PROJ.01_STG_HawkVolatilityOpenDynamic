@@ -2210,6 +2210,11 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 midasSessionBarCounter = Math.Max(1, midasSessionBarCounter + 1);
             }
+
+            if (State == State.Historical && CurrentBars[midasBip] > MidasAnchorBarIndex + 2)
+            {
+                midasSessionBarCounter = MidasAnchorBarIndex + 2;
+            }
         }
 
         private bool IsMidasCacheFresh(DateTime barTime)
@@ -3386,7 +3391,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                                 Audit("EntryDeferred",
                                     $"reason=MidasOutOfSync side=Long midasBip={midasBip} midasBars={CurrentBars[midasBip]} lastMidasUpdateBar={lastMidasUpdateBar} lastMidasUpdateTime={lastMidasUpdateTime:O} barTime={Times[0][0]:O}");
                             }
-                            else if (midasSessionBarCounter > 0 && midasSessionBarCounter <= MidasAnchorBarIndex)
+                            else if (midasSessionBarCounter > 0 && midasSessionBarCounter <= MidasAnchorBarIndex + 1)
                             {
                                 Audit("EntryDeferred",
                                     $"reason=MidasWarmingUp side=Long midasBip={midasBip} midasBars={CurrentBars[midasBip]} anchorIndex={MidasAnchorBarIndex} sessionBars={midasSessionBarCounter}");
@@ -3465,7 +3470,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                                 Audit("EntryDeferred",
                                     $"reason=MidasOutOfSync side=Short midasBip={midasBip} midasBars={CurrentBars[midasBip]} lastMidasUpdateBar={lastMidasUpdateBar} lastMidasUpdateTime={lastMidasUpdateTime:O} barTime={Times[0][0]:O}");
                             }
-                            else if (midasSessionBarCounter > 0 && midasSessionBarCounter <= MidasAnchorBarIndex)
+                            else if (midasSessionBarCounter > 0 && midasSessionBarCounter <= MidasAnchorBarIndex + 1)
                             {
                                 Audit("EntryDeferred",
                                     $"reason=MidasWarmingUp side=Short midasBip={midasBip} midasBars={CurrentBars[midasBip]} anchorIndex={MidasAnchorBarIndex} sessionBars={midasSessionBarCounter}");
