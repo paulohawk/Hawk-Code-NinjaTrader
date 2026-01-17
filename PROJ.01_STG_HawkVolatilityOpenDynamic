@@ -3005,7 +3005,10 @@ namespace NinjaTrader.NinjaScript.Strategies
             DateTime td = GetTradingDay(Times[0][0]);
             if (string.IsNullOrEmpty(activeEntrySignal))
             {
-                activeEntrySignal = (position.MarketPosition == MarketPosition.Long) ? "AutoLong" : "AutoShort";
+                if (invertStopTriggered)
+                    activeEntrySignal = "InvertStopEntry";
+                else
+                    activeEntrySignal = (position.MarketPosition == MarketPosition.Long) ? "AutoLong" : "AutoShort";
                 activeEntrySignalDay = td.Date;
             }
 
@@ -3255,6 +3258,11 @@ namespace NinjaTrader.NinjaScript.Strategies
             double high = High[0];
             double low = Low[0];
 
+            DateTime td = GetTradingDay(Times[0][0]);
+            string fromSignal = GetActiveEntrySignal(td);
+            if (string.IsNullOrEmpty(fromSignal))
+                fromSignal = Position.MarketPosition == MarketPosition.Long ? "AutoLong" : "AutoShort";
+
             double effectiveAtRR = GetEffectiveBreakEvenAtRR();
             double effectiveLockRR = GetEffectiveBreakEvenLockRR();
 
@@ -3302,7 +3310,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                         }
                     }
 
-                    ordemStopLong = ExitLongStopMarket(0, true, qty, novoStop, "BreakEven", "AutoLong");
+                    ordemStopLong = ExitLongStopMarket(0, true, qty, novoStop, "BreakEven", fromSignal);
                     breakevenAtivado = true;
 
                     double locked = ComputeRiskDollars(precoEntradaAtual, novoStop, Math.Abs(qty));
@@ -3360,7 +3368,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                         }
                     }
 
-                    ordemStopShort = ExitShortStopMarket(0, true, qty, novoStop, "BreakEven", "AutoShort");
+                    ordemStopShort = ExitShortStopMarket(0, true, qty, novoStop, "BreakEven", fromSignal);
                     breakevenAtivado = true;
 
                     double locked = ComputeRiskDollars(precoEntradaAtual, novoStop, Math.Abs(qty));
