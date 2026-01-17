@@ -2885,7 +2885,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (!isStop && !isTp)
                 return;
 
-            if (orderState == OrderState.Rejected || orderState == OrderState.Cancelled || orderState == OrderState.Unknown)
+            if (orderState == OrderState.Rejected || orderState == OrderState.Cancelled)
             {
                 Audit("BracketOrderDead",
                     $"name={orderName} state={orderState} qty={quantity} filled={filled} avgFill={F0(averageFillPrice)} stop={F0(stopPrice)} limit={F0(limitPrice)}");
@@ -2917,6 +2917,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     if (novoStop > maxStop) novoStop = maxStop;
 
                     int qty = Math.Abs(Position.Quantity) > 0 ? Math.Abs(Position.Quantity) : Math.Abs(ordemStopLong.Quantity);
+                    double tickSize = Instrument.MasterInstrument.TickSize;
 
                     try { CancelOrder(ordemStopLong); } catch { }
 
@@ -2940,7 +2941,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                         double originalStop = novoStop;
 
                         if (novoStop >= bid)
-                            novoStop = bid - Instrument.MasterInstrument.TickSize;
+                            novoStop = bid - tickSize;
 
                         if (Math.Abs(originalStop - novoStop) > 0)
                         {
@@ -2974,6 +2975,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     if (novoStop < minStop) novoStop = minStop;
 
                     int qty = Math.Abs(Position.Quantity) > 0 ? Math.Abs(Position.Quantity) : Math.Abs(ordemStopShort.Quantity);
+                    double tickSize = Instrument.MasterInstrument.TickSize;
 
                     try { CancelOrder(ordemStopShort); } catch { }
 
@@ -2997,7 +2999,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                         double originalStop = novoStop;
 
                         if (novoStop <= ask)
-                            novoStop = ask + Instrument.MasterInstrument.TickSize;
+                            novoStop = ask + tickSize;
 
                         if (Math.Abs(originalStop - novoStop) > 0)
                         {
