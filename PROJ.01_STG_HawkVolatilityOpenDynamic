@@ -1708,13 +1708,6 @@ namespace NinjaTrader.NinjaScript.Strategies
         [NinjaScriptProperty]
         [Display(Name = "Midas Fallback To Nearest Session", GroupName = "Entry Filters - MIDAS (Advanced)", Order = 203)]
         public bool MidasFallbackToNearestSession { get; set; }
-        [NinjaScriptProperty]
-        [Display(Name = "Midas Enable Band Cloud", GroupName = "Entry Filters - MIDAS (Advanced)", Order = 204)]
-        public bool MidasEnableBandCloud { get; set; }
-        [NinjaScriptProperty]
-        [Display(Name = "Midas Band Cloud Opacity", GroupName = "Entry Filters - MIDAS (Advanced)", Order = 205)]
-        public double MidasBandCloudOpacity { get; set; }
-
         [NinjaScriptProperty, Category("SuperTrend"), DisplayName("Ativar filtro SuperTrend")]
         public bool UseSuperTrend { get; set; }
         [NinjaScriptProperty, Category("SuperTrend"), DisplayName("SuperTrend TimeFrame (min)")]
@@ -1921,8 +1914,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 MidasUseLastBarIfIndexTooLarge = true;
                 MidasPlotOnlyNextSession = true;
                 MidasFallbackToNearestSession = true;
-                MidasEnableBandCloud = false;
-                MidasBandCloudOpacity = 20.0;
 
                 UseSuperTrend = true;
                 STTimeFrame = 5;
@@ -2022,8 +2013,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                     60,
                     null,
                     true,
-                    MidasEnableBandCloud,
-                    MidasBandCloudOpacity);
+                    false,
+                    0.0);
             }
             else if (State == State.Realtime)
             {
