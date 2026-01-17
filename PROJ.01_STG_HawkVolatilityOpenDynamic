@@ -6,7 +6,6 @@ using System.ComponentModel.DataAnnotations;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Reflection;
 using System.Runtime.CompilerServices; // chartToken
 using System.Text;
 using System.Windows;
@@ -1784,6 +1783,12 @@ namespace NinjaTrader.NinjaScript.Strategies
         private double lastAtrVal = 0.0;
         private AnchoredMidasIndicator midasIndicator;
         private int midasBip = 0;
+        private double lastMidasUpper = double.NaN;
+        private double lastMidasMedian = double.NaN;
+        private double lastMidasLower = double.NaN;
+        private bool midasHasValidValues = false;
+        private DateTime lastMidasUpdateTime = DateTime.MinValue;
+        private int lastMidasUpdateBar = -1;
 
         // Painel embutido exclusivo
         private HVO_PanelHelper panelHelper;
@@ -1985,6 +1990,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                     panelHelper.Init(ChartControl);
                 }
 
+                int midasTfMin = GetMidasTimeFrameMinutes();
+
                 // AnchoredMidasIndicator expects (ISeries<double> input, int sessionOffset, int barInSession, ...)
                 // input: use MIDAS BIP series (Closes[midasBip])
                 // sessionOffset: 0 (default)
@@ -1994,16 +2001,16 @@ namespace NinjaTrader.NinjaScript.Strategies
                     0,
                     MidasAnchorBarIndex,
                     true,
-                    false,
-                    false,
+                    true,
+                    EnableDebugLog,
                     false,
                     true,
                     false,
-                    60,
-                    null,
+                    midasTfMin,
+                    "",
                     true,
                     false,
-                    0.0);
+                    20.0);
             }
             else if (State == State.Realtime)
             {
@@ -2054,14 +2061,55 @@ namespace NinjaTrader.NinjaScript.Strategies
             return false;
         }
 
-        private bool IsMidasOperational(out string reason)
+        private int GetMidasTimeFrameMinutes()
         {
-            reason = "MidasNotReady";
+            if (MidasBarsPeriodType == BarsPeriodType.Second)
+                return Math.Max(1, (int)Math.Round(MidasBarsPeriodValue / 60.0));
+            if (MidasBarsPeriodType == BarsPeriodType.Minute)
+                return Math.Max(1, MidasBarsPeriodValue);
+            return Math.Max(1, MidasBarsPeriodValue);
+        }
+
+        private void UpdateMidasCache()
+        {
+            if (midasIndicator == null)
+                return;
+            if (CurrentBars == null || CurrentBars.Length <= midasBip || CurrentBars[midasBip] < 1)
+                return;
+
+            double upper = midasIndicator.Values[0][0];
+            double median = midasIndicator.Values[1][0];
+            double lower = midasIndicator.Values[2][0];
+
+            if (IsMidasBandNaN(upper, median, lower))
+                return;
+
+            lastMidasUpper = upper;
+            lastMidasMedian = median;
+            lastMidasLower = lower;
+            lastMidasUpdateTime = Times[midasBip][0];
+            lastMidasUpdateBar = CurrentBars[midasBip];
+            midasHasValidValues = true;
+        }
+
+        private bool TryGetMidasSnapshot(out double upper, out double median, out double lower)
+        {
+            upper = double.NaN;
+            median = double.NaN;
+            lower = double.NaN;
 
             if (midasIndicator == null)
                 return false;
 
-            return midasIndicator.IsReady;
+            upper = midasIndicator.Values[0][0];
+            median = midasIndicator.Values[1][0];
+            lower = midasIndicator.Values[2][0];
+            return true;
+        }
+
+        private string FormatMidasValue(double value)
+        {
+            return double.IsNaN(value) ? "NaN" : F0(value);
         }
 
         private bool AreMidasBandsConfigured()
@@ -2622,6 +2670,12 @@ namespace NinjaTrader.NinjaScript.Strategies
             invertPlanBeArmed = false;
             activeEntrySignal = "";
             activeEntrySignalDay = DateTime.MinValue;
+            lastMidasUpper = double.NaN;
+            lastMidasMedian = double.NaN;
+            lastMidasLower = double.NaN;
+            lastMidasUpdateTime = DateTime.MinValue;
+            lastMidasUpdateBar = -1;
+            midasHasValidValues = false;
 
             dayStatus = "Waiting";
             dayQtyCache = null;
@@ -2807,6 +2861,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         protected override void OnBarUpdate()
         {
+            if (BarsInProgress == midasBip)
+            {
+                UpdateMidasCache();
+                if (midasBip != 0)
+                    return;
+            }
+
             // Processa BIP do SuperTrend para memo
             if (BarsInProgress == STSeriesIndex)
             {
@@ -3025,20 +3086,11 @@ namespace NinjaTrader.NinjaScript.Strategies
                     }
                     else if (entrarLong)
                     {
-                        string midasNotReadyReason = null;
-                        bool midasOperational = IsMidasOperational(out midasNotReadyReason);
-
-                        if (UseMidasFilter && !midasOperational)
+                        if (UseMidasFilter)
                         {
-                            tradedToday = true;
-                            lastTradeDate = tradingDay;
-                            Audit("EntrySkipped", $"reason={midasNotReadyReason}");
-                        }
-                        else if (UseMidasFilter)
-                        {
-                            double upper = midasIndicator.Values[0][0];
-                            double median = midasIndicator.Values[1][0];
-                            double lower = midasIndicator.Values[2][0];
+                            double upper = lastMidasUpper;
+                            double median = lastMidasMedian;
+                            double lower = lastMidasLower;
                             double close = Close[0];
                             double offset = MidasEntryOffsetTicks * tickSize;
 
@@ -3048,7 +3100,33 @@ namespace NinjaTrader.NinjaScript.Strategies
                                 lastTradeDate = tradingDay;
                                 Audit("EntrySkipped", "reason=MidasBandsDisabled side=Long");
                             }
-                            else if (!IsMidasBandNaN(upper, median, lower))
+                            else if (midasIndicator == null)
+                            {
+                                tradedToday = true;
+                                lastTradeDate = tradingDay;
+                                Audit("EntrySkipped", "reason=MidasNull side=Long");
+                            }
+                            else if (!midasHasValidValues)
+                            {
+                                double snapUpper;
+                                double snapMedian;
+                                double snapLower;
+                                TryGetMidasSnapshot(out snapUpper, out snapMedian, out snapLower);
+                                Audit("EntryDeferred",
+                                    $"reason=MidasNoCacheYet side=Long midasBip={midasBip} midasBars={CurrentBars[midasBip]} upper={FormatMidasValue(snapUpper)} median={FormatMidasValue(snapMedian)} lower={FormatMidasValue(snapLower)}");
+                                return;
+                            }
+                            else if (midasHasValidValues && lastMidasUpdateBar >= 0)
+                            {
+                                int barsSinceAnchor = lastMidasUpdateBar - MidasAnchorBarIndex;
+                                if (barsSinceAnchor < 2)
+                                {
+                                    Audit("EntryDeferred",
+                                        $"reason=MidasWarmingUp side=Long barsSinceAnchor={barsSinceAnchor} midasBip={midasBip} midasBars={CurrentBars[midasBip]}");
+                                    return;
+                                }
+                            }
+                            else
                             {
                                 if (IsBelowSelectedMidasBands(close, upper, median, lower))
                                 {
@@ -3075,12 +3153,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                                     Audit("EntrySkipped", $"reason=MidasRange side=Long close={F0(close)} upper={F0(upper)} median={F0(median)} lower={F0(lower)}");
                                 }
                             }
-                            else
-                            {
-                                tradedToday = true;
-                                lastTradeDate = tradingDay;
-                                Audit("EntrySkipped", "reason=MidasNaN side=Long");
-                            }
                         }
                         else
                         {
@@ -3093,20 +3165,11 @@ namespace NinjaTrader.NinjaScript.Strategies
                     }
                     else if (entrarShort)
                     {
-                        string midasNotReadyReason = null;
-                        bool midasOperational = IsMidasOperational(out midasNotReadyReason);
-
-                        if (UseMidasFilter && !midasOperational)
+                        if (UseMidasFilter)
                         {
-                            tradedToday = true;
-                            lastTradeDate = tradingDay;
-                            Audit("EntrySkipped", $"reason={midasNotReadyReason}");
-                        }
-                        else if (UseMidasFilter)
-                        {
-                            double upper = midasIndicator.Values[0][0];
-                            double median = midasIndicator.Values[1][0];
-                            double lower = midasIndicator.Values[2][0];
+                            double upper = lastMidasUpper;
+                            double median = lastMidasMedian;
+                            double lower = lastMidasLower;
                             double close = Close[0];
                             double offset = MidasEntryOffsetTicks * tickSize;
 
@@ -3116,7 +3179,33 @@ namespace NinjaTrader.NinjaScript.Strategies
                                 lastTradeDate = tradingDay;
                                 Audit("EntrySkipped", "reason=MidasBandsDisabled side=Short");
                             }
-                            else if (!IsMidasBandNaN(upper, median, lower))
+                            else if (midasIndicator == null)
+                            {
+                                tradedToday = true;
+                                lastTradeDate = tradingDay;
+                                Audit("EntrySkipped", "reason=MidasNull side=Short");
+                            }
+                            else if (!midasHasValidValues)
+                            {
+                                double snapUpper;
+                                double snapMedian;
+                                double snapLower;
+                                TryGetMidasSnapshot(out snapUpper, out snapMedian, out snapLower);
+                                Audit("EntryDeferred",
+                                    $"reason=MidasNoCacheYet side=Short midasBip={midasBip} midasBars={CurrentBars[midasBip]} upper={FormatMidasValue(snapUpper)} median={FormatMidasValue(snapMedian)} lower={FormatMidasValue(snapLower)}");
+                                return;
+                            }
+                            else if (midasHasValidValues && lastMidasUpdateBar >= 0)
+                            {
+                                int barsSinceAnchor = lastMidasUpdateBar - MidasAnchorBarIndex;
+                                if (barsSinceAnchor < 2)
+                                {
+                                    Audit("EntryDeferred",
+                                        $"reason=MidasWarmingUp side=Short barsSinceAnchor={barsSinceAnchor} midasBip={midasBip} midasBars={CurrentBars[midasBip]}");
+                                    return;
+                                }
+                            }
+                            else
                             {
                                 if (IsAboveSelectedMidasBands(close, upper, median, lower))
                                 {
@@ -3142,12 +3231,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                                     lastTradeDate = tradingDay;
                                     Audit("EntrySkipped", $"reason=MidasRange side=Short close={F0(close)} upper={F0(upper)} median={F0(median)} lower={F0(lower)}");
                                 }
-                            }
-                            else
-                            {
-                                tradedToday = true;
-                                lastTradeDate = tradingDay;
-                                Audit("EntrySkipped", "reason=MidasNaN side=Short");
                             }
                         }
                         else
