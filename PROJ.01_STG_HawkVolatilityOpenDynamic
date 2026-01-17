@@ -3005,7 +3005,10 @@ namespace NinjaTrader.NinjaScript.Strategies
             DateTime td = GetTradingDay(Times[0][0]);
             if (string.IsNullOrEmpty(activeEntrySignal))
             {
-                activeEntrySignal = (position.MarketPosition == MarketPosition.Long) ? "AutoLong" : "AutoShort";
+                if (invertStopTriggered)
+                    activeEntrySignal = "InvertStopEntry";
+                else
+                    activeEntrySignal = (position.MarketPosition == MarketPosition.Long) ? "AutoLong" : "AutoShort";
                 activeEntrySignalDay = td.Date;
             }
 
