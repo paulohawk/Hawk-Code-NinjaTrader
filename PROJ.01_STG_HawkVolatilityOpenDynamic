@@ -1812,6 +1812,10 @@ namespace NinjaTrader.NinjaScript.Strategies
         private DateTime plannedTradeDate = DateTime.MinValue;
         private DateTime lastInvertPlanCancelDate = DateTime.MinValue;
 
+        // Entry signal tracking (Paper 08)
+        private string activeEntrySignal = "";
+        private DateTime activeEntrySignalDay = DateTime.MinValue;
+
         // Cache para PositionClosed enriquecer
         private string lastOpenSide = "Flat";
         private int lastOpenQty = 0;
@@ -2369,13 +2373,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             // já executou neste trading day?
             if (lastAutoCloseDate.Date == tradingDay.Date) return;
 
-            // Se não há posição, marca o dia para não reprocessar e sai
-            if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
-            {
-                lastAutoCloseDate = tradingDay.Date;
-                return;
-            }
-
             TimeSpan scheduled;
             try
             {
@@ -2385,6 +2382,21 @@ namespace NinjaTrader.NinjaScript.Strategies
             catch { scheduled = new TimeSpan(17, 55, 0); }
 
             if (brasiliaNow.TimeOfDay < scheduled) return;
+
+            // Se não há posição, cancela plano pendente e sai
+            if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
+            {
+                if (invertPlanArmed)
+                {
+                    CancelInvertPlan("EOD", tradingDay);
+                    Audit("AutoClose", $"scheduled={scheduled} brNow={brasiliaNow:HH\\:mm\\:ss} action=CancelInvertPlan");
+                }
+
+                lastAutoCloseDate = tradingDay.Date;
+                autoCloseTriggeredToday = true;
+                PublishPanelSnapshot("AutoClose_flat");
+                return;
+            }
 
             // Marca dia e executa
             lastAutoCloseDate = tradingDay.Date;
@@ -2401,10 +2413,22 @@ namespace NinjaTrader.NinjaScript.Strategies
                 try { if (ordemStopLong != null) CancelOrder(ordemStopLong); } catch { }
                 try { if (ordemStopShort != null) CancelOrder(ordemStopShort); } catch { }
 
+                string fromSignal = GetActiveEntrySignal(tradingDay);
+
                 if (Position.MarketPosition == MarketPosition.Long && Position.Quantity > 0)
-                    ExitLong("AutoClose");
+                {
+                    if (!string.IsNullOrEmpty(fromSignal))
+                        ExitLong("AutoClose", fromSignal);
+                    else
+                        ExitLong("AutoClose");
+                }
                 else if (Position.MarketPosition == MarketPosition.Short && Position.Quantity > 0)
-                    ExitShort("AutoClose");
+                {
+                    if (!string.IsNullOrEmpty(fromSignal))
+                        ExitShort("AutoClose", fromSignal);
+                    else
+                        ExitShort("AutoClose");
+                }
 
                 PublishPanelSnapshot("AutoClose");
             }
@@ -2440,6 +2464,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             exitReasonHintTradingDay = DateTime.MinValue;
             invertStopTriggered = false;
             invertPlanBeArmed = false;
+            activeEntrySignal = "";
+            activeEntrySignalDay = DateTime.MinValue;
 
             dayStatus = "Waiting";
             dayQtyCache = null;
@@ -2456,6 +2482,17 @@ namespace NinjaTrader.NinjaScript.Strategies
                 return InvertMode;
 
             return EnterInverted ? InvertModeType.InvertedImmediate : InvertModeType.Disabled;
+        }
+
+        private string GetActiveEntrySignal(DateTime tradingDay)
+        {
+            if (!string.IsNullOrEmpty(activeEntrySignal) && activeEntrySignalDay.Date == tradingDay.Date)
+                return activeEntrySignal;
+
+            if (contextoHojeIsLong) return "AutoLong";
+            if (contextoHojeIsShort) return "AutoShort";
+
+            return "";
         }
 
         private void ClearInvertPlanSnapshot()
@@ -2938,6 +2975,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 riscoPrecoAtual = 0;
                 precoEntradaAtual = 0;
                 breakevenAtivado = false;
+                activeEntrySignal = "";
+                activeEntrySignalDay = DateTime.MinValue;
                 ordemStopLong = null;
                 ordemStopShort = null;
                 ordemTPLong = null;
@@ -2962,6 +3001,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             int posQtyAbs = Math.Abs(position.Quantity);
             if (posQtyAbs <= 0) return;
+
+            DateTime td = GetTradingDay(Times[0][0]);
+            if (string.IsNullOrEmpty(activeEntrySignal))
+            {
+                activeEntrySignal = (position.MarketPosition == MarketPosition.Long) ? "AutoLong" : "AutoShort";
+                activeEntrySignalDay = td.Date;
+            }
 
             Order stopRef = (position.MarketPosition == MarketPosition.Long) ? ordemStopLong : ordemStopShort;
             Order tpRef = (position.MarketPosition == MarketPosition.Long) ? ordemTPLong : ordemTPShort;
@@ -3048,7 +3094,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 bool bracketSubmitted = false;
 
-                if (position.MarketPosition == MarketPosition.Long && contextoHojeIsLong)
+                string fromSignal = GetActiveEntrySignal(td);
+
+                if (position.MarketPosition == MarketPosition.Long)
                 {
                     stopPrice = averagePrice - stopTicks * tickSize;
                     targetPrice = averagePrice + targetTicks * tickSize;
@@ -3068,13 +3116,14 @@ namespace NinjaTrader.NinjaScript.Strategies
                         }
                     }
 
-                    ordemStopLong = ExitLongStopMarket(0, true, posQtyAbs, stopPrice, "StopLoss", "AutoLong");
-                    ordemTPLong = ExitLongLimit(0, true, posQtyAbs, targetPrice, "TakeProfit", "AutoLong");
+                    string fe = string.IsNullOrEmpty(fromSignal) ? "AutoLong" : fromSignal;
+                    ordemStopLong = ExitLongStopMarket(0, true, posQtyAbs, stopPrice, "StopLoss", fe);
+                    ordemTPLong = ExitLongLimit(0, true, posQtyAbs, targetPrice, "TakeProfit", fe);
                     ordemStopShort = null;
                     ordemTPShort = null;
                     bracketSubmitted = true;
                 }
-                else if (position.MarketPosition == MarketPosition.Short && contextoHojeIsShort)
+                else if (position.MarketPosition == MarketPosition.Short)
                 {
                     stopPrice = averagePrice + stopTicks * tickSize;
                     targetPrice = averagePrice - targetTicks * tickSize;
@@ -3094,8 +3143,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                         }
                     }
 
-                    ordemStopShort = ExitShortStopMarket(0, true, posQtyAbs, stopPrice, "StopLoss", "AutoShort");
-                    ordemTPShort = ExitShortLimit(0, true, posQtyAbs, targetPrice, "TakeProfit", "AutoShort");
+                    string fe = string.IsNullOrEmpty(fromSignal) ? "AutoShort" : fromSignal;
+                    ordemStopShort = ExitShortStopMarket(0, true, posQtyAbs, stopPrice, "StopLoss", fe);
+                    ordemTPShort = ExitShortLimit(0, true, posQtyAbs, targetPrice, "TakeProfit", fe);
                     ordemStopLong = null;
                     ordemTPLong = null;
                     bracketSubmitted = true;
@@ -3136,6 +3186,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 if (order.OrderState == OrderState.Filled || order.OrderState == OrderState.PartFilled)
                 {
+                    activeEntrySignal = "InvertStopEntry";
+                    activeEntrySignalDay = GetTradingDay(time);
                     invertStopTriggered = true;
                     invertPlanArmed = false;
                     invertPlanBeArmed = false;
@@ -3163,6 +3215,16 @@ namespace NinjaTrader.NinjaScript.Strategies
                     CancelInvertPlan("EOD", tradingDay);
                 }
                 return;
+            }
+
+            if (orderName.Equals("AutoLong", StringComparison.OrdinalIgnoreCase)
+                || orderName.Equals("AutoShort", StringComparison.OrdinalIgnoreCase))
+            {
+                if (order.OrderState == OrderState.Filled || order.OrderState == OrderState.PartFilled)
+                {
+                    activeEntrySignal = orderName;
+                    activeEntrySignalDay = GetTradingDay(time);
+                }
             }
 
             bool isStop = orderName.Equals("StopLoss", StringComparison.OrdinalIgnoreCase)
