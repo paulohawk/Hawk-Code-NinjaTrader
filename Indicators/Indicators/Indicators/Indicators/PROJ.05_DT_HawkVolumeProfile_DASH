@@ -26,14 +26,14 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 {
 	[CLSCompliant(false)]
 	[EditorBrowsable(EditorBrowsableState.Always)]
-	public class CamsVpRegion : RegionHighlightBase
+	public class HawkVpRegion : RegionHighlightBase
 	{
 		protected override void OnStateChange()
 		{
 			base.OnStateChange();
 			if (State == State.SetDefaults)
 			{
-				Name	= "CamsVp Region";
+				Name	= "HawkVp Region";
 				Mode	= RegionHighlightMode.Time;
 			}
 		}
