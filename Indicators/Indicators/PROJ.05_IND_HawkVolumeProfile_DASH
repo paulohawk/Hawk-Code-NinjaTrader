@@ -144,19 +144,19 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			{
 				Description					= @"Volume Profile: Plots a horizontal histogram of volume by price.";
 				Name						= "HawkVolumeProfile";
-				Calculate					= Calculate.OnEachTick;
-				BarsRequiredToPlot			= 0;
+				Calculate					= Calculate.OnBarClose;
+				BarsRequiredToPlot			= 256;
 				IsChartOnly					= true;
 				IsOverlay					= true;
 				DrawOnPricePanel			= false;
 
 				ScaleType					= HawkVolumeProfileScaleType.MaxOfLadder;
-				WindowPercent				= 25;
+				WindowPercent				= 10;
 				FixedScalingNumber			= .01;
-				MinSize						= 30;
-				DeltaScale					= .25;
-				BarSpacingPercent			= 40;
-				Opacity						= 100;
+				MinSize						= 20;
+				DeltaScale					= 1;
+				BarSpacingPercent			= 30;
+				Opacity						= 5;
 				OpacityText					= 100;
 				ZOrder						= int.MaxValue;
 
@@ -167,8 +167,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				ShowBidAskProfile			= false;
 				ShowDeltaProfile			= false;
 				ShowScale					= HawkVolumeProfileShowScaleType.None;
-				ShowPoc						= false;
-				ShowValueArea				= false;
+				ShowPoc						= true;
+				ShowValueArea				= true;
 				ValueAreaPercent			= 70;
 				SmoothVA					= 2;
 				ShowImbalance				= true;
@@ -180,22 +180,22 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				Granularity					= HawkVolumeProfileGranularityType.Tick;
 				GranularityPeriod			= 100;
 
-				RegionFrom					= HawkVolumeProfileRegionFromType.Window;
-				RegionTo					= HawkVolumeProfileRegionToType.Current;
-				DateFrom					= DateTime.Parse("05/05/2017 4:10:00 PM");	//"3/8/2017 9:30:00 AM"
-				DateTo						= DateTime.Parse("05/05/2017 4:15:00 PM");	//"3/10/2017 4:00:00 PM"
+				RegionFrom					= HawkVolumeProfileRegionFromType.Daily;
+				RegionTo					= HawkVolumeProfileRegionToType.Daily;
+				DateFrom					= DateTime.Parse("05/05/2017 16:10:00");
+				DateTo						= DateTime.Parse("05/05/2017 16:15:00");
 
-				VolFillBrush				= Brushes.Blue;
-				AskVolumeBrush				= Brushes.MediumAquamarine;
-				BidVolumeBrush				= Brushes.Crimson;
-				DeltaPositiveBrush			= Brushes.Green;
-				DeltaNegativeBrush			= Brushes.DarkOrange;
+				VolFillBrush				= Brushes.DimGray;
+				AskVolumeBrush				= Brushes.Silver;
+				BidVolumeBrush				= Brushes.Maroon;
+				DeltaPositiveBrush			= Brushes.Silver;
+				DeltaNegativeBrush			= Brushes.DarkGoldenrod;
 				TextPosColorBrush			= Brushes.Snow;
 				TextNegColorBrush			= Brushes.Maroon;
-				PocColorBrush				= Brushes.Red;
-				ValueAreaColorBrush			= Brushes.Brown;
-				AskImbalanceBrush			= Brushes.Cyan;
-				BidImbalanceBrush			= Brushes.Pink;
+				PocColorBrush				= Brushes.Maroon;
+				ValueAreaColorBrush			= Brushes.DarkGoldenrod;
+				AskImbalanceBrush			= Brushes.DimGray;
+				BidImbalanceBrush			= Brushes.White;
 				
 			}
 			else if (State == State.Configure)
