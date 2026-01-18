@@ -1773,6 +1773,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         // Dia operacional (session iterator)
         private SessionIterator sessionIterator;
+        private TimeZoneInfo usEasternTimeZone;
 
         // Estado da estratégia (para MainEnabled)
         private bool isStrategyActive = false;
@@ -2373,6 +2374,49 @@ namespace NinjaTrader.NinjaScript.Strategies
                     DateTime utc = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
                     return TimeZoneInfo.ConvertTimeFromUtc(utc, brt);
                 }
+            }
+            catch { return dt; }
+        }
+
+        private TimeZoneInfo GetBarTimeZone()
+        {
+            try
+            {
+                return Bars?.TradingHours?.TimeZoneInfo ?? TimeZoneInfo.Local;
+            }
+            catch { return TimeZoneInfo.Local; }
+        }
+
+        private TimeZoneInfo GetUsEasternTimeZone()
+        {
+            if (usEasternTimeZone != null) return usEasternTimeZone;
+
+            string[] possibleIds = new string[] { "Eastern Standard Time", "America/New_York" };
+            foreach (var id in possibleIds)
+            {
+                try
+                {
+                    usEasternTimeZone = TimeZoneInfo.FindSystemTimeZoneById(id);
+                    if (usEasternTimeZone != null) break;
+                }
+                catch { }
+            }
+
+            return usEasternTimeZone;
+        }
+
+        private DateTime ConvertToUsEastern(DateTime dt)
+        {
+            try
+            {
+                TimeZoneInfo eastern = GetUsEasternTimeZone();
+                if (eastern == null) return dt.ToLocalTime();
+
+                if (dt.Kind == DateTimeKind.Utc) return TimeZoneInfo.ConvertTimeFromUtc(dt, eastern);
+                if (dt.Kind == DateTimeKind.Local) return TimeZoneInfo.ConvertTime(dt, TimeZoneInfo.Local, eastern);
+
+                TimeZoneInfo sourceTimeZone = GetBarTimeZone();
+                return TimeZoneInfo.ConvertTime(dt, sourceTimeZone, eastern);
             }
             catch { return dt; }
         }
@@ -3418,14 +3462,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         private bool IsUsaDst(DateTime dataBrasilia)
         {
-            int ano = dataBrasilia.Year;
-            if (ano == 2025)
-            {
-                DateTime inicioDst = new DateTime(2025, 3, 9);
-                DateTime fimDst = new DateTime(2025, 11, 2);
-                return dataBrasilia.Date >= inicioDst.Date && dataBrasilia.Date < fimDst.Date;
-            }
-            return false;
+            TimeZoneInfo eastern = GetUsEasternTimeZone();
+            if (eastern == null) return false;
+
+            DateTime nyTime = ConvertToUsEastern(dataBrasilia);
+            return eastern.IsDaylightSavingTime(nyTime);
         }
     }
 }
