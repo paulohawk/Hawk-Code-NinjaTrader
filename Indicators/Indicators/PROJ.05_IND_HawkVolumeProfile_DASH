@@ -26,7 +26,7 @@ using NinjaTrader.NinjaScript.DrawingTools;
 #endregion
 
 
-//CamsVpR4 version 1.0 written by Camdo 6/19/2017
+//HawkVolumeProfile version 1.0 written by Camdo 6/19/2017
 //Volume Profile indicator
 //Tick Replay not necessary but for accuracy
 //if Tick Replay not enabled then:
@@ -43,7 +43,7 @@ using NinjaTrader.NinjaScript.DrawingTools;
 //This namespace holds Indicators in this folder and is required. Do not change it. 
 namespace NinjaTrader.NinjaScript.Indicators.Cam
 {
-	public class CamsVpR4 : Indicator
+	public class HawkVolumeProfile : Indicator
 	{
 		#region Properties
 		internal class VolItem
@@ -141,14 +141,14 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 			if (State == State.SetDefaults)
 			{
 				Description					= @"Volume Profile: Plots a horizontal histogram of volume by price.";
-				Name						= "CamsVpR4";
+				Name						= "HawkVolumeProfile";
 				Calculate					= Calculate.OnEachTick;
 				BarsRequiredToPlot			= 0;
 				IsChartOnly					= true;
 				IsOverlay					= true;
 				DrawOnPricePanel			= false;
 
-				ScaleType					= CamsVpR4ScaleType.MaxOfLadder;
+				ScaleType					= HawkVolumeProfileScaleType.MaxOfLadder;
 				WindowPercent				= 25;
 				FixedScalingNumber			= .01;
 				MinSize						= 30;
@@ -158,13 +158,13 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 				OpacityText					= 100;
 				ZOrder						= int.MaxValue;
 
-				Orientation					= CamsVpR4OrientationType.Left;
+				Orientation					= HawkVolumeProfileOrientationType.Left;
 				Margin						= 0;
 
 				ShowVolumeProfile			= true;
 				ShowBidAskProfile			= false;
 				ShowDeltaProfile			= false;
-				ShowScale					= CamsVpR4ShowScaleType.None;
+				ShowScale					= HawkVolumeProfileShowScaleType.None;
 				ShowPoc						= false;
 				ShowValueArea				= false;
 				ValueAreaPercent			= 70;
@@ -175,11 +175,11 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 				EnableCamsVpRegions			= true;
 				ShowPerformance				= false;
 				
-				Granularity					= CamsVpR4GranularityType.Tick;
+				Granularity					= HawkVolumeProfileGranularityType.Tick;
 				GranularityPeriod			= 100;
 
-				RegionFrom					= CamsVpR4RegionFromType.Window;
-				RegionTo					= CamsVpR4RegionToType.Current;
+				RegionFrom					= HawkVolumeProfileRegionFromType.Window;
+				RegionTo					= HawkVolumeProfileRegionToType.Current;
 				DateFrom					= DateTime.Parse("05/05/2017 4:10:00 PM");	//"3/8/2017 9:30:00 AM"
 				DateTo						= DateTime.Parse("05/05/2017 4:15:00 PM");	//"3/10/2017 4:00:00 PM"
 
@@ -205,38 +205,38 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 				ClearOutputWindow();
 
 				
-				if(RegionFrom == CamsVpR4RegionFromType.Bar || RegionTo == CamsVpR4RegionToType.Bar)
+				if(RegionFrom == HawkVolumeProfileRegionFromType.Bar || RegionTo == HawkVolumeProfileRegionToType.Bar)
 				{
-					RegionFrom = CamsVpR4RegionFromType.Bar;
-					RegionTo = CamsVpR4RegionToType.Bar;
+					RegionFrom = HawkVolumeProfileRegionFromType.Bar;
+					RegionTo = HawkVolumeProfileRegionToType.Bar;
 					ShowRegionBoundaries		= false;
 				}
-				if(RegionFrom == CamsVpR4RegionFromType.Daily || RegionTo == CamsVpR4RegionToType.Daily)
+				if(RegionFrom == HawkVolumeProfileRegionFromType.Daily || RegionTo == HawkVolumeProfileRegionToType.Daily)
 				{
-					RegionFrom = CamsVpR4RegionFromType.Daily;
-					RegionTo = CamsVpR4RegionToType.Daily;
+					RegionFrom = HawkVolumeProfileRegionFromType.Daily;
+					RegionTo = HawkVolumeProfileRegionToType.Daily;
 					ShowRegionBoundaries		= false;
 				}
-				if(RegionFrom == CamsVpR4RegionFromType.None || RegionTo == CamsVpR4RegionToType.None)
+				if(RegionFrom == HawkVolumeProfileRegionFromType.None || RegionTo == HawkVolumeProfileRegionToType.None)
 				{
-					RegionFrom = CamsVpR4RegionFromType.None;
-					RegionTo = CamsVpR4RegionToType.None;
+					RegionFrom = HawkVolumeProfileRegionFromType.None;
+					RegionTo = HawkVolumeProfileRegionToType.None;
 					ShowRegionBoundaries = false;
 					
 				}
 				
 				switch (Granularity)
 				{
-					case CamsVpR4GranularityType.Minute:
+					case HawkVolumeProfileGranularityType.Minute:
 						AddDataSeries(BarsPeriodType.Minute, GranularityPeriod);
 						break;
-					case CamsVpR4GranularityType.Tick:
+					case HawkVolumeProfileGranularityType.Tick:
 						AddDataSeries(BarsPeriodType.Tick, GranularityPeriod);
 						break;
-					case CamsVpR4GranularityType.Day:
+					case HawkVolumeProfileGranularityType.Day:
 						AddDataSeries(BarsPeriodType.Day, GranularityPeriod);
 						break;
-					case CamsVpR4GranularityType.Volume:
+					case HawkVolumeProfileGranularityType.Volume:
 						AddDataSeries(BarsPeriodType.Volume, GranularityPeriod);
 						break;
 					default:
@@ -313,7 +313,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 						listPtr.Add(CurrentBars[1]);		//list index = CurrentBars[0], value = CurrentBars[1]
 						
 
-						if(RegionFrom == CamsVpR4RegionFromType.Daily)
+						if(RegionFrom == HawkVolumeProfileRegionFromType.Daily)
 						{
 							if(Bars.IsFirstBarOfSession)
 							{
@@ -345,7 +345,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 				{
 					listPtr.Add(CurrentBars[1]);		//list index = CurrentBars[0], value = CurrentBars[1]
 
-					if(RegionFrom == CamsVpR4RegionFromType.Daily)
+					if(RegionFrom == HawkVolumeProfileRegionFromType.Daily)
 					{
 						if(Bars.IsFirstBarOfSession)
 						{
@@ -461,21 +461,21 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 				barWidthFacList.Clear();
 				xposList.Clear();
 
-				if(RegionFrom == CamsVpR4RegionFromType.All)
+				if(RegionFrom == HawkVolumeProfileRegionFromType.All)
 				{
 					regionStartBar0 = 0;
 					regionStartBar1 = regionStartBar0 > 0 ? listPtr[regionStartBar0 - 1] + 2 : 1;		//fine data composes larger bars
 					boundaryFromX = chartControl.GetXByBarIndex(ChartBars, regionStartBar0);	
 					regionIdxStart.Add(regionStartBar1);
 				}
-				else if(RegionFrom == CamsVpR4RegionFromType.Window)
+				else if(RegionFrom == HawkVolumeProfileRegionFromType.Window)
 				{
 					regionStartBar0 = ChartBars.FromIndex;									//first bar on chart has index = 0 and recorded in listPtr[1] with last granular bar idx
 					regionStartBar1 = regionStartBar0 > 0 ? listPtr[regionStartBar0 - 1] + 2 : 1;		//fine data composes larger bars
 					boundaryFromX = chartControl.GetXByBarIndex(ChartBars, regionStartBar0);	
 					regionIdxStart.Add(regionStartBar1);
 				}
-				else if(RegionFrom == CamsVpR4RegionFromType.Date)
+				else if(RegionFrom == HawkVolumeProfileRegionFromType.Date)
 				{
 					dateF = dateRange(chartControl, DateFrom);
 					regionStartBar0 = ChartBars.GetBarIdxByTime(chartControl, dateF);
@@ -483,18 +483,18 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 					boundaryFromX = chartControl.GetXByBarIndex(ChartBars, regionStartBar0);	
 					regionIdxStart.Add(regionStartBar1);
 				}
-				else if(RegionFrom == CamsVpR4RegionFromType.Bar)
+				else if(RegionFrom == HawkVolumeProfileRegionFromType.Bar)
 				{
 				}
-				else if(RegionFrom == CamsVpR4RegionFromType.Daily)
+				else if(RegionFrom == HawkVolumeProfileRegionFromType.Daily)
 				{
 				}
-				else if(RegionFrom == CamsVpR4RegionFromType.None)
+				else if(RegionFrom == HawkVolumeProfileRegionFromType.None)
 				{
 				}
 
 				
-				if(RegionTo == CamsVpR4RegionToType.Current)
+				if(RegionTo == HawkVolumeProfileRegionToType.Current)
 				{
 					regionEndBar0 = BarsArray[0].Count - 1;
 					regionEndBar1 = listVolItem.Count - 2;		//extra volItems added in configure	
@@ -503,7 +503,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 					windowBarWidthFacList(chartPanel);
 					windowXpos(chartControl);
 				}
-				else if(RegionTo == CamsVpR4RegionToType.Window)
+				else if(RegionTo == HawkVolumeProfileRegionToType.Window)
 				{
 					regionEndBar0 = ChartBars.ToIndex;
 					loadRegionEndBar1();
@@ -512,7 +512,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 					windowBarWidthFacList(chartPanel);
 					windowXpos(chartControl);
 				}
-				else if(RegionTo == CamsVpR4RegionToType.Date)
+				else if(RegionTo == HawkVolumeProfileRegionToType.Date)
 				{
 					dateT = dateRange(chartControl, DateTo);
 					regionEndBar0 = ChartBars.GetBarIdxByTime(chartControl, dateT);
@@ -522,7 +522,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 					windowBarWidthFacList(chartPanel);
 					windowXpos(chartControl);
 				}
-				else if(RegionTo == CamsVpR4RegionToType.Bar)
+				else if(RegionTo == HawkVolumeProfileRegionToType.Bar)
 				{
 					firstWindowBar = ChartBars.FromIndex;
 					lastWindowBar = ChartBars.ToIndex;
@@ -553,7 +553,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 					}
 					
 				}
-				else if(RegionTo == CamsVpR4RegionToType.Daily)
+				else if(RegionTo == HawkVolumeProfileRegionToType.Daily)
 				{
 					firstWindowBar = ChartBars.FromIndex;
 					lastWindowBar = ChartBars.ToIndex;
@@ -602,7 +602,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 
 				}
 				
-				else if(RegionTo == CamsVpR4RegionToType.None)
+				else if(RegionTo == HawkVolumeProfileRegionToType.None)
 				{
 				}
 			}
@@ -679,7 +679,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 		//load barWidthFacList with setup numbers for later processing
 		void windowBarWidthFacList(ChartPanel chartPanel)
 		{
-			if(ScaleType == CamsVpR4ScaleType.MaxOfLadder)
+			if(ScaleType == HawkVolumeProfileScaleType.MaxOfLadder)
 			{
 				barWidthFacList.Add(windowFac * chartPanel.W);		//order matters in mixed (integer & double) math.  Decimals less than zero will be zero
 			}
@@ -691,7 +691,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 
 		void DrawingToolBarWidthFacList()
 		{
-			if(ScaleType == CamsVpR4ScaleType.MaxOfLadder)
+			if(ScaleType == HawkVolumeProfileScaleType.MaxOfLadder)
 			{
 				barWidthFacList.Add(Math.Max((regionEndX - regionStartX), MinSize));
 
@@ -704,7 +704,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 
 		void barBarWidthFacList()
 		{
-			if(ScaleType == CamsVpR4ScaleType.MaxOfLadder)
+			if(ScaleType == HawkVolumeProfileScaleType.MaxOfLadder)
 			{
 				barWidthFacList.Add(regionWidth);
 
@@ -717,7 +717,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 
 		void windowXpos(ChartControl chartControl)
 		{
-			if(Orientation == CamsVpR4OrientationType.Left)
+			if(Orientation == HawkVolumeProfileOrientationType.Left)
 			{
 				xposList.Add(chartControl.CanvasLeft + Margin);
 			}
@@ -729,7 +729,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 		
 		void DrawingToolXpos()
 		{
-			if(Orientation == CamsVpR4OrientationType.Left)
+			if(Orientation == HawkVolumeProfileOrientationType.Left)
 			{
 				xposList.Add((int) regionStartX);
 			}
@@ -741,7 +741,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 		
 		void barXpos()
 		{
-			if(Orientation == CamsVpR4OrientationType.Left)
+			if(Orientation == HawkVolumeProfileOrientationType.Left)
 			{
 				xposList.Add((int)regionStartX);
 			}
@@ -914,7 +914,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 						}
 						
 						double barWidthFac;
-						if(ScaleType == CamsVpR4ScaleType.MaxOfLadder)
+						if(ScaleType == HawkVolumeProfileScaleType.MaxOfLadder)
 						{
 							barWidthFac 	= barWidthFacList[i] / volMax;					//order matters in mixed (integer & double) math.  Decimals less than zero will be zero
 						}
@@ -923,7 +923,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 							barWidthFac		= barWidthFacList[i];
 						}
 
-						if(Orientation == CamsVpR4OrientationType.Left)
+						if(Orientation == HawkVolumeProfileOrientationType.Left)
 						{
 							xpos = xposList[i];
 						}
@@ -959,7 +959,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 								askWidth =  (float)Math.Ceiling(element.Value.up * barWidthFac);
 								totalWidth =  (float)Math.Ceiling((element.Value.total - element.Value.down - element.Value.up) * barWidthFac);
 
-								if(Orientation == CamsVpR4OrientationType.Left)
+								if(Orientation == HawkVolumeProfileOrientationType.Left)
 								{
 									bidRect = new SharpDX.RectangleF(xpos + 2, yUpper, bidWidth, barHeight);
 									askRect = new SharpDX.RectangleF(xpos + 2 + bidWidth, yUpper, askWidth, barHeight);
@@ -1050,8 +1050,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 							RenderTarget.FillRectangle(new SharpDX.RectangleF(xpos, yUpper, barWidth, bHeight), valueAreaBrushDX);
 						}
 
-						if(ShowScale != CamsVpR4ShowScaleType.None
-							&& ShowScale != CamsVpR4ShowScaleType.BidAsk)
+						if(ShowScale != HawkVolumeProfileShowScaleType.None
+							&& ShowScale != HawkVolumeProfileShowScaleType.BidAsk)
 						{
 							string rowVolumeStr = "";
 
@@ -1061,12 +1061,12 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 								{
 									yUpper = chartScale.GetYByValue(element.Key + yUpperAdder);				//pixels
 									
-									if(ShowScale == CamsVpR4ShowScaleType.Volume)
+									if(ShowScale == HawkVolumeProfileShowScaleType.Volume)
 									{
 										rowVolumeStr = RowVolumeString(element.Value.total);				//format number
 										color = 0;
 									}
-									else if(ShowScale == CamsVpR4ShowScaleType.Delta)
+									else if(ShowScale == HawkVolumeProfileShowScaleType.Delta)
 									{
 						                long delta = element.Value.up - element.Value.down;
 										rowVolumeStr = RowVolumeString(delta);
@@ -1082,7 +1082,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 									
 									GetXpos();
 									int y = chartScale.GetYByValue(element.Key + textYUpperAddr);
-									if(Orientation == CamsVpR4OrientationType.Left)
+									if(Orientation == HawkVolumeProfileOrientationType.Left)
 									{
 										SharpDX.DirectWrite.TextFormat textFormat = new SharpDX.DirectWrite.TextFormat(NinjaTrader.Core.Globals.DirectWriteFactory, "Arial", textHeight){TextAlignment = SharpDX.DirectWrite.TextAlignment.Leading, ParagraphAlignment = SharpDX.DirectWrite.ParagraphAlignment.Center};
 										rectText = new SharpDX.RectangleF(xpos + 2, y, 1500, textHeight);
@@ -1114,7 +1114,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 				            }
 						}
 						
-						if(ShowScale == CamsVpR4ShowScaleType.BidAsk)
+						if(ShowScale == HawkVolumeProfileShowScaleType.BidAsk)
 						{
 							string askVolumeStr = "";
 							string bidVolumeStr = "";
@@ -1153,7 +1153,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 									
 									int y = chartScale.GetYByValue(element.Key + textYUpperAddr);
 									
-									if(Orientation == CamsVpR4OrientationType.Left)
+									if(Orientation == HawkVolumeProfileOrientationType.Left)
 									{
 										bidRect = new SharpDX.RectangleF(xpos + 2, y, textBidWidth, textHeight);
 										midRect = new SharpDX.RectangleF(xpos + 2 + textBidWidth, y, midWidth, textHeight);
@@ -1249,7 +1249,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 
 		void GetXpos()
 		{
-			if(Orientation == CamsVpR4OrientationType.Right)
+			if(Orientation == HawkVolumeProfileOrientationType.Right)
 			{
 				xpos = x - barWidth;
 			}
@@ -1402,7 +1402,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 		#region Properties
 		[NinjaScriptProperty]
 		[Display(ResourceType = typeof(Custom.Resource), Name="Scaling Scheme", Description="", Order = 0, GroupName = "NinjaScriptParameters")]
-		public CamsVpR4ScaleType ScaleType
+		public HawkVolumeProfileScaleType ScaleType
 		{ get; set; }
 
 		[Range(1, 100)]
@@ -1447,7 +1447,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 
 		[NinjaScriptProperty]
 		[Display(ResourceType = typeof(Custom.Resource), Name = "Orientation", Description="",  Order = 9, GroupName = "NinjaScriptParameters")]
-		public CamsVpR4OrientationType Orientation
+		public HawkVolumeProfileOrientationType Orientation
 		{get; set;}
 
 		[Range(0, int.MaxValue)]
@@ -1469,7 +1469,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 
 		[NinjaScriptProperty]
 		[Display(ResourceType = typeof(Custom.Resource), Name = "Show Scale", Description="",  Order = 14, GroupName = "NinjaScriptParameters")]
-		public CamsVpR4ShowScaleType ShowScale
+		public HawkVolumeProfileShowScaleType ShowScale
 		{get; set;}
 		
 		[Display(ResourceType = typeof(Custom.Resource), Name = "Show POC", Description=" ",  Order = 15, GroupName = "NinjaScriptParameters")]
@@ -1513,7 +1513,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 		
 		[NinjaScriptProperty]
 		[Display(ResourceType = typeof(Custom.Resource), Name = "Granularity", Description="",  Order = 24, GroupName = "NinjaScriptParameters")]
-		public CamsVpR4GranularityType Granularity
+		public HawkVolumeProfileGranularityType Granularity
 		{get; set;}
 
 		[Range(0, int.MaxValue)]
@@ -1523,12 +1523,12 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 
 		[NinjaScriptProperty]
 		[Display(ResourceType = typeof(Custom.Resource), Name = "Region From", Description="Profile data begins",  Order = 26, GroupName = "NinjaScriptParameters")]
-		public CamsVpR4RegionFromType RegionFrom
+		public HawkVolumeProfileRegionFromType RegionFrom
 		{get; set;}
 
 		[NinjaScriptProperty]
 		[Display(ResourceType = typeof(Custom.Resource), Name = "Region To", Description="Profile data ends",  Order = 27, GroupName = "NinjaScriptParameters")]
-		public CamsVpR4RegionToType RegionTo
+		public HawkVolumeProfileRegionToType RegionTo
 		{get; set;}
 
 		[NinjaScriptProperty]
@@ -1667,12 +1667,12 @@ namespace NinjaTrader.NinjaScript.Indicators.Cam
 		#endregion
 	}
 }
-public enum CamsVpR4GranularityType {Minute, Tick, Day, Volume}
-public enum CamsVpR4OrientationType {Left, Right}
-public enum CamsVpR4ScaleType{MaxOfLadder, Fixed}
-public enum CamsVpR4RegionFromType{All, Window, Date, Bar, Daily, None}
-public enum CamsVpR4RegionToType{Current, Window, Date, Bar, Daily, None}
-public enum CamsVpR4ShowScaleType{Volume, BidAsk, Delta, None}
+public enum HawkVolumeProfileGranularityType {Minute, Tick, Day, Volume}
+public enum HawkVolumeProfileOrientationType {Left, Right}
+public enum HawkVolumeProfileScaleType{MaxOfLadder, Fixed}
+public enum HawkVolumeProfileRegionFromType{All, Window, Date, Bar, Daily, None}
+public enum HawkVolumeProfileRegionToType{Current, Window, Date, Bar, Daily, None}
+public enum HawkVolumeProfileShowScaleType{Volume, BidAsk, Delta, None}
 
 #region NinjaScript generated code. Neither change nor remove.
 
@@ -1680,19 +1680,19 @@ namespace NinjaTrader.NinjaScript.Indicators
 {
 	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
 	{
-		private Cam.CamsVpR4[] cacheCamsVpR4;
-		public Cam.CamsVpR4 CamsVpR4(CamsVpR4ScaleType scaleType, double fixedScalingNumber, int minSize, double deltaScale, int zOrder, CamsVpR4OrientationType orientation, CamsVpR4ShowScaleType showScale, CamsVpR4GranularityType granularity, CamsVpR4RegionFromType regionFrom, CamsVpR4RegionToType regionTo, DateTime dateFrom, DateTime dateTo)
+		private Cam.HawkVolumeProfile[] cacheHawkVolumeProfile;
+		public Cam.HawkVolumeProfile HawkVolumeProfile(HawkVolumeProfileScaleType scaleType, double fixedScalingNumber, int minSize, double deltaScale, int zOrder, HawkVolumeProfileOrientationType orientation, HawkVolumeProfileShowScaleType showScale, HawkVolumeProfileGranularityType granularity, HawkVolumeProfileRegionFromType regionFrom, HawkVolumeProfileRegionToType regionTo, DateTime dateFrom, DateTime dateTo)
 		{
-			return CamsVpR4(Input, scaleType, fixedScalingNumber, minSize, deltaScale, zOrder, orientation, showScale, granularity, regionFrom, regionTo, dateFrom, dateTo);
+			return HawkVolumeProfile(Input, scaleType, fixedScalingNumber, minSize, deltaScale, zOrder, orientation, showScale, granularity, regionFrom, regionTo, dateFrom, dateTo);
 		}
 
-		public Cam.CamsVpR4 CamsVpR4(ISeries<double> input, CamsVpR4ScaleType scaleType, double fixedScalingNumber, int minSize, double deltaScale, int zOrder, CamsVpR4OrientationType orientation, CamsVpR4ShowScaleType showScale, CamsVpR4GranularityType granularity, CamsVpR4RegionFromType regionFrom, CamsVpR4RegionToType regionTo, DateTime dateFrom, DateTime dateTo)
+		public Cam.HawkVolumeProfile HawkVolumeProfile(ISeries<double> input, HawkVolumeProfileScaleType scaleType, double fixedScalingNumber, int minSize, double deltaScale, int zOrder, HawkVolumeProfileOrientationType orientation, HawkVolumeProfileShowScaleType showScale, HawkVolumeProfileGranularityType granularity, HawkVolumeProfileRegionFromType regionFrom, HawkVolumeProfileRegionToType regionTo, DateTime dateFrom, DateTime dateTo)
 		{
-			if (cacheCamsVpR4 != null)
-				for (int idx = 0; idx < cacheCamsVpR4.Length; idx++)
-					if (cacheCamsVpR4[idx] != null && cacheCamsVpR4[idx].ScaleType == scaleType && cacheCamsVpR4[idx].FixedScalingNumber == fixedScalingNumber && cacheCamsVpR4[idx].MinSize == minSize && cacheCamsVpR4[idx].DeltaScale == deltaScale && cacheCamsVpR4[idx].ZOrder == zOrder && cacheCamsVpR4[idx].Orientation == orientation && cacheCamsVpR4[idx].ShowScale == showScale && cacheCamsVpR4[idx].Granularity == granularity && cacheCamsVpR4[idx].RegionFrom == regionFrom && cacheCamsVpR4[idx].RegionTo == regionTo && cacheCamsVpR4[idx].DateFrom == dateFrom && cacheCamsVpR4[idx].DateTo == dateTo && cacheCamsVpR4[idx].EqualsInput(input))
-						return cacheCamsVpR4[idx];
-			return CacheIndicator<Cam.CamsVpR4>(new Cam.CamsVpR4(){ ScaleType = scaleType, FixedScalingNumber = fixedScalingNumber, MinSize = minSize, DeltaScale = deltaScale, ZOrder = zOrder, Orientation = orientation, ShowScale = showScale, Granularity = granularity, RegionFrom = regionFrom, RegionTo = regionTo, DateFrom = dateFrom, DateTo = dateTo }, input, ref cacheCamsVpR4);
+			if (cacheHawkVolumeProfile != null)
+				for (int idx = 0; idx < cacheHawkVolumeProfile.Length; idx++)
+					if (cacheHawkVolumeProfile[idx] != null && cacheHawkVolumeProfile[idx].ScaleType == scaleType && cacheHawkVolumeProfile[idx].FixedScalingNumber == fixedScalingNumber && cacheHawkVolumeProfile[idx].MinSize == minSize && cacheHawkVolumeProfile[idx].DeltaScale == deltaScale && cacheHawkVolumeProfile[idx].ZOrder == zOrder && cacheHawkVolumeProfile[idx].Orientation == orientation && cacheHawkVolumeProfile[idx].ShowScale == showScale && cacheHawkVolumeProfile[idx].Granularity == granularity && cacheHawkVolumeProfile[idx].RegionFrom == regionFrom && cacheHawkVolumeProfile[idx].RegionTo == regionTo && cacheHawkVolumeProfile[idx].DateFrom == dateFrom && cacheHawkVolumeProfile[idx].DateTo == dateTo && cacheHawkVolumeProfile[idx].EqualsInput(input))
+						return cacheHawkVolumeProfile[idx];
+			return CacheIndicator<Cam.HawkVolumeProfile>(new Cam.HawkVolumeProfile(){ ScaleType = scaleType, FixedScalingNumber = fixedScalingNumber, MinSize = minSize, DeltaScale = deltaScale, ZOrder = zOrder, Orientation = orientation, ShowScale = showScale, Granularity = granularity, RegionFrom = regionFrom, RegionTo = regionTo, DateFrom = dateFrom, DateTo = dateTo }, input, ref cacheHawkVolumeProfile);
 		}
 	}
 }
@@ -1701,14 +1701,14 @@ namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
 {
 	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
 	{
-		public Indicators.Cam.CamsVpR4 CamsVpR4(CamsVpR4ScaleType scaleType, double fixedScalingNumber, int minSize, double deltaScale, int zOrder, CamsVpR4OrientationType orientation, CamsVpR4ShowScaleType showScale, CamsVpR4GranularityType granularity, CamsVpR4RegionFromType regionFrom, CamsVpR4RegionToType regionTo, DateTime dateFrom, DateTime dateTo)
+		public Indicators.Cam.HawkVolumeProfile HawkVolumeProfile(HawkVolumeProfileScaleType scaleType, double fixedScalingNumber, int minSize, double deltaScale, int zOrder, HawkVolumeProfileOrientationType orientation, HawkVolumeProfileShowScaleType showScale, HawkVolumeProfileGranularityType granularity, HawkVolumeProfileRegionFromType regionFrom, HawkVolumeProfileRegionToType regionTo, DateTime dateFrom, DateTime dateTo)
 		{
-			return indicator.CamsVpR4(Input, scaleType, fixedScalingNumber, minSize, deltaScale, zOrder, orientation, showScale, granularity, regionFrom, regionTo, dateFrom, dateTo);
+			return indicator.HawkVolumeProfile(Input, scaleType, fixedScalingNumber, minSize, deltaScale, zOrder, orientation, showScale, granularity, regionFrom, regionTo, dateFrom, dateTo);
 		}
 
-		public Indicators.Cam.CamsVpR4 CamsVpR4(ISeries<double> input , CamsVpR4ScaleType scaleType, double fixedScalingNumber, int minSize, double deltaScale, int zOrder, CamsVpR4OrientationType orientation, CamsVpR4ShowScaleType showScale, CamsVpR4GranularityType granularity, CamsVpR4RegionFromType regionFrom, CamsVpR4RegionToType regionTo, DateTime dateFrom, DateTime dateTo)
+		public Indicators.Cam.HawkVolumeProfile HawkVolumeProfile(ISeries<double> input , HawkVolumeProfileScaleType scaleType, double fixedScalingNumber, int minSize, double deltaScale, int zOrder, HawkVolumeProfileOrientationType orientation, HawkVolumeProfileShowScaleType showScale, HawkVolumeProfileGranularityType granularity, HawkVolumeProfileRegionFromType regionFrom, HawkVolumeProfileRegionToType regionTo, DateTime dateFrom, DateTime dateTo)
 		{
-			return indicator.CamsVpR4(input, scaleType, fixedScalingNumber, minSize, deltaScale, zOrder, orientation, showScale, granularity, regionFrom, regionTo, dateFrom, dateTo);
+			return indicator.HawkVolumeProfile(input, scaleType, fixedScalingNumber, minSize, deltaScale, zOrder, orientation, showScale, granularity, regionFrom, regionTo, dateFrom, dateTo);
 		}
 	}
 }
@@ -1717,14 +1717,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
 	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
 	{
-		public Indicators.Cam.CamsVpR4 CamsVpR4(CamsVpR4ScaleType scaleType, double fixedScalingNumber, int minSize, double deltaScale, int zOrder, CamsVpR4OrientationType orientation, CamsVpR4ShowScaleType showScale, CamsVpR4GranularityType granularity, CamsVpR4RegionFromType regionFrom, CamsVpR4RegionToType regionTo, DateTime dateFrom, DateTime dateTo)
+		public Indicators.Cam.HawkVolumeProfile HawkVolumeProfile(HawkVolumeProfileScaleType scaleType, double fixedScalingNumber, int minSize, double deltaScale, int zOrder, HawkVolumeProfileOrientationType orientation, HawkVolumeProfileShowScaleType showScale, HawkVolumeProfileGranularityType granularity, HawkVolumeProfileRegionFromType regionFrom, HawkVolumeProfileRegionToType regionTo, DateTime dateFrom, DateTime dateTo)
 		{
-			return indicator.CamsVpR4(Input, scaleType, fixedScalingNumber, minSize, deltaScale, zOrder, orientation, showScale, granularity, regionFrom, regionTo, dateFrom, dateTo);
+			return indicator.HawkVolumeProfile(Input, scaleType, fixedScalingNumber, minSize, deltaScale, zOrder, orientation, showScale, granularity, regionFrom, regionTo, dateFrom, dateTo);
 		}
 
-		public Indicators.Cam.CamsVpR4 CamsVpR4(ISeries<double> input , CamsVpR4ScaleType scaleType, double fixedScalingNumber, int minSize, double deltaScale, int zOrder, CamsVpR4OrientationType orientation, CamsVpR4ShowScaleType showScale, CamsVpR4GranularityType granularity, CamsVpR4RegionFromType regionFrom, CamsVpR4RegionToType regionTo, DateTime dateFrom, DateTime dateTo)
+		public Indicators.Cam.HawkVolumeProfile HawkVolumeProfile(ISeries<double> input , HawkVolumeProfileScaleType scaleType, double fixedScalingNumber, int minSize, double deltaScale, int zOrder, HawkVolumeProfileOrientationType orientation, HawkVolumeProfileShowScaleType showScale, HawkVolumeProfileGranularityType granularity, HawkVolumeProfileRegionFromType regionFrom, HawkVolumeProfileRegionToType regionTo, DateTime dateFrom, DateTime dateTo)
 		{
-			return indicator.CamsVpR4(input, scaleType, fixedScalingNumber, minSize, deltaScale, zOrder, orientation, showScale, granularity, regionFrom, regionTo, dateFrom, dateTo);
+			return indicator.HawkVolumeProfile(input, scaleType, fixedScalingNumber, minSize, deltaScale, zOrder, orientation, showScale, granularity, regionFrom, regionTo, dateFrom, dateTo);
 		}
 	}
 }
