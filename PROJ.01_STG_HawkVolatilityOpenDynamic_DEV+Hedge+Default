@@ -1865,6 +1865,9 @@ namespace NinjaTrader.NinjaScript.Strategies
         private string exitReasonHint = null;
         private DateTime exitReasonHintTradingDay = DateTime.MinValue;
         private bool hedgeModelApplied = false;
+        // Hedge Model é um preset travado: após State.Configure, parâmetros do Hedge
+        // (ATR, SuperTrend, Hedge, BE, AutoClose) não podem ser alterados fora do ApplyHedgeModel().
+        private bool hedgeModelFrozen = false;
 
         protected override void OnStateChange()
         {
@@ -1927,10 +1930,10 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
             else if (State == State.Configure)
             {
-                if (HedgeMode && !hedgeModelApplied)
-                {
+                if (HedgeMode)
                     ApplyHedgeModel();
-                }
+
+                hedgeModelFrozen = true;
 
                 if (ATRTimeFrame > 0)
                 {
@@ -1984,9 +1987,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         private void ApplyHedgeModel()
         {
-            if (hedgeModelApplied)
+            // Guard centralizado: Hedge Model só aplica uma vez e apenas em State.Configure.
+            if (hedgeModelApplied || hedgeModelFrozen || State != State.Configure)
                 return;
 
+            // Parâmetros do Hedge Model (sem depender de defaults/DEV).
             UseStopATR = true;
             ATRPeriod = 14;
             ATRFactor = 2.5;
