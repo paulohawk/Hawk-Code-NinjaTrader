@@ -1682,19 +1682,19 @@ namespace NinjaTrader.NinjaScript.Indicators
 {
 	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
 	{
-		private Hawk.Volume.HawkVolumeProfile[] cacheHawkVolumeProfile;
-		public Hawk.Volume.HawkVolumeProfile HawkVolumeProfile(HawkVolumeProfileScaleType scaleType, double fixedScalingNumber, int minSize, double deltaScale, int zOrder, HawkVolumeProfileOrientationType orientation, HawkVolumeProfileShowScaleType showScale, HawkVolumeProfileGranularityType granularity, HawkVolumeProfileRegionFromType regionFrom, HawkVolumeProfileRegionToType regionTo, DateTime dateFrom, DateTime dateTo)
+		private Indicators.Hawk.Volume.HawkVolumeProfile[] cacheHawkVolumeProfile;
+		public Indicators.Hawk.Volume.HawkVolumeProfile HawkVolumeProfile(HawkVolumeProfileScaleType scaleType, double fixedScalingNumber, int minSize, double deltaScale, int zOrder, HawkVolumeProfileOrientationType orientation, HawkVolumeProfileShowScaleType showScale, HawkVolumeProfileGranularityType granularity, HawkVolumeProfileRegionFromType regionFrom, HawkVolumeProfileRegionToType regionTo, DateTime dateFrom, DateTime dateTo)
 		{
 			return HawkVolumeProfile(Input, scaleType, fixedScalingNumber, minSize, deltaScale, zOrder, orientation, showScale, granularity, regionFrom, regionTo, dateFrom, dateTo);
 		}
 
-		public Hawk.Volume.HawkVolumeProfile HawkVolumeProfile(ISeries<double> input, HawkVolumeProfileScaleType scaleType, double fixedScalingNumber, int minSize, double deltaScale, int zOrder, HawkVolumeProfileOrientationType orientation, HawkVolumeProfileShowScaleType showScale, HawkVolumeProfileGranularityType granularity, HawkVolumeProfileRegionFromType regionFrom, HawkVolumeProfileRegionToType regionTo, DateTime dateFrom, DateTime dateTo)
+		public Indicators.Hawk.Volume.HawkVolumeProfile HawkVolumeProfile(ISeries<double> input, HawkVolumeProfileScaleType scaleType, double fixedScalingNumber, int minSize, double deltaScale, int zOrder, HawkVolumeProfileOrientationType orientation, HawkVolumeProfileShowScaleType showScale, HawkVolumeProfileGranularityType granularity, HawkVolumeProfileRegionFromType regionFrom, HawkVolumeProfileRegionToType regionTo, DateTime dateFrom, DateTime dateTo)
 		{
 			if (cacheHawkVolumeProfile != null)
 				for (int idx = 0; idx < cacheHawkVolumeProfile.Length; idx++)
 					if (cacheHawkVolumeProfile[idx] != null && cacheHawkVolumeProfile[idx].ScaleType == scaleType && cacheHawkVolumeProfile[idx].FixedScalingNumber == fixedScalingNumber && cacheHawkVolumeProfile[idx].MinSize == minSize && cacheHawkVolumeProfile[idx].DeltaScale == deltaScale && cacheHawkVolumeProfile[idx].ZOrder == zOrder && cacheHawkVolumeProfile[idx].Orientation == orientation && cacheHawkVolumeProfile[idx].ShowScale == showScale && cacheHawkVolumeProfile[idx].Granularity == granularity && cacheHawkVolumeProfile[idx].RegionFrom == regionFrom && cacheHawkVolumeProfile[idx].RegionTo == regionTo && cacheHawkVolumeProfile[idx].DateFrom == dateFrom && cacheHawkVolumeProfile[idx].DateTo == dateTo && cacheHawkVolumeProfile[idx].EqualsInput(input))
 						return cacheHawkVolumeProfile[idx];
-			return CacheIndicator<Hawk.Volume.HawkVolumeProfile>(new Hawk.Volume.HawkVolumeProfile(){ ScaleType = scaleType, FixedScalingNumber = fixedScalingNumber, MinSize = minSize, DeltaScale = deltaScale, ZOrder = zOrder, Orientation = orientation, ShowScale = showScale, Granularity = granularity, RegionFrom = regionFrom, RegionTo = regionTo, DateFrom = dateFrom, DateTo = dateTo }, input, ref cacheHawkVolumeProfile);
+			return CacheIndicator<Indicators.Hawk.Volume.HawkVolumeProfile>(new Indicators.Hawk.Volume.HawkVolumeProfile(){ ScaleType = scaleType, FixedScalingNumber = fixedScalingNumber, MinSize = minSize, DeltaScale = deltaScale, ZOrder = zOrder, Orientation = orientation, ShowScale = showScale, Granularity = granularity, RegionFrom = regionFrom, RegionTo = regionTo, DateFrom = dateFrom, DateTo = dateTo }, input, ref cacheHawkVolumeProfile);
 		}
 	}
 }
