@@ -1677,43 +1677,43 @@ namespace NinjaTrader.NinjaScript.Strategies
         [Display(Name = "Default Mode", Order = 1, GroupName = "MODE")]
         public bool DefaultMode { get; set; }
 
-        public int Contracts { get; set; }
-        public double StopPerContract { get; set; }
-        public string EntryTimeNormalHHmmss { get; set; }
-        public string EntryTimeDstUsaHHmmss { get; set; }
-        public bool UseStopATR { get; set; }
-        public int ATRPeriod { get; set; }
-        public double ATRFactor { get; set; }
-        public int ATRTimeFrame { get; set; }
-        public double MaxRiskPerTrade { get; set; }
-        public double TargetFactor { get; set; }
-        public bool EnterInverted { get; set; }
-        public InvertModeType InvertMode { get; set; }
-        public int InvertStopOffsetTicks { get; set; }
-        public double BreakEvenAtRR { get; set; }
-        public double BreakEvenLockRR { get; set; }
+        private int Contracts { get; set; }
+        private double StopPerContract { get; set; }
+        private string EntryTimeNormalHHmmss { get; set; }
+        private string EntryTimeDstUsaHHmmss { get; set; }
+        private bool UseStopATR { get; set; }
+        private int ATRPeriod { get; set; }
+        private double ATRFactor { get; set; }
+        private int ATRTimeFrame { get; set; }
+        private double MaxRiskPerTrade { get; set; }
+        private double TargetFactor { get; set; }
+        private bool EnterInverted { get; set; }
+        private InvertModeType InvertMode { get; set; }
+        private int InvertStopOffsetTicks { get; set; }
+        private double BreakEvenAtRR { get; set; }
+        private double BreakEvenLockRR { get; set; }
 
-        public bool UseSuperTrend { get; set; }
-        public int STTimeFrame { get; set; }
-        public int STPeriod { get; set; }
-        public double STFactor { get; set; }
-        public MovingAverageType STMaType { get; set; }
-        public int STSmooth { get; set; }
-        public bool SuperTrendOnBarClose { get; set; }
+        private bool UseSuperTrend { get; set; }
+        private int STTimeFrame { get; set; }
+        private int STPeriod { get; set; }
+        private double STFactor { get; set; }
+        private MovingAverageType STMaType { get; set; }
+        private int STSmooth { get; set; }
+        private bool SuperTrendOnBarClose { get; set; }
 
         [NinjaScriptProperty, Category("RISK / SESSION"), DisplayName("AutoClose Enabled")]
         public bool AutoCloseEnabled { get; set; }
         [NinjaScriptProperty, Category("RISK / SESSION"), DisplayName("AutoClose Time")]
         public string AutoCloseTimeHHmmss { get; set; }
-        public string PanelStrategyKey { get; set; }
-        public string PanelTitle { get; set; }
+        private string PanelStrategyKey { get; set; }
+        private string PanelTitle { get; set; }
 
-        public string InstanceTag { get; set; }
+        private string InstanceTag { get; set; }
 
         [NinjaScriptProperty, Category("PANEL"), DisplayName("Enable Panel Diagnostics")]
         public bool EnablePanelDiagnostics { get; set; }
 
-        public int PanelPublishIntervalSeconds { get; set; } = 1;
+        private int PanelPublishIntervalSeconds { get; set; } = 1;
 
         [NinjaScriptProperty, Category("AUDIT / LOG"), DisplayName("Enable Trade Audit Log")]
         public bool EnableTradeAuditLog { get; set; } = true;
