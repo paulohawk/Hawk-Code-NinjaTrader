@@ -1669,6 +1669,10 @@ namespace NinjaTrader.NinjaScript.Strategies
             InvertedStopEntry
         }
 
+        [NinjaScriptProperty]
+        [Display(Name = "Hedge Mode", Order = 0, GroupName = "MODE")]
+        public bool HedgeMode { get; set; }
+
         [NinjaScriptProperty, Category("Parameters"), DisplayName("Contract Quantity (máx)")]
         public int Contracts { get; set; }
         [NinjaScriptProperty, Category("Parameters"), DisplayName("Stop fixo ($/contract)")]
@@ -1860,6 +1864,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         // Exit reason hint
         private string exitReasonHint = null;
         private DateTime exitReasonHintTradingDay = DateTime.MinValue;
+        private bool hedgeModelApplied = false;
 
         protected override void OnStateChange()
         {
@@ -1867,6 +1872,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 Name = "HawkVolatilityOpenDynamic";
                 Description = "Hedge NQ/MNQ auto-dinâmico (v41 base).";
+
+                HedgeMode = false;
 
                 Contracts = 2;
                 StopPerContract = 25;
@@ -1920,6 +1927,11 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
             else if (State == State.Configure)
             {
+                if (HedgeMode && !hedgeModelApplied)
+                {
+                    ApplyHedgeModel();
+                }
+
                 if (ATRTimeFrame > 0)
                 {
                     AddDataSeries(Data.BarsPeriodType.Minute, ATRTimeFrame);
@@ -1968,6 +1980,40 @@ namespace NinjaTrader.NinjaScript.Strategies
                 PublishPanelOffSnapshot("Terminated");
                 try { panelHelper?.Dispose(); panelHelper = null; } catch { }
             }
+        }
+
+        private void ApplyHedgeModel()
+        {
+            if (hedgeModelApplied)
+                return;
+
+            UseStopATR = true;
+            ATRPeriod = 14;
+            ATRFactor = 2.5;
+            ATRTimeFrame = 60;
+            MaxRiskPerTrade = 200.0;
+
+            TargetFactor = 3.0;
+
+            EnterInverted = true;
+            InvertMode = InvertModeType.InvertedStopEntry;
+            InvertStopOffsetTicks = 0;
+
+            BreakEvenAtRR = 2.5;
+            BreakEvenLockRR = 1.0;
+
+            UseSuperTrend = true;
+            STTimeFrame = 14;
+            STPeriod = 14;
+            STFactor = 2.618;
+            STMaType = MovingAverageType.TMA;
+            STSmooth = 14;
+            SuperTrendOnBarClose = false;
+
+            AutoCloseEnabled = true;
+            AutoCloseTimeHHmmss = "17:00:00";
+
+            hedgeModelApplied = true;
         }
 
         private string GetCacheKey()
