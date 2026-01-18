@@ -61,6 +61,7 @@ namespace NinjaTrader.NinjaScript
             public int? MaxLossStreak { get; set; }
             public string EndDayText { get; set; }
             public bool? MainEnabled { get; set; }
+            public bool? HedgeEnabled { get; set; }
 
             public string DayTradeStatus { get; set; }
             public int? DayQuantity { get; set; }
@@ -165,6 +166,9 @@ namespace NinjaTrader.NinjaScript
 
         private TextBlock _txtMaxGain;
         private TextBlock _txtMaxLoss;
+        private WpfEllipse _bulletHedge;
+        private TextBlock _hedgeStateText;
+        private bool _hedgeEnabled = false;
 
         private TextBlock _lblDayResum;
         private WpfEllipse _bulletDayResum;
@@ -392,6 +396,21 @@ namespace NinjaTrader.NinjaScript
             var streakStack = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Right };
             streakStack.Children.Add(_txtMaxGain);
             streakStack.Children.Add(_txtMaxLoss);
+
+            var hedgeRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 6, 0, 0) };
+            var hedgeBulletHost = new Grid { Width = 12, Height = 12, Margin = new Thickness(0, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center };
+            _bulletHedge = new WpfEllipse { Width = 10, Height = 10, Fill = InactiveBulletBrush, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            var hedgeBulletText = new TextBlock { Text = "H", FontSize = 7, Foreground = Brushes.Black, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            hedgeBulletHost.Children.Add(_bulletHedge);
+            hedgeBulletHost.Children.Add(hedgeBulletText);
+            var hedgeLabel = new TextBlock { Text = "Hedge", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center };
+            hedgeRow.Children.Add(hedgeBulletHost);
+            hedgeRow.Children.Add(hedgeLabel);
+
+            _hedgeStateText = new TextBlock { Text = "Off", Foreground = Brushes.Gray, FontSize = CompactFontSize, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, RowSpacing, 0, 0) };
+
+            streakStack.Children.Add(hedgeRow);
+            streakStack.Children.Add(_hedgeStateText);
             streakRow.Children.Add(streakStack); Grid.SetColumn(streakStack, 2);
 
             main.Children.Add(streakRow);
@@ -669,6 +688,9 @@ namespace NinjaTrader.NinjaScript
                 _txtExit.Text = "-";
                 _txtMaxGain.Text = "Max gain: -";
                 _txtMaxLoss.Text = "Max loss: -";
+                _hedgeEnabled = false;
+                if (_bulletHedge != null) _bulletHedge.Fill = InactiveBulletBrush;
+                if (_hedgeStateText != null) { _hedgeStateText.Text = "Off"; _hedgeStateText.Foreground = Brushes.Gray; }
 
                 SetDayResum(null, null, null, null, null, null, null);
             }
@@ -697,6 +719,7 @@ namespace NinjaTrader.NinjaScript
                 if (_bulletPnlMes != null) _bulletPnlMes.Fill = (_pnlMesText != null && _pnlMesText.Text != "-" ? BronzeBrush : InactiveBulletBrush);
                 if (_bulletPnlTotal != null) _bulletPnlTotal.Fill = (_pnlTotalText != null && _pnlTotalText.Text != "-" ? BronzeBrush : InactiveBulletBrush);
                 if (_bulletEndDay != null) _bulletEndDay.Fill = (_tbEndDayValue != null && _tbEndDayValue.Text != "-" ? BronzeBrush : InactiveBulletBrush);
+                if (_bulletHedge != null) _bulletHedge.Fill = _hedgeEnabled ? BronzeBrush : InactiveBulletBrush;
             }
             catch { }
         }
@@ -848,6 +871,17 @@ namespace NinjaTrader.NinjaScript
         {
             if (_bulletAtr != null) _bulletAtr.Fill = value ? BronzeBrush : InactiveBulletBrush;
             if (_atrValueText != null) _atrValueText.Foreground = value ? BronzeBrush : LightGrayBrush;
+        }
+
+        public void ForceSetHedgeEnabled(bool enabled)
+        {
+            _hedgeEnabled = enabled;
+            if (_bulletHedge != null) _bulletHedge.Fill = _hedgeEnabled ? BronzeBrush : InactiveBulletBrush;
+            if (_hedgeStateText != null)
+            {
+                _hedgeStateText.Text = _hedgeEnabled ? "On" : "Off";
+                _hedgeStateText.Foreground = _hedgeEnabled ? BronzeBrush : Brushes.Gray;
+            }
         }
 
         public void ForceSetMainEnabled(bool value)
@@ -1452,6 +1486,7 @@ namespace NinjaTrader.NinjaScript
 
                 embeddedControl.ForceSetBEEnabled(snap.BEEnabled ?? false);
                 embeddedControl.ForceSetATREnabled(snap.ATREnabled ?? false);
+                embeddedControl.ForceSetHedgeEnabled(snap.HedgeEnabled ?? false);
                 embeddedControl.ForceSetMainEnabled(snap.MainEnabled ?? false);
 
                 embeddedControl.UpdateBulletsAfterStateChange();
@@ -2174,6 +2209,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             snap.ATREnabled = UseStopATR;
             snap.AtrDisplayText = (UseStopATR && lastAtrVal > 0) ? lastAtrVal.ToString("0.000") : "-";
             snap.MainEnabled = !offSnapshot;
+            snap.HedgeEnabled = GetEffectiveInvertMode() != InvertModeType.Disabled;
 
             RecalcPnLIfNeeded();
             snap.PnLDiaText = cachedPnlDay;
@@ -2223,6 +2259,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 snap.StatusText = "Waiting";
                 snap.MainEnabled = false;
                 snap.ATREnabled = UseStopATR;
+                snap.HedgeEnabled = GetEffectiveInvertMode() != InvertModeType.Disabled;
                 return snap;
             }
 
