@@ -1873,6 +1873,8 @@ namespace NinjaTrader.NinjaScript.Strategies
         // (ATR, SuperTrend, Hedge, BE, AutoClose) não podem ser alterados fora do ApplyHedgeModel().
         private bool hedgeModelFrozen = false;
         private bool defaultModelApplied = false;
+        // Default Model é um preset travado: após State.Configure, parâmetros do Default
+        // (ATR, SuperTrend, BE, Target, AutoClose) não podem ser alterados fora do ApplyDefaultModel().
         private bool defaultModelFrozen = false;
 
         protected override void OnStateChange()
