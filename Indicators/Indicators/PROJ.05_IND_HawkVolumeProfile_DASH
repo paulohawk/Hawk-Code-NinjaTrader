@@ -1,3 +1,7 @@
+// 
+// Copyright (C) 2016, NinjaTrader LLC <www.ninjatrader.com>.
+// NinjaTrader reserves the right to modify or overwrite this NinjaScript component with each release.
+//
 #region Using declarations
 using System;
 using System.Collections.Generic;
@@ -11,31 +15,1718 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Xml.Serialization;
 using NinjaTrader.Cbi;
+using NinjaTrader.Core;
 using NinjaTrader.Gui;
 using NinjaTrader.Gui.Chart;
 using NinjaTrader.Gui.SuperDom;
-using NinjaTrader.Gui.Tools;
 using NinjaTrader.Data;
 using NinjaTrader.NinjaScript;
 using NinjaTrader.Core.FloatingPoint;
-
+using NinjaTrader.NinjaScript.DrawingTools;
 #endregion
 
-//This namespace holds Drawing tools in this folder and is required. Do not change it. 
-namespace NinjaTrader.NinjaScript.DrawingTools
+
+//CamsVpR4 version 1.0 written by Camdo 6/19/2017
+//Volume Profile indicator
+//Tick Replay not necessary but for accuracy
+//if Tick Replay not enabled then:
+	//bid/ask derived from granularity up/down bar, and CalculateOnBarClose
+//if Tick Replay is enabled then:
+	//bid/ask derived from NinjaTtrader last bar, and CalculateOnEachTick
+
+//R1: initial release 6/19/2017
+//R2: fixed granular bar offset, added Day and Volume granularity, improved VA calculation, added VA smoothing, fixed right orientation for region bar to bar, 07/07/2017
+//R3: added volume imbalance, changed display to Bid/Ask, value area boundary line, improved text alignment, scale and bar opacity, 8/6/2017
+//R4: added EnableCamsVpRegion.  Multiple instances on same chart all draw to CamsVpRegion, 10/27/2017
+
+
+//This namespace holds Indicators in this folder and is required. Do not change it. 
+namespace NinjaTrader.NinjaScript.Indicators.Cam
 {
-	[CLSCompliant(false)]
-	[EditorBrowsable(EditorBrowsableState.Always)]
-	public class CamsVpRegion : RegionHighlightBase
+	public class CamsVpR4 : Indicator
 	{
+		#region Properties
+		internal class VolItem
+		{
+			public long up = 0;
+			public long down = 0;
+			public long total = 0;
+			public bool askimbalance = false;
+			public bool bidimbalance = false;
+		}
+		private VolItem volItem;
+		private List<VolItem> listVolItem = new List<VolItem>();
+		private List<int> listPtr = new List<int>();
+		private bool transitionComplete;
+		private long buys = 0;
+		private long sells = 0;
+		private long totVol = 0;
+
+		private double barSpacing = 0;
+		private float xpos = 0;
+		private float x = 0;
+		private float yUpper = 0;
+		private float barWidth = 0;
+		private float barHeight = 0;
+		private List<int> regionIdxStart = new List<int>();
+		private List<int> regionIdxEnd = new List<int>();
+		private List<double> barWidthFacList = new List<double>();
+		private List<int> xposList = new List<int>();
+		private List<int> sessionStartList = new List<int>();
+		private List<int> sessionStartsInWindowList = new List<int>();
+
+		private List<Dictionary<double, VolItem>> dictionaryList = new List<Dictionary<double, VolItem>>();
+		private Dictionary<double, VolItem> priceDictionary = new Dictionary<double, VolItem>();
+		
+		private double windowFac;
+		private long volMax = 0;
+		private double poc = 0;
+		private double valueAreaHigh = 0;
+		private double valueAreaLow = 0;
+		private double valueAreaFac = 0;
+		private int color = 0;
+		private float bidWidth = 0;
+		private float askWidth = 0;
+		private float totalWidth = 0;
+		
+		private double price;
+		private long volume;
+		private long vol;
+		private int regionStartBar0 = 0;
+		private int regionStartBar1 = 0;
+		private int boundaryFromX = 0;
+		private int boundaryToX = 0;
+		private int regionEndBar0 = 0;
+		private int regionEndBar1 = 0;
+		private DateTime dateF = DateTime.MinValue;					//NinjaTrader.Core.Globals.Now;
+		private DateTime dateT = DateTime.MinValue;					//NinjaTrader.Core.Globals.Now;
+		private	DateTime lastChartBarTime = DateTime.MinValue;		//NinjaTrader.Core.Globals.Now;
+		private	DateTime firstChartBarTime = DateTime.MinValue;		//NinjaTrader.Core.Globals.Now;
+		private int vpStartBar = 0;
+		private int vpEndBar = 0;
+		private int regionStartSlot = 0;
+		private int regionEndSlot = 0;
+		private int rgnStartSlot = 0;
+		private int rgnEndSlot = 0;
+		private double rgnStartX = 0;
+		private double rgnEndX = 0;
+		private double regionStartX = 0;
+		private double regionEndX = 0;
+		private double regionWidth = 0;
+		private double barWidthP = 0;
+		private SharpDX.RectangleF rectText;
+		private SharpDX.RectangleF askRect;
+		private SharpDX.RectangleF bidRect;
+		private SharpDX.RectangleF midRect;
+		private SharpDX.RectangleF totalRect;
+		
+		private DateTime startTime = DateTime.MinValue;				//NinjaTrader.Core.Globals.Now;		
+		private int a = 0;
+		private int at = 0;
+		private int firstWindowBar = 0;
+		private int lastWindowBar = 0;
+		
+		private int cycle = 0;
+		private double strtSlotIdx = 0;
+		private double endSlotIdx = 0;
+		
+		private int lastBar0 = -1000;
+		private int lastBar1 = -1000;
+		private int calcMode = 0;
+
+		#endregion
+
 		protected override void OnStateChange()
 		{
-			base.OnStateChange();
 			if (State == State.SetDefaults)
 			{
-				Name	= "CamsVp Region";
-				Mode	= RegionHighlightMode.Time;
+				Description					= @"Volume Profile: Plots a horizontal histogram of volume by price.";
+				Name						= "CamsVpR4";
+				Calculate					= Calculate.OnEachTick;
+				BarsRequiredToPlot			= 0;
+				IsChartOnly					= true;
+				IsOverlay					= true;
+				DrawOnPricePanel			= false;
+
+				ScaleType					= CamsVpR4ScaleType.MaxOfLadder;
+				WindowPercent				= 25;
+				FixedScalingNumber			= .01;
+				MinSize						= 30;
+				DeltaScale					= .25;
+				BarSpacingPercent			= 40;
+				Opacity						= 100;
+				OpacityText					= 100;
+				ZOrder						= int.MaxValue;
+
+				Orientation					= CamsVpR4OrientationType.Left;
+				Margin						= 0;
+
+				ShowVolumeProfile			= true;
+				ShowBidAskProfile			= false;
+				ShowDeltaProfile			= false;
+				ShowScale					= CamsVpR4ShowScaleType.None;
+				ShowPoc						= false;
+				ShowValueArea				= false;
+				ValueAreaPercent			= 70;
+				SmoothVA					= 2;
+				ShowImbalance				= true;
+				ImbalanceRatio				= 2;
+				ShowRegionBoundaries		= false;
+				EnableCamsVpRegions			= true;
+				ShowPerformance				= false;
+				
+				Granularity					= CamsVpR4GranularityType.Tick;
+				GranularityPeriod			= 100;
+
+				RegionFrom					= CamsVpR4RegionFromType.Window;
+				RegionTo					= CamsVpR4RegionToType.Current;
+				DateFrom					= DateTime.Parse("05/05/2017 4:10:00 PM");	//"3/8/2017 9:30:00 AM"
+				DateTo						= DateTime.Parse("05/05/2017 4:15:00 PM");	//"3/10/2017 4:00:00 PM"
+
+				VolFillBrush				= Brushes.Blue;
+				AskVolumeBrush				= Brushes.MediumAquamarine;
+				BidVolumeBrush				= Brushes.Crimson;
+				DeltaPositiveBrush			= Brushes.Green;
+				DeltaNegativeBrush			= Brushes.DarkOrange;
+				TextPosColorBrush			= Brushes.Snow;
+				TextNegColorBrush			= Brushes.Maroon;
+				PocColorBrush				= Brushes.Red;
+				ValueAreaColorBrush			= Brushes.Brown;
+				AskImbalanceBrush			= Brushes.Cyan;
+				BidImbalanceBrush			= Brushes.Pink;
+				
+			}
+			else if (State == State.Configure)
+			{
+				windowFac = WindowPercent / 100;
+				barSpacing = BarSpacingPercent / 100;
+				valueAreaFac = ValueAreaPercent / 100;
+				transitionComplete = false;
+				ClearOutputWindow();
+
+				
+				if(RegionFrom == CamsVpR4RegionFromType.Bar || RegionTo == CamsVpR4RegionToType.Bar)
+				{
+					RegionFrom = CamsVpR4RegionFromType.Bar;
+					RegionTo = CamsVpR4RegionToType.Bar;
+					ShowRegionBoundaries		= false;
+				}
+				if(RegionFrom == CamsVpR4RegionFromType.Daily || RegionTo == CamsVpR4RegionToType.Daily)
+				{
+					RegionFrom = CamsVpR4RegionFromType.Daily;
+					RegionTo = CamsVpR4RegionToType.Daily;
+					ShowRegionBoundaries		= false;
+				}
+				if(RegionFrom == CamsVpR4RegionFromType.None || RegionTo == CamsVpR4RegionToType.None)
+				{
+					RegionFrom = CamsVpR4RegionFromType.None;
+					RegionTo = CamsVpR4RegionToType.None;
+					ShowRegionBoundaries = false;
+					
+				}
+				
+				switch (Granularity)
+				{
+					case CamsVpR4GranularityType.Minute:
+						AddDataSeries(BarsPeriodType.Minute, GranularityPeriod);
+						break;
+					case CamsVpR4GranularityType.Tick:
+						AddDataSeries(BarsPeriodType.Tick, GranularityPeriod);
+						break;
+					case CamsVpR4GranularityType.Day:
+						AddDataSeries(BarsPeriodType.Day, GranularityPeriod);
+						break;
+					case CamsVpR4GranularityType.Volume:
+						AddDataSeries(BarsPeriodType.Volume, GranularityPeriod);
+						break;
+					default:
+						AddDataSeries(BarsPeriodType.Minute, GranularityPeriod);
+						break;
+				}
+
+				if(IsTickReplays[0] == true)
+				{
+					Calculate = Calculate.OnEachTick;
+					calcMode = 0;
+					listVolItem.Add(new VolItem());		//add 1st item
+				//	listVolItem.Add(new VolItem());		//add 2nd item
+					sessionStartList.Add(0);
+				}
+				else
+				{
+					Calculate = Calculate.OnBarClose;
+					calcMode = 1;
+					listVolItem.Add(new VolItem());		//add 1st item
+					listVolItem.Add(new VolItem());		//add 2nd item
+				}
+   
+				
+			}
+			else if (State == State.DataLoaded)
+			{
+				
+			}
+			else if (State == State.Historical)
+			{
+				 SetZOrder(ZOrder);
+				
+			}
+			else if(State == State.Transition)
+			{
+				transitionComplete = true;
+				
 			}
 		}
-	}	
+
+		
+		
+		protected override void OnBarUpdate()
+		{
+			
+			if(calcMode == 0)			//Tick Replay enabled
+			{
+				if(BarsInProgress == 1)
+				{
+					if (CurrentBars[1] != lastBar1)
+					{
+						listVolItem[listVolItem.Count - 1].down = sells;
+						listVolItem[listVolItem.Count - 1].up = buys;
+						listVolItem[listVolItem.Count - 1].total = buys + sells;
+						
+						buys = 0;
+						sells = 0;
+						listVolItem.Add(new VolItem());	
+						
+						lastBar1 = CurrentBars[1];
+					}
+
+					listVolItem[listVolItem.Count - 1].down = sells;
+					listVolItem[listVolItem.Count - 1].up = buys;
+					listVolItem[listVolItem.Count - 1].total = buys + sells;
+				}
+				else	//BIP == 0
+				{
+					if(CurrentBars[0] != lastBar0 && CurrentBars[0] > 0)
+					{
+						//make a cross reference list of Chart bars vs granularity bars (ie. a list<Bars[0][0], Bars[1][0]> index numbers
+						//so the data series does not have to be reloaded every time the region changes.
+						listPtr.Add(CurrentBars[1]);		//list index = CurrentBars[0], value = CurrentBars[1]
+						
+
+						if(RegionFrom == CamsVpR4RegionFromType.Daily)
+						{
+							if(Bars.IsFirstBarOfSession)
+							{
+								sessionStartList.Add(CurrentBars[0]);
+							}
+						}
+						
+						lastBar0 = CurrentBars[0];
+						
+						if(transitionComplete)
+						{
+							updateStraddledRegions();
+						}
+					}
+				}
+			}
+			else if(calcMode == 1)			//up/dowm  COBC mode
+			{
+				if(BarsInProgress == 1)
+				{
+					listVolItem[listVolItem.Count - 1].down = Closes[1][0] < Opens[1][0] ? (long)Volumes[1][0] : 0;
+					listVolItem[listVolItem.Count - 1].up = Closes[1][0] > Opens[1][0] ? (long)Volumes[1][0] : 0;
+					listVolItem[listVolItem.Count - 1].total = (long)Volumes[1][0];
+
+					listVolItem.Add(new VolItem());	
+					
+				}
+				else	//BIP == 0
+				{
+					listPtr.Add(CurrentBars[1]);		//list index = CurrentBars[0], value = CurrentBars[1]
+
+					if(RegionFrom == CamsVpR4RegionFromType.Daily)
+					{
+						if(Bars.IsFirstBarOfSession)
+						{
+							sessionStartList.Add(CurrentBars[0]);
+						}
+					}
+					
+
+					if(transitionComplete)
+					{
+						updateStraddledRegions();
+					}
+				}
+			}
+		}
+
+		
+		protected override void OnMarketData(MarketDataEventArgs e)
+		{
+			if(BarsInProgress == 0 || calcMode != 0)
+				return;
+
+			if(e.MarketDataType == MarketDataType.Last)
+			{				
+				if(e.Price >= e.Ask)
+				{
+					buys += e.Volume;
+				}
+				else if (e.Price <= e.Bid)
+				{
+					sells += e.Volume;
+				}
+			}	
+		}
+
+		
+		
+		void updateStraddledRegions()
+		{
+			double startSlot = 0;
+			double endSlot = 0;
+
+			foreach (DrawingTool dt in DrawObjects)
+			{
+				if(dt.Name == "CamsVp Region")
+				{
+					foreach (ChartAnchor anchor in dt.Anchors)
+					{
+						if(anchor.DisplayName == "Start")
+						{
+							startSlot = anchor.SlotIndex;
+							if(startSlot >= CurrentBars[0] - 1)
+							{
+								anchor.SlotIndex = startSlot + 1;
+							}
+						}
+						else if (anchor.DisplayName == "End")
+						{
+							endSlot = anchor.SlotIndex;
+							if(endSlot >= CurrentBars[0] - 1)
+							{
+								anchor.SlotIndex = endSlot + 1;
+							}
+						}
+					}
+				}
+			}
+		}
+
+		
+		void makeVPDic(ChartControl chartControl, ChartScale chartScale, ChartPanel chartPanel)
+		{
+			getRegion(chartControl, chartScale, chartPanel);
+
+			dictionaryList.Clear();
+			if(regionIdxStart.Count !=0)
+			{
+				for (int k = 0; k <= regionIdxStart.Count - 1; k++)
+				{
+					priceDictionary = new Dictionary<double, VolItem>();
+					dictionaryList.Add(priceDictionary);
+					
+					int startIdx = regionIdxStart[k];
+					int endIdx = regionIdxEnd[k];
+					for (int i = startIdx; i <= endIdx; i++)
+					{
+						price = BarsArray[1].GetClose(i - 1);				//note listVolItem[i] is matched with Close[i - 1]
+						if (!dictionaryList[k].ContainsKey(price))
+						{
+							VolItem v = new VolItem();
+							dictionaryList[k].Add(price, v);							//new dictionary element
+							dictionaryList[k][price].up = listVolItem[i].up;
+							dictionaryList[k][price].down = listVolItem[i].down;
+							dictionaryList[k][price].total = listVolItem[i].total;
+						}
+						else
+						{
+							dictionaryList[k][price].up += listVolItem[i].up;			//update existing dictionary  element
+							dictionaryList[k][price].down += listVolItem[i].down;
+							dictionaryList[k][price].total += listVolItem[i].total;
+						}	
+					}
+				}
+			}
+		}
+		
+		void getRegion(ChartControl chartControl, ChartScale chartScale, ChartPanel chartPanel)
+		{
+			if(ChartBars != null)
+			{
+				regionIdxStart.Clear();
+				regionIdxEnd.Clear();
+				barWidthFacList.Clear();
+				xposList.Clear();
+
+				if(RegionFrom == CamsVpR4RegionFromType.All)
+				{
+					regionStartBar0 = 0;
+					regionStartBar1 = regionStartBar0 > 0 ? listPtr[regionStartBar0 - 1] + 2 : 1;		//fine data composes larger bars
+					boundaryFromX = chartControl.GetXByBarIndex(ChartBars, regionStartBar0);	
+					regionIdxStart.Add(regionStartBar1);
+				}
+				else if(RegionFrom == CamsVpR4RegionFromType.Window)
+				{
+					regionStartBar0 = ChartBars.FromIndex;									//first bar on chart has index = 0 and recorded in listPtr[1] with last granular bar idx
+					regionStartBar1 = regionStartBar0 > 0 ? listPtr[regionStartBar0 - 1] + 2 : 1;		//fine data composes larger bars
+					boundaryFromX = chartControl.GetXByBarIndex(ChartBars, regionStartBar0);	
+					regionIdxStart.Add(regionStartBar1);
+				}
+				else if(RegionFrom == CamsVpR4RegionFromType.Date)
+				{
+					dateF = dateRange(chartControl, DateFrom);
+					regionStartBar0 = ChartBars.GetBarIdxByTime(chartControl, dateF);
+					regionStartBar1 = regionStartBar0 > 0 ? listPtr[regionStartBar0 - 1] + 2 : 1;		//fine data composes larger bars
+					boundaryFromX = chartControl.GetXByBarIndex(ChartBars, regionStartBar0);	
+					regionIdxStart.Add(regionStartBar1);
+				}
+				else if(RegionFrom == CamsVpR4RegionFromType.Bar)
+				{
+				}
+				else if(RegionFrom == CamsVpR4RegionFromType.Daily)
+				{
+				}
+				else if(RegionFrom == CamsVpR4RegionFromType.None)
+				{
+				}
+
+				
+				if(RegionTo == CamsVpR4RegionToType.Current)
+				{
+					regionEndBar0 = BarsArray[0].Count - 1;
+					regionEndBar1 = listVolItem.Count - 2;		//extra volItems added in configure	
+					boundaryToX = chartControl.GetXByBarIndex(ChartBars, regionEndBar0);	
+					regionIdxEnd.Add(regionEndBar1);
+					windowBarWidthFacList(chartPanel);
+					windowXpos(chartControl);
+				}
+				else if(RegionTo == CamsVpR4RegionToType.Window)
+				{
+					regionEndBar0 = ChartBars.ToIndex;
+					loadRegionEndBar1();
+					boundaryToX = chartControl.GetXByBarIndex(ChartBars, regionEndBar0);	
+					regionIdxEnd.Add(regionEndBar1);
+					windowBarWidthFacList(chartPanel);
+					windowXpos(chartControl);
+				}
+				else if(RegionTo == CamsVpR4RegionToType.Date)
+				{
+					dateT = dateRange(chartControl, DateTo);
+					regionEndBar0 = ChartBars.GetBarIdxByTime(chartControl, dateT);
+					loadRegionEndBar1();
+					boundaryToX = chartControl.GetXByBarIndex(ChartBars, regionEndBar0);	
+					regionIdxEnd.Add(regionEndBar1);
+					windowBarWidthFacList(chartPanel);
+					windowXpos(chartControl);
+				}
+				else if(RegionTo == CamsVpR4RegionToType.Bar)
+				{
+					firstWindowBar = ChartBars.FromIndex;
+					lastWindowBar = ChartBars.ToIndex;
+					for (int i = firstWindowBar; i <= lastWindowBar; i++)
+					{
+						regionStartBar0 = i;			
+						regionStartBar1 = regionStartBar0 > 0 ? listPtr[regionStartBar0 - 1] + 2 : 1;		//fine data composes larger bars
+						regionIdxStart.Add(regionStartBar1);
+						regionEndBar0 = i;
+						loadRegionEndBar1();
+						regionIdxEnd.Add(regionEndBar1);
+
+						barWidthP = chartControl.BarWidth + 5;	// + some small Margin,  note that .BarWidth is distance from wick to body edge
+						regionStartX = chartControl.GetXByBarIndex(ChartBars, regionStartBar0);
+						if (regionStartBar0 < BarsArray[0].Count - 1)
+						{
+							regionWidth = Math.Max(.80 * ((chartControl.GetXByBarIndex(ChartBars, regionStartBar0 + 1) - regionStartX) - (2 * barWidthP)), 0);
+						}
+						else
+						{
+							regionWidth = Math.Max(.80 * ((regionStartX - chartControl.GetXByBarIndex(ChartBars, regionStartBar0 - 1)) - (2 * barWidthP)), 0);
+						}
+						regionStartX = regionStartX + (barWidthP);
+						regionEndX = regionStartX + regionWidth;
+						
+						barBarWidthFacList();
+						barXpos();
+					}
+					
+				}
+				else if(RegionTo == CamsVpR4RegionToType.Daily)
+				{
+					firstWindowBar = ChartBars.FromIndex;
+					lastWindowBar = ChartBars.ToIndex;
+					fillSessionStartsInWindowList();		//build list of FirstBarOfSession bars in window 
+
+					for (int i = 0; i <= sessionStartsInWindowList.Count - 1; i++)
+					{
+						regionStartBar0 = sessionStartsInWindowList[i];			
+						regionStartBar1 = regionStartBar0 > 0 ? listPtr[regionStartBar0 - 1] + 2 : 1;		//fine data composes larger bars
+						regionIdxStart.Add(regionStartBar1);
+						if(i + 1 <= sessionStartsInWindowList.Count - 1)
+						{
+							if(sessionStartsInWindowList[i + 1] <= lastWindowBar)
+							{
+								regionEndBar0 = sessionStartsInWindowList[i + 1] - 1;
+							}
+							else
+							{
+								regionEndBar0 = lastWindowBar;
+							}
+						}
+						else
+						{
+							if(lastWindowBar >= BarsArray[0].Count - 1)
+							{
+								regionEndBar0 = BarsArray[0].Count - 1;
+							}
+							else
+							{
+								regionEndBar0 = lastWindowBar;
+							}
+						}
+						loadRegionEndBar1();
+						regionEndBar1 = regionEndBar1 - 1;
+						regionIdxEnd.Add(regionEndBar1);
+
+						barWidthP = chartControl.BarWidth;	//.BarWidth is distance from wick to body edge
+						regionStartX = chartControl.GetXByBarIndex(ChartBars, regionStartBar0);
+						regionWidth = Math.Max(.80 * ((chartControl.GetXByBarIndex(ChartBars, regionEndBar0) - regionStartX) - (2 * barWidthP)), 0);
+						regionStartX = regionStartX + (barWidthP);
+						regionEndX = regionStartX + regionWidth;
+						
+						barBarWidthFacList();
+						barXpos();
+					}
+
+				}
+				
+				else if(RegionTo == CamsVpR4RegionToType.None)
+				{
+				}
+			}
+			else
+			{
+				return;
+			}
+
+			if(EnableCamsVpRegions == true)
+			{
+				foreach (DrawingTool dt in DrawObjects)
+				{
+					if(dt.Name == "CamsVp Region")
+					{
+						foreach (ChartAnchor anchor in dt.Anchors)
+						{
+							if(anchor.DisplayName == "Start")
+							{
+								rgnStartSlot = (int)anchor.SlotIndex; //start on wick end prior to next wick, Bars[0][0] = slot0, Bars[0][1] = slot1
+								rgnStartX = anchor.GetPoint(chartControl, chartPanel, chartScale).X;		//these are chart pixels
+
+							}
+							else if (anchor.DisplayName == "End")
+							{
+								rgnEndSlot = (int)anchor.SlotIndex;	 //start on wick end prior to next wick, Bars[0][0] = slot0, Bars[0][1] = slot1
+								rgnEndX = anchor.GetPoint(chartControl, chartPanel, chartScale).X;		//these are chart pixels
+							}
+						}
+
+						if(rgnStartSlot >= 0 && rgnEndSlot >= 0)	//1st cycle abnormalties when dt region is off window
+						{
+							regionStartSlot = Math.Min(rgnStartSlot, rgnEndSlot);
+							regionEndSlot = Math.Max(rgnStartSlot, rgnEndSlot);
+							regionStartX = Math.Min(rgnStartX, rgnEndX);
+							regionEndX = Math.Max(rgnStartX, rgnEndX);
+							
+							if(regionEndX < chartControl.GetXByBarIndex(ChartBars, regionEndSlot))
+							{
+								if(regionEndSlot != regionStartSlot) regionEndSlot = regionEndSlot - 1;
+							}
+							
+							if(regionStartSlot >= BarsArray[0].Count - 1)
+							{
+								regionStartBar0 = BarsArray[0].Count - 1;
+							}
+							else
+							{
+								regionStartBar0 = Math.Min(regionStartSlot, listPtr.Count - 1);		//don't go out of range of listPtr[] scrolling bars to extreme left (one bar showing)
+							}
+							regionStartBar1 = regionStartBar0 > 0 ? listPtr[regionStartBar0 - 1] + 2 : 1;		//fine data composes larger bars
+							regionIdxStart.Add(regionStartBar1);
+
+							if(regionEndSlot >= BarsArray[0].Count - 1)
+							{
+								regionEndBar0 = BarsArray[0].Count - 1;		//note regionEndBar0 is meaningless since region is somewhere beyond the current bar
+							}
+							else
+							{
+								regionEndBar0 = regionEndSlot;
+							}
+
+							loadRegionEndBar1();
+							regionIdxEnd.Add(regionEndBar1);
+
+							DrawingToolBarWidthFacList();
+							DrawingToolXpos();
+						}
+					}
+				}
+			}
+		}
+
+		
+		//load barWidthFacList with setup numbers for later processing
+		void windowBarWidthFacList(ChartPanel chartPanel)
+		{
+			if(ScaleType == CamsVpR4ScaleType.MaxOfLadder)
+			{
+				barWidthFacList.Add(windowFac * chartPanel.W);		//order matters in mixed (integer & double) math.  Decimals less than zero will be zero
+			}
+			else
+			{
+				barWidthFacList.Add(FixedScalingNumber);
+			}
+		}
+
+		void DrawingToolBarWidthFacList()
+		{
+			if(ScaleType == CamsVpR4ScaleType.MaxOfLadder)
+			{
+				barWidthFacList.Add(Math.Max((regionEndX - regionStartX), MinSize));
+
+			}
+			else
+			{
+				barWidthFacList.Add(FixedScalingNumber);
+			}
+		}
+
+		void barBarWidthFacList()
+		{
+			if(ScaleType == CamsVpR4ScaleType.MaxOfLadder)
+			{
+				barWidthFacList.Add(regionWidth);
+
+			}
+			else
+			{
+				barWidthFacList.Add(FixedScalingNumber);
+			}
+		}
+
+		void windowXpos(ChartControl chartControl)
+		{
+			if(Orientation == CamsVpR4OrientationType.Left)
+			{
+				xposList.Add(chartControl.CanvasLeft + Margin);
+			}
+			else
+			{
+				xposList.Add(chartControl.CanvasRight - Margin);
+			}
+		}
+		
+		void DrawingToolXpos()
+		{
+			if(Orientation == CamsVpR4OrientationType.Left)
+			{
+				xposList.Add((int) regionStartX);
+			}
+			else
+			{
+				xposList.Add((int) regionEndX);
+			}
+		}
+		
+		void barXpos()
+		{
+			if(Orientation == CamsVpR4OrientationType.Left)
+			{
+				xposList.Add((int)regionStartX);
+			}
+			else
+			{
+				xposList.Add((int)(regionStartX - (2 * barWidthP)));
+			}
+		}
+
+		DateTime dateRange(ChartControl chartControl, DateTime date)
+		{
+			lastChartBarTime = ChartBars.GetTimeByBarIdx(chartControl, (BarsArray[0].Count - 1));
+			firstChartBarTime = ChartBars.GetTimeByBarIdx(chartControl, 0);
+			if(date > lastChartBarTime) 
+			{	
+				date = lastChartBarTime;
+			}
+			else if(date < firstChartBarTime)
+			{
+				date = firstChartBarTime;
+			}
+			return date;
+		}
+
+		void loadRegionEndBar1()
+		{
+			if(regionEndBar0 == (BarsArray[0].Count - 1))
+			{
+				regionEndBar1 = listVolItem.Count - 2;		//extra volItems added in configure	
+			}
+			else	//not the working bar
+			{
+				if((BarsArray[1].Count - 1) >= listPtr[regionEndBar0] + 1)	//if it exists
+				{
+					regionEndBar1 = listPtr[regionEndBar0] + 1;
+				}
+				else
+				{
+					regionEndBar1 = listPtr[regionEndBar0];
+				}
+			}
+		}
+		
+		void fillSessionStartsInWindowList()
+		{
+			int start = 0;
+
+			sessionStartsInWindowList.Clear();
+			for(int i = sessionStartList.Count - 1; i >= 0; i--)
+			{
+				if(sessionStartList[i] <= firstWindowBar)
+				{
+					start = i;
+					break;
+				}
+			}
+			
+			for(int i = start; i <= sessionStartList.Count - 1; i++)
+			{
+				if(sessionStartList[i] >= firstWindowBar && sessionStartList[i] <= lastWindowBar)
+				{
+					sessionStartsInWindowList.Add(sessionStartList[i]);
+				}
+				if(sessionStartList[i] >= lastWindowBar)
+				{
+					break;
+				}
+			}
+			
+		}
+		
+		
+		
+		
+		
+		
+		protected override void OnRender(ChartControl chartControl, ChartScale chartScale)
+		{
+			++cycle;
+			if(Bars == null || Bars.Instrument == null || IsInHitTest || !transitionComplete) 
+				return;
+
+			if(ShowPerformance)
+			{
+				++cycle;
+				startTime = NinjaTrader.Core.Globals.Now;
+			}
+
+			double	tickSize = Bars.Instrument.MasterInstrument.TickSize;
+			ChartPanel chartPanel = ChartPanel;
+			SharpDX.Direct2D1.Brush brushDX = VolFillBrush.ToDxBrush(RenderTarget);		//just to declare
+
+			SharpDX.Direct2D1.Brush volFillBrushDX	= VolFillBrush.ToDxBrush(RenderTarget);
+			volFillBrushDX.Opacity = (float)(Opacity / 100.0);
+
+			SharpDX.Direct2D1.Brush askVolumeBrushDX	= AskVolumeBrush.ToDxBrush(RenderTarget);
+			askVolumeBrushDX.Opacity = (float)(Opacity / 100.0);
+
+			SharpDX.Direct2D1.Brush bidVolumeBrushDX	= BidVolumeBrush.ToDxBrush(RenderTarget);
+			bidVolumeBrushDX.Opacity = (float)(Opacity / 100.0);
+
+			SharpDX.Direct2D1.Brush deltaPositiveBrushDX	= DeltaPositiveBrush.ToDxBrush(RenderTarget);
+			deltaPositiveBrushDX.Opacity = (float)(Opacity / 100.0);
+
+			SharpDX.Direct2D1.Brush deltaNegativeBrushDX	= DeltaNegativeBrush.ToDxBrush(RenderTarget);
+			deltaNegativeBrushDX.Opacity = (float)(Opacity / 100.0);
+
+			SharpDX.Direct2D1.Brush textPosBrushDX = TextPosColorBrush.ToDxBrush(RenderTarget);
+			textPosBrushDX.Opacity = (float)(OpacityText / 100.0);
+
+			SharpDX.Direct2D1.Brush textNegBrushDX = TextNegColorBrush.ToDxBrush(RenderTarget);
+			textNegBrushDX.Opacity = (float)(OpacityText / 100.0);
+
+			SharpDX.Direct2D1.Brush pocBrushDX = PocColorBrush.ToDxBrush(RenderTarget);
+			pocBrushDX.Opacity = (float)(Opacity / 100.0);
+
+			SharpDX.Direct2D1.Brush valueAreaBrushDX = ValueAreaColorBrush.ToDxBrush(RenderTarget);
+			valueAreaBrushDX.Opacity = (float)(Opacity / 100.0);
+
+			SharpDX.Direct2D1.Brush askImbalanceBrushDX	= AskImbalanceBrush.ToDxBrush(RenderTarget);
+			askImbalanceBrushDX.Opacity = (float)(OpacityText / 100.0);
+
+			SharpDX.Direct2D1.Brush bidImbalanceBrushDX	= BidImbalanceBrush.ToDxBrush(RenderTarget);
+			bidImbalanceBrushDX.Opacity = (float)(OpacityText / 100.0);
+			
+			
+
+			makeVPDic(chartControl, chartScale, chartPanel);
+
+			
+			if(ShowRegionBoundaries) 
+			{
+				barWidth = (float) chartControl.GetBarPaintWidth(chartControl.BarsArray[0]);	//pixels
+				barHeight = barWidth;
+				yUpper = chartScale.GetYByValue(BarsArray[0].GetHigh(regionStartBar0) + (16 * tickSize)) + barWidth;	//square in pixels
+				xpos = boundaryFromX - (barWidth / 2);
+				brushDX = deltaPositiveBrushDX;
+				RenderTarget.FillRectangle(new SharpDX.RectangleF(xpos, yUpper, barWidth, barHeight), brushDX);
+				yUpper = chartScale.GetYByValue(BarsArray[0].GetHigh(regionEndBar0) + (18 * TickSize)) + barWidth;	//square in pixels
+				xpos = boundaryToX - (barWidth / 2);
+				brushDX = deltaNegativeBrushDX;
+				RenderTarget.FillRectangle(new SharpDX.RectangleF(xpos, yUpper, barWidth, barHeight), brushDX);
+			}
+			
+			double space 		= Math.Max(0, tickSize * barSpacing / 2);												//$
+			double yUpperAdder 	= (tickSize / 2) - space;
+					barHeight 	= Math.Max(1, chartScale.GetPixelsForDistance(tickSize - (tickSize * barSpacing)));		//pixels
+			float textHeight	= Math.Max(1, chartScale.GetPixelsForDistance(tickSize * .9));				//pixels
+			double textYUpperAddr = tickSize * .45;
+
+			if(dictionaryList.Count != 0)
+			{
+				for (int i = 0; i <= dictionaryList.Count - 1; i++)
+				{
+					if(dictionaryList[i].Count > 0)
+					{
+						poc = 0;
+						volMax = 0;
+						foreach (KeyValuePair<double, VolItem> element in dictionaryList[i])
+						{
+							if (element.Value.total > volMax)
+							{
+								volMax = element.Value.total;
+								poc = element.Key;				//price at max volume is poc
+							}
+						}
+						if(ShowValueArea)
+						{
+							GetValueArea(i, tickSize);
+						}
+						
+						double barWidthFac;
+						if(ScaleType == CamsVpR4ScaleType.MaxOfLadder)
+						{
+							barWidthFac 	= barWidthFacList[i] / volMax;					//order matters in mixed (integer & double) math.  Decimals less than zero will be zero
+						}
+						else
+						{
+							barWidthFac		= barWidthFacList[i];
+						}
+
+						if(Orientation == CamsVpR4OrientationType.Left)
+						{
+							xpos = xposList[i];
+						}
+						else
+						{
+							x = xposList[i];
+						}
+
+						if(ShowImbalance)
+						{
+							 FindImbalances(i, tickSize);
+						}
+						
+						if(ShowVolumeProfile == true)
+						{
+							foreach (KeyValuePair<double, VolItem> element in dictionaryList[i])
+							{
+								yUpper = chartScale.GetYByValue(element.Key + yUpperAdder);				//pixels
+								barWidth = (float)Math.Ceiling(element.Value.total * barWidthFac);		// .Ceiling makes 1 pixel minimum
+								GetXpos();
+								RenderTarget.FillRectangle(new SharpDX.RectangleF(xpos, yUpper, barWidth, barHeight), volFillBrushDX);
+							}
+						}
+
+						if(ShowBidAskProfile == true)
+						{
+							foreach (KeyValuePair<double, VolItem> element in dictionaryList[i])
+							{
+								yUpper = chartScale.GetYByValue(element.Key + yUpperAdder);				//pixels
+								GetXpos();
+								
+								bidWidth =  (float)Math.Ceiling(element.Value.down * barWidthFac);		// .Ceiling makes 1 pixel minimum
+								askWidth =  (float)Math.Ceiling(element.Value.up * barWidthFac);
+								totalWidth =  (float)Math.Ceiling((element.Value.total - element.Value.down - element.Value.up) * barWidthFac);
+
+								if(Orientation == CamsVpR4OrientationType.Left)
+								{
+									bidRect = new SharpDX.RectangleF(xpos + 2, yUpper, bidWidth, barHeight);
+									askRect = new SharpDX.RectangleF(xpos + 2 + bidWidth, yUpper, askWidth, barHeight);
+									totalRect = new SharpDX.RectangleF(xpos + 2 + bidWidth + askWidth, yUpper, totalWidth, barHeight);
+								}
+								else	//right orientation
+								{
+									askRect = new SharpDX.RectangleF(x - 2 - askWidth, yUpper, askWidth, barHeight);
+									bidRect = new SharpDX.RectangleF(x - 2 - askWidth - bidWidth, yUpper, bidWidth, barHeight);
+									totalRect = new SharpDX.RectangleF(x - 2 - askWidth - bidWidth - totalWidth, yUpper, totalWidth, barHeight);
+								}
+
+								if (element.Value.bidimbalance == true)
+								{
+									RenderTarget.FillRectangle(bidRect, bidImbalanceBrushDX);
+								}
+								else
+								{
+									RenderTarget.FillRectangle(bidRect, bidVolumeBrushDX);
+								}
+								
+								if (element.Value.askimbalance == true)
+								{
+									RenderTarget.FillRectangle(askRect, askImbalanceBrushDX);
+								}
+								else
+								{
+									RenderTarget.FillRectangle(askRect, askVolumeBrushDX);
+								}
+
+								RenderTarget.FillRectangle(totalRect, volFillBrushDX);
+							}
+						}
+
+						if(ShowDeltaProfile == true)
+						{
+							double delta = 0;
+							double deltaMax = 0;
+							
+							foreach (KeyValuePair<double, VolItem> element in dictionaryList[i])
+							{
+
+								delta = element.Value.up - element.Value.down;
+								if (Math.Abs(delta) > deltaMax)
+								{
+									deltaMax = Math.Abs(delta);		//deltaMax is an absolute value
+								}
+							}
+							
+							double deltaBarWidthFac = barWidthFac * volMax / deltaMax * DeltaScale;		//delta relative to volMax
+							
+							foreach (KeyValuePair<double, VolItem> element in dictionaryList[i])
+							{
+								yUpper = chartScale.GetYByValue(element.Key + yUpperAdder);				//pixels
+								delta = element.Value.up - element.Value.down;
+								barWidth = (float)Math.Ceiling(Math.Abs(delta) * deltaBarWidthFac);
+
+								if(delta >= 0)
+								{
+									brushDX = deltaPositiveBrushDX;
+								}
+								else
+								{
+									brushDX = deltaNegativeBrushDX;
+								}
+
+								GetXpos();
+								RenderTarget.FillRectangle(new SharpDX.RectangleF(xpos, yUpper, barWidth, barHeight), brushDX);
+							}
+						}
+						
+						if(ShowPoc && poc != 0)
+						{
+							yUpper = chartScale.GetYByValue(poc + yUpperAdder);				//pixels
+							barWidth = (float) (dictionaryList[i][poc].total * barWidthFac);
+							GetXpos();
+							RenderTarget.FillRectangle(new SharpDX.RectangleF(xpos, yUpper, barWidth, barHeight), pocBrushDX);
+						}
+
+						if(ShowValueArea && valueAreaHigh != 0)
+						{
+							barWidth = (float) (dictionaryList[i][poc].total * barWidthFac);
+							float bHeight = (float)Math.Max((barHeight * .1), 1);						//pixels
+							yUpper = chartScale.GetYByValue(valueAreaHigh) - (bHeight / 2);				//pixels
+							GetXpos();
+							RenderTarget.FillRectangle(new SharpDX.RectangleF(xpos, yUpper, barWidth, bHeight), valueAreaBrushDX);
+							yUpper = chartScale.GetYByValue(valueAreaLow) - (bHeight / 2);				//pixels
+							RenderTarget.FillRectangle(new SharpDX.RectangleF(xpos, yUpper, barWidth, bHeight), valueAreaBrushDX);
+						}
+
+						if(ShowScale != CamsVpR4ShowScaleType.None
+							&& ShowScale != CamsVpR4ShowScaleType.BidAsk)
+						{
+							string rowVolumeStr = "";
+
+							if (textHeight >= 0)			//8
+				            {
+								foreach (KeyValuePair<double, VolItem> element in dictionaryList[i])
+								{
+									yUpper = chartScale.GetYByValue(element.Key + yUpperAdder);				//pixels
+									
+									if(ShowScale == CamsVpR4ShowScaleType.Volume)
+									{
+										rowVolumeStr = RowVolumeString(element.Value.total);				//format number
+										color = 0;
+									}
+									else if(ShowScale == CamsVpR4ShowScaleType.Delta)
+									{
+						                long delta = element.Value.up - element.Value.down;
+										rowVolumeStr = RowVolumeString(delta);
+										if(delta >= 0)
+										{
+											color = 0;
+										}
+										else
+										{
+											color = 1;
+										}
+									}
+									
+									GetXpos();
+									int y = chartScale.GetYByValue(element.Key + textYUpperAddr);
+									if(Orientation == CamsVpR4OrientationType.Left)
+									{
+										SharpDX.DirectWrite.TextFormat textFormat = new SharpDX.DirectWrite.TextFormat(NinjaTrader.Core.Globals.DirectWriteFactory, "Arial", textHeight){TextAlignment = SharpDX.DirectWrite.TextAlignment.Leading, ParagraphAlignment = SharpDX.DirectWrite.ParagraphAlignment.Center};
+										rectText = new SharpDX.RectangleF(xpos + 2, y, 1500, textHeight);
+										if (color == 0)
+										{
+											RenderTarget.DrawText(rowVolumeStr, textFormat, rectText, textPosBrushDX);
+										}
+										else
+										{
+											RenderTarget.DrawText(rowVolumeStr, textFormat, rectText, textNegBrushDX);
+										}
+										textFormat.Dispose();
+									}
+									else
+									{
+										SharpDX.DirectWrite.TextFormat textFormat = new SharpDX.DirectWrite.TextFormat(NinjaTrader.Core.Globals.DirectWriteFactory, "Arial", textHeight){TextAlignment = SharpDX.DirectWrite.TextAlignment.Trailing, ParagraphAlignment = SharpDX.DirectWrite.ParagraphAlignment.Center};
+										rectText = new SharpDX.RectangleF(x - 1502, y, 1500, textHeight);
+										if(color == 0)
+										{
+											RenderTarget.DrawText(rowVolumeStr, textFormat, rectText, textPosBrushDX);
+										}
+										else
+										{
+											RenderTarget.DrawText(rowVolumeStr, textFormat, rectText, textNegBrushDX);
+										}
+										textFormat.Dispose();
+									}
+								}
+				            }
+						}
+						
+						if(ShowScale == CamsVpR4ShowScaleType.BidAsk)
+						{
+							string askVolumeStr = "";
+							string bidVolumeStr = "";
+							string midChar = "";
+
+							if (textHeight >= 0)			//8
+				            {
+								SharpDX.DirectWrite.TextFormat leadingTextFormat = new SharpDX.DirectWrite.TextFormat(NinjaTrader.Core.Globals.DirectWriteFactory, "Arial", textHeight){TextAlignment = SharpDX.DirectWrite.TextAlignment.Leading, ParagraphAlignment = SharpDX.DirectWrite.ParagraphAlignment.Center};
+								SharpDX.DirectWrite.TextFormat trailingTextFormat = new SharpDX.DirectWrite.TextFormat(NinjaTrader.Core.Globals.DirectWriteFactory, "Arial", textHeight){TextAlignment = SharpDX.DirectWrite.TextAlignment.Trailing, ParagraphAlignment = SharpDX.DirectWrite.ParagraphAlignment.Center};
+								SharpDX.DirectWrite.TextFormat centerTextFormat = new SharpDX.DirectWrite.TextFormat(NinjaTrader.Core.Globals.DirectWriteFactory, "Arial", textHeight){TextAlignment = SharpDX.DirectWrite.TextAlignment.Center, ParagraphAlignment = SharpDX.DirectWrite.ParagraphAlignment.Center};
+								
+								string maxAsk = RowVolumeString(dictionaryList[i].Values.Max(kvp => kvp.up));
+								string maxBid = RowVolumeString(dictionaryList[i].Values.Max(kvp => kvp.down));
+								SharpDX.DirectWrite.TextLayout textAskLayout = new SharpDX.DirectWrite.TextLayout(Core.Globals.DirectWriteFactory, maxAsk, leadingTextFormat, 1500, textHeight);
+								float textAskWidth = textAskLayout.Metrics.Width + 1;	//+1 funny number
+								SharpDX.DirectWrite.TextLayout textBidLayout = new SharpDX.DirectWrite.TextLayout(Core.Globals.DirectWriteFactory, maxBid, trailingTextFormat, 1500, textHeight);
+								float textBidWidth = textBidLayout.Metrics.Width + 1;	//+1 funny number
+								
+								if (ShowImbalance == true)
+								{
+									midChar = "/";
+								}
+								else
+								{
+									midChar = "x";
+								}
+								SharpDX.DirectWrite.TextLayout midLayout = new SharpDX.DirectWrite.TextLayout(Core.Globals.DirectWriteFactory, "xxx", leadingTextFormat, 1500, textHeight);
+								float midWidth = midLayout.Metrics.Width;
+								
+								foreach (KeyValuePair<double, VolItem> element in dictionaryList[i])
+								{
+									askVolumeStr = RowVolumeString(element.Value.up);
+									bidVolumeStr = RowVolumeString(element.Value.down);
+									
+									GetXpos();
+									
+									int y = chartScale.GetYByValue(element.Key + textYUpperAddr);
+									
+									if(Orientation == CamsVpR4OrientationType.Left)
+									{
+										bidRect = new SharpDX.RectangleF(xpos + 2, y, textBidWidth, textHeight);
+										midRect = new SharpDX.RectangleF(xpos + 2 + textBidWidth, y, midWidth, textHeight);
+										askRect = new SharpDX.RectangleF(xpos + 2 + textBidWidth + midWidth, y, textAskWidth, textHeight);
+
+										if (element.Value.bidimbalance == true)
+										{
+											RenderTarget.DrawText(bidVolumeStr, trailingTextFormat, bidRect, bidImbalanceBrushDX);
+										}
+										else
+										{
+											RenderTarget.DrawText(bidVolumeStr, trailingTextFormat, bidRect, textPosBrushDX);
+										}
+										
+										RenderTarget.DrawText(midChar, centerTextFormat, midRect, textPosBrushDX);
+										
+										if (element.Value.askimbalance == true)
+										{
+											RenderTarget.DrawText(askVolumeStr, leadingTextFormat, askRect, askImbalanceBrushDX);
+										}
+										else
+										{
+											RenderTarget.DrawText(askVolumeStr, leadingTextFormat, askRect, textPosBrushDX);
+										}
+									}
+									else	//right orientation
+									{
+										askRect = new SharpDX.RectangleF(x - 2 - textAskWidth, y, textAskWidth, textHeight);
+										midRect = new SharpDX.RectangleF(x - 2 - textAskWidth - midWidth, y, midWidth, textHeight);
+										bidRect = new SharpDX.RectangleF(x - 2 - textAskWidth - midWidth - textBidWidth, y, textBidWidth, textHeight);
+										
+										if (element.Value.bidimbalance == true)
+										{
+											RenderTarget.DrawText(bidVolumeStr, trailingTextFormat, bidRect, bidImbalanceBrushDX);
+										}
+										else
+										{
+											RenderTarget.DrawText(bidVolumeStr, trailingTextFormat, bidRect, textPosBrushDX);
+										}
+										
+										RenderTarget.DrawText(midChar, centerTextFormat, midRect, textPosBrushDX);
+										
+										if (element.Value.askimbalance == true)
+										{
+											RenderTarget.DrawText(askVolumeStr, leadingTextFormat, askRect, askImbalanceBrushDX);
+										}
+										else
+										{
+											RenderTarget.DrawText(askVolumeStr, leadingTextFormat, askRect, textPosBrushDX);
+										}
+									}
+								}
+								leadingTextFormat.Dispose();
+								trailingTextFormat.Dispose();
+								centerTextFormat.Dispose();
+								textAskLayout.Dispose();
+								textBidLayout.Dispose();
+								midLayout.Dispose();
+				            }
+						}
+					}
+				}
+			}
+		
+			brushDX.Dispose();
+			volFillBrushDX.Dispose();
+			askVolumeBrushDX.Dispose();
+			bidVolumeBrushDX.Dispose();
+			deltaPositiveBrushDX.Dispose();
+			deltaNegativeBrushDX.Dispose();
+			textPosBrushDX.Dispose();
+			textNegBrushDX.Dispose();
+			pocBrushDX.Dispose();
+			valueAreaBrushDX.Dispose();
+			askImbalanceBrushDX.Dispose();
+			bidImbalanceBrushDX.Dispose();
+			
+
+			if(ShowPerformance)
+			{
+				double secBarCount = BarsArray[1].Count - 1;
+				double actualElapsedTime = NinjaTrader.Core.Globals.Now.Subtract(startTime).TotalSeconds;
+				Print("cycle = " + cycle
+					+ "    paintTime = " + actualElapsedTime.ToString("N6") + " Sec"
+					+ "    granular Bars = " + secBarCount + "    " + (secBarCount / int.MaxValue * 100).ToString("N6") + " % capacity"
+					+ " "
+					);
+			}
+			
+		}
+
+		
+
+		void GetXpos()
+		{
+			if(Orientation == CamsVpR4OrientationType.Right)
+			{
+				xpos = x - barWidth;
+			}
+		}
+		
+
+		
+		void GetValueArea(int i, double tickSize)
+		{
+			if(dictionaryList[i].Count > 0 && poc != 0)
+			{
+				int highIdx = 0;
+				int lowIdx = 0;
+				long upTestV = 0;
+				long dnTestV = 0;
+				long valueVol = 0;
+				long areaVol = 0;
+				valueAreaHigh = 0;
+				valueAreaLow = 0;
+				
+				List<double> priceList = new List<double>();
+				foreach (KeyValuePair<double, VolItem> element in dictionaryList[i])
+				{
+					valueVol += element.Value.total;
+					priceList.Add(element.Key);
+				}
+				valueVol = (long)(valueVol * valueAreaFac);
+				priceList.Sort();
+				
+				for (int n = 0; n <= priceList.Count - 1; ++n)
+				{
+					if(priceList[n] == poc)
+					{
+						highIdx = n;
+						lowIdx = highIdx;
+						break;
+					}
+				}
+				
+				areaVol = dictionaryList[i][poc].total;
+				while(areaVol < valueVol)
+				{
+					if(upTestV == 0)
+					{
+						for (int n = 1; (n <= SmoothVA && highIdx < priceList.Count - 1); ++n)
+						{
+							upTestV += dictionaryList[i][priceList[highIdx + 1]].total;
+							++highIdx;
+						}
+					}
+					
+					if(dnTestV == 0)
+					{
+						for (int n = 1; (n <= SmoothVA && lowIdx > 0); ++n)
+						{
+							dnTestV += dictionaryList[i][priceList[lowIdx - 1]].total;
+							--lowIdx;
+						}
+					}
+					
+					if(upTestV > dnTestV)
+					{
+						areaVol += upTestV;
+						upTestV = 0;
+					}
+					else
+					{
+						areaVol += dnTestV; 
+						dnTestV = 0;
+					}
+
+				}
+				valueAreaHigh = priceList[highIdx];
+				valueAreaLow = priceList[lowIdx];
+			}
+		}
+
+		
+		
+		
+		void FindImbalances(int i, double tickSize)
+		{
+			double askPrice = 0;
+			double bidPrice = 0;
+			long askVolume = 0;
+			long bidVolume = 0;
+			double lowPrice = 0;
+			double highPrice = 0;
+			VolItem value;
+			
+			if(dictionaryList[i].Count > 0)
+			{
+				lowPrice = dictionaryList[i].Keys.Min();
+				highPrice = dictionaryList[i].Keys.Max();
+				List<double> contPriceList = new List<double>();
+				for (double n = lowPrice; n <= highPrice; n = Instrument.MasterInstrument.RoundToTickSize(n + tickSize))
+				{
+					contPriceList.Add(n);
+				}
+				
+				for(int n = 1; n <= contPriceList.Count - 1; ++n)
+				{
+					askVolume = dictionaryList[i].TryGetValue(contPriceList[n], out value) ? dictionaryList[i][contPriceList[n]].up : 0;
+					bidVolume = dictionaryList[i].TryGetValue(contPriceList[n - 1], out value) ? dictionaryList[i][contPriceList[n - 1]].down : 0;
+					if(askVolume >= bidVolume * ImbalanceRatio)
+					{
+						if(dictionaryList[i].TryGetValue(contPriceList[n], out value))
+						{
+							dictionaryList[i][contPriceList[n]].askimbalance = true;
+						}
+						else
+						{
+						}
+					}
+				}
+
+				for(int n = 0; n <= contPriceList.Count - 2; ++n)
+				{
+					askVolume = dictionaryList[i].TryGetValue(contPriceList[n + 1], out value) ? dictionaryList[i][contPriceList[n + 1]].up : 0;
+					bidVolume = dictionaryList[i].TryGetValue(contPriceList[n], out value) ? dictionaryList[i][contPriceList[n]].down : 0;
+					if(bidVolume >= askVolume * ImbalanceRatio)
+					{
+						if(dictionaryList[i].TryGetValue(contPriceList[n], out value))
+						{
+							dictionaryList[i][contPriceList[n]].bidimbalance = true;
+						}
+						else
+						{
+						}
+					}
+				}
+				
+			}
+		}
+
+		
+		
+		private string RowVolumeString(long volume)
+		{
+			if (volume >= 100000)
+				return (volume / 1000).ToString() + "K";
+			else
+				return volume.ToString();
+		}
+		
+		
+		
+		
+
+		#region Properties
+		[NinjaScriptProperty]
+		[Display(ResourceType = typeof(Custom.Resource), Name="Scaling Scheme", Description="", Order = 0, GroupName = "NinjaScriptParameters")]
+		public CamsVpR4ScaleType ScaleType
+		{ get; set; }
+
+		[Range(1, 100)]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "WindowPercent", Description="Percent of window the largest volume bar will occupy.  For MaxOfLadder scaling scheme.",  Order = 1, GroupName = "NinjaScriptParameters")]
+		public double WindowPercent
+		{ get; set; }
+
+		[Range(0,1), NinjaScriptProperty]
+		[Display(ResourceType = typeof(Custom.Resource), Name="Scaling Number", Description="For fixed scaling scheme", Order = 2, GroupName = "NinjaScriptParameters")]
+		public double FixedScalingNumber
+		{ get; set; }
+
+		[Range(0,int.MaxValue), NinjaScriptProperty]
+		[Display(ResourceType = typeof(Custom.Resource), Name="Minimum Size", Description="For drawing tool regions, pixels", Order = 3, GroupName = "NinjaScriptParameters")]
+		public int MinSize
+		{ get; set; }
+
+		[Range(0,1), NinjaScriptProperty]
+		[Display(ResourceType = typeof(Custom.Resource), Name="Delta Scale", Description="delta bar length relative to max volume", Order = 4, GroupName = "NinjaScriptParameters")]
+		public double DeltaScale
+		{ get; set; }
+
+		[Range(0, 99)]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Bar Spacing", Description="Percent of tick size (0 - 99%), 0 = solid 99 = thin bars",  Order = 5, GroupName = "NinjaScriptParameters")]
+		public double BarSpacingPercent
+		{ get; set; }
+
+		[Range(0, double.MaxValue)]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Opacity Bars", Order = 6, GroupName = "NinjaScriptParameters")]
+		public double Opacity
+		{ get; set; }
+
+		[Range(0, double.MaxValue)]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Opacity Text", Order = 7, GroupName = "NinjaScriptParameters")]
+		public double OpacityText
+		{ get; set; }
+		
+		[Range(-1,int.MaxValue), NinjaScriptProperty]
+		[Display(ResourceType = typeof(Custom.Resource), Name="Z-Order", Description="-1 background, 999999... foreground", Order = 8, GroupName = "NinjaScriptParameters")]
+		public int ZOrder
+		{ get; set; }
+
+		[NinjaScriptProperty]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Orientation", Description="",  Order = 9, GroupName = "NinjaScriptParameters")]
+		public CamsVpR4OrientationType Orientation
+		{get; set;}
+
+		[Range(0, int.MaxValue)]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Margin", Description="Pixels",  Order = 10, GroupName = "NinjaScriptParameters")]
+		public int Margin
+		{ get; set; }
+
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Show Volume Profile", Description=" ",  Order = 11, GroupName = "NinjaScriptParameters")]
+		public bool ShowVolumeProfile
+		{ get; set; }
+
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Show Bid-Ask Profile", Description=" ",  Order = 12, GroupName = "NinjaScriptParameters")]
+		public bool ShowBidAskProfile
+		{ get; set; }
+
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Show Delta Profile", Description=" ",  Order = 13, GroupName = "NinjaScriptParameters")]
+		public bool ShowDeltaProfile
+		{ get; set; }
+
+		[NinjaScriptProperty]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Show Scale", Description="",  Order = 14, GroupName = "NinjaScriptParameters")]
+		public CamsVpR4ShowScaleType ShowScale
+		{get; set;}
+		
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Show POC", Description=" ",  Order = 15, GroupName = "NinjaScriptParameters")]
+		public bool ShowPoc
+		{ get; set; }
+		
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Show Value Area", Description=" ",  Order = 16, GroupName = "VA")]
+		public bool ShowValueArea
+		{ get; set; }
+		
+		[Range(0, 99.99)]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Value Area Percent", Description="Defines value area as percent of total, usually 70%",  Order = 17, GroupName = "VA")]
+		public double ValueAreaPercent
+		{ get; set; }
+
+		[Range(1, int.MaxValue)]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Smooth VA", Description="Group n histogram levels to smooth.  Usually 2",  Order = 18, GroupName = "VA")]
+		public int SmoothVA
+		{ get; set; }
+
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Show Volume Imbalance", Description="highlight diagonal delta greater than imbalance percent",  Order = 19, GroupName = "imbalance")]
+		public bool ShowImbalance
+		{ get; set; }
+
+		[Range(1, int.MaxValue)]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Imbalance Ratio", Description="highlight imbalance if exceeded",  Order = 20, GroupName = "imbalance")]
+		public double ImbalanceRatio
+		{ get; set; }
+
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Show Region Boundarys", Description=" ",  Order = 21, GroupName = "NinjaScriptParameters")]
+		public bool ShowRegionBoundaries
+		{ get; set; }
+		
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Enable CamsVpRegions", Description="Draw profile in mouse regions",  Order = 22, GroupName = "NinjaScriptParameters")]
+		public bool EnableCamsVpRegions
+		{ get; set; }
+		
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Show Performance", Description="Elapsed time to generate the volume profile and repaint the screen",  Order = 23, GroupName = "NinjaScriptParameters")]
+		public bool ShowPerformance
+		{ get; set; }
+		
+		[NinjaScriptProperty]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Granularity", Description="",  Order = 24, GroupName = "NinjaScriptParameters")]
+		public CamsVpR4GranularityType Granularity
+		{get; set;}
+
+		[Range(0, int.MaxValue)]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Granularity Period", Description="",  Order = 25, GroupName = "NinjaScriptParameters")]
+		public int GranularityPeriod
+		{ get; set; }
+
+		[NinjaScriptProperty]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Region From", Description="Profile data begins",  Order = 26, GroupName = "NinjaScriptParameters")]
+		public CamsVpR4RegionFromType RegionFrom
+		{get; set;}
+
+		[NinjaScriptProperty]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Region To", Description="Profile data ends",  Order = 27, GroupName = "NinjaScriptParameters")]
+		public CamsVpR4RegionToType RegionTo
+		{get; set;}
+
+		[NinjaScriptProperty]
+		[PropertyEditor("NinjaTrader.Gui.Tools.ChartAnchorTimeEditor")]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Date From", Description="Used for region by date",  Order = 28, GroupName = "NinjaScriptParameters")]
+		public DateTime DateFrom
+		{get; set;}
+
+		[NinjaScriptProperty]
+		[PropertyEditor("NinjaTrader.Gui.Tools.ChartAnchorTimeEditor")]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Date To", Description="Used for region by date",  Order = 29, GroupName = "NinjaScriptParameters")]
+		public DateTime DateTo
+		{get; set;}
+
+		[XmlIgnore]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "VolumeFillColor", Order = 30, GroupName = "NinjaScriptParameters")]
+		public Brush VolFillBrush { get; set; }
+
+		[Browsable(false)]
+		public string VolFillBrushSerialize
+		{
+			get { return Serialize.BrushToString(VolFillBrush); }
+			set { VolFillBrush = Serialize.StringToBrush(value); }
+		}
+
+		[XmlIgnore]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "BidVolumeColor", Order = 31, GroupName = "NinjaScriptParameters")]
+		public Brush BidVolumeBrush { get; set; }
+
+		[Browsable(false)]
+		public string BidVolumeBrushSerialize
+		{
+			get { return Serialize.BrushToString(BidVolumeBrush); }
+			set { BidVolumeBrush = Serialize.StringToBrush(value); }
+		}
+
+		[XmlIgnore]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "AskVolumeColor", Order = 32, GroupName = "NinjaScriptParameters")]
+		public Brush AskVolumeBrush { get; set; }
+
+		[Browsable(false)]
+		public string AskVolumeBrushSerialize
+		{
+			get { return Serialize.BrushToString(AskVolumeBrush); }
+			set { AskVolumeBrush = Serialize.StringToBrush(value); }
+		}
+
+		[XmlIgnore]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "DeltaPositiveColor", Order = 33, GroupName = "NinjaScriptParameters")]
+		public Brush DeltaPositiveBrush { get; set; }
+
+		[Browsable(false)]
+		public string DeltaPositiveBrushSerialize
+		{
+			get { return Serialize.BrushToString(DeltaPositiveBrush); }
+			set { DeltaPositiveBrush = Serialize.StringToBrush(value); }
+		}
+
+		[XmlIgnore]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "DeltaNegativeColor", Order = 34, GroupName = "NinjaScriptParameters")]
+		public Brush DeltaNegativeBrush { get; set; }
+
+		[Browsable(false)]
+		public string DeltaNegativeBrushSerialize
+		{
+			get { return Serialize.BrushToString(DeltaNegativeBrush); }
+			set { DeltaNegativeBrush = Serialize.StringToBrush(value); }
+		}
+
+		[XmlIgnore]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Text Positive Color", Order = 35, GroupName = "NinjaScriptParameters")]
+		public Brush TextPosColorBrush { get; set; }
+
+		[Browsable(false)]
+		public string TextPosColorBrushSerialize
+		{
+			get { return Serialize.BrushToString(TextPosColorBrush); }
+			set { TextPosColorBrush = Serialize.StringToBrush(value); }
+		}
+
+		[XmlIgnore]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Text Negative Color", Order = 36, GroupName = "NinjaScriptParameters")]
+		public Brush TextNegColorBrush { get; set; }
+
+		[Browsable(false)]
+		public string TextNegColorBrushSerialize
+		{
+			get { return Serialize.BrushToString(TextNegColorBrush); }
+			set { TextNegColorBrush = Serialize.StringToBrush(value); }
+		}
+
+		[XmlIgnore]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "POC Color", Order = 37, GroupName = "NinjaScriptParameters")]
+		public Brush PocColorBrush { get; set; }
+
+		[Browsable(false)]
+		public string PocColorBrushSerialize
+		{
+			get { return Serialize.BrushToString(PocColorBrush); }
+			set { PocColorBrush = Serialize.StringToBrush(value); }
+		}
+
+		[XmlIgnore]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Value Area Color", Order = 38, GroupName = "NinjaScriptParameters")]
+		public Brush ValueAreaColorBrush { get; set; }
+
+		[Browsable(false)]
+		public string ValueAreaColorBrushSerialize
+		{
+			get { return Serialize.BrushToString(ValueAreaColorBrush); }
+			set { ValueAreaColorBrush = Serialize.StringToBrush(value); }
+		}
+		
+		[XmlIgnore]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Bid Imbalance Hightlight Color", Order = 39, GroupName = "NinjaScriptParameters")]
+		public Brush BidImbalanceBrush { get; set; }
+
+		[Browsable(false)]
+		public string BidImbalanceBrushSerialize
+		{
+			get { return Serialize.BrushToString(BidImbalanceBrush); }
+			set { BidImbalanceBrush = Serialize.StringToBrush(value); }
+		}
+		
+		[XmlIgnore]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Ask Imbalance Hightlight Color", Order = 40, GroupName = "NinjaScriptParameters")]
+		public Brush AskImbalanceBrush { get; set; }
+
+		[Browsable(false)]
+		public string AskImbalanceBrushSerialize
+		{
+			get { return Serialize.BrushToString(AskImbalanceBrush); }
+			set { AskImbalanceBrush = Serialize.StringToBrush(value); }
+		}
+		
+		#endregion
+	}
 }
+public enum CamsVpR4GranularityType {Minute, Tick, Day, Volume}
+public enum CamsVpR4OrientationType {Left, Right}
+public enum CamsVpR4ScaleType{MaxOfLadder, Fixed}
+public enum CamsVpR4RegionFromType{All, Window, Date, Bar, Daily, None}
+public enum CamsVpR4RegionToType{Current, Window, Date, Bar, Daily, None}
+public enum CamsVpR4ShowScaleType{Volume, BidAsk, Delta, None}
+
+#region NinjaScript generated code. Neither change nor remove.
+
+namespace NinjaTrader.NinjaScript.Indicators
+{
+	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
+	{
+		private Cam.CamsVpR4[] cacheCamsVpR4;
+		public Cam.CamsVpR4 CamsVpR4(CamsVpR4ScaleType scaleType, double fixedScalingNumber, int minSize, double deltaScale, int zOrder, CamsVpR4OrientationType orientation, CamsVpR4ShowScaleType showScale, CamsVpR4GranularityType granularity, CamsVpR4RegionFromType regionFrom, CamsVpR4RegionToType regionTo, DateTime dateFrom, DateTime dateTo)
+		{
+			return CamsVpR4(Input, scaleType, fixedScalingNumber, minSize, deltaScale, zOrder, orientation, showScale, granularity, regionFrom, regionTo, dateFrom, dateTo);
+		}
+
+		public Cam.CamsVpR4 CamsVpR4(ISeries<double> input, CamsVpR4ScaleType scaleType, double fixedScalingNumber, int minSize, double deltaScale, int zOrder, CamsVpR4OrientationType orientation, CamsVpR4ShowScaleType showScale, CamsVpR4GranularityType granularity, CamsVpR4RegionFromType regionFrom, CamsVpR4RegionToType regionTo, DateTime dateFrom, DateTime dateTo)
+		{
+			if (cacheCamsVpR4 != null)
+				for (int idx = 0; idx < cacheCamsVpR4.Length; idx++)
+					if (cacheCamsVpR4[idx] != null && cacheCamsVpR4[idx].ScaleType == scaleType && cacheCamsVpR4[idx].FixedScalingNumber == fixedScalingNumber && cacheCamsVpR4[idx].MinSize == minSize && cacheCamsVpR4[idx].DeltaScale == deltaScale && cacheCamsVpR4[idx].ZOrder == zOrder && cacheCamsVpR4[idx].Orientation == orientation && cacheCamsVpR4[idx].ShowScale == showScale && cacheCamsVpR4[idx].Granularity == granularity && cacheCamsVpR4[idx].RegionFrom == regionFrom && cacheCamsVpR4[idx].RegionTo == regionTo && cacheCamsVpR4[idx].DateFrom == dateFrom && cacheCamsVpR4[idx].DateTo == dateTo && cacheCamsVpR4[idx].EqualsInput(input))
+						return cacheCamsVpR4[idx];
+			return CacheIndicator<Cam.CamsVpR4>(new Cam.CamsVpR4(){ ScaleType = scaleType, FixedScalingNumber = fixedScalingNumber, MinSize = minSize, DeltaScale = deltaScale, ZOrder = zOrder, Orientation = orientation, ShowScale = showScale, Granularity = granularity, RegionFrom = regionFrom, RegionTo = regionTo, DateFrom = dateFrom, DateTo = dateTo }, input, ref cacheCamsVpR4);
+		}
+	}
+}
+
+namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
+{
+	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
+	{
+		public Indicators.Cam.CamsVpR4 CamsVpR4(CamsVpR4ScaleType scaleType, double fixedScalingNumber, int minSize, double deltaScale, int zOrder, CamsVpR4OrientationType orientation, CamsVpR4ShowScaleType showScale, CamsVpR4GranularityType granularity, CamsVpR4RegionFromType regionFrom, CamsVpR4RegionToType regionTo, DateTime dateFrom, DateTime dateTo)
+		{
+			return indicator.CamsVpR4(Input, scaleType, fixedScalingNumber, minSize, deltaScale, zOrder, orientation, showScale, granularity, regionFrom, regionTo, dateFrom, dateTo);
+		}
+
+		public Indicators.Cam.CamsVpR4 CamsVpR4(ISeries<double> input , CamsVpR4ScaleType scaleType, double fixedScalingNumber, int minSize, double deltaScale, int zOrder, CamsVpR4OrientationType orientation, CamsVpR4ShowScaleType showScale, CamsVpR4GranularityType granularity, CamsVpR4RegionFromType regionFrom, CamsVpR4RegionToType regionTo, DateTime dateFrom, DateTime dateTo)
+		{
+			return indicator.CamsVpR4(input, scaleType, fixedScalingNumber, minSize, deltaScale, zOrder, orientation, showScale, granularity, regionFrom, regionTo, dateFrom, dateTo);
+		}
+	}
+}
+
+namespace NinjaTrader.NinjaScript.Strategies
+{
+	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
+	{
+		public Indicators.Cam.CamsVpR4 CamsVpR4(CamsVpR4ScaleType scaleType, double fixedScalingNumber, int minSize, double deltaScale, int zOrder, CamsVpR4OrientationType orientation, CamsVpR4ShowScaleType showScale, CamsVpR4GranularityType granularity, CamsVpR4RegionFromType regionFrom, CamsVpR4RegionToType regionTo, DateTime dateFrom, DateTime dateTo)
+		{
+			return indicator.CamsVpR4(Input, scaleType, fixedScalingNumber, minSize, deltaScale, zOrder, orientation, showScale, granularity, regionFrom, regionTo, dateFrom, dateTo);
+		}
+
+		public Indicators.Cam.CamsVpR4 CamsVpR4(ISeries<double> input , CamsVpR4ScaleType scaleType, double fixedScalingNumber, int minSize, double deltaScale, int zOrder, CamsVpR4OrientationType orientation, CamsVpR4ShowScaleType showScale, CamsVpR4GranularityType granularity, CamsVpR4RegionFromType regionFrom, CamsVpR4RegionToType regionTo, DateTime dateFrom, DateTime dateTo)
+		{
+			return indicator.CamsVpR4(input, scaleType, fixedScalingNumber, minSize, deltaScale, zOrder, orientation, showScale, granularity, regionFrom, regionTo, dateFrom, dateTo);
+		}
+	}
+}
+
+#endregion
