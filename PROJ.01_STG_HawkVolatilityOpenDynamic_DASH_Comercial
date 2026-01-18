@@ -1656,11 +1656,11 @@ namespace NinjaTrader.NinjaScript
 }
 
 // -----------------------------------------------------------------------------
-// Strategy HawkVolatilityOpenDynamic com painel embutido exclusivo (HVO_*).
+// Strategy HawkVolatilityOpen com painel embutido exclusivo (HVO_*).
 // -----------------------------------------------------------------------------
 namespace NinjaTrader.NinjaScript.Strategies
 {
-    public class HawkVolatilityOpenDynamic : Strategy
+    public class HawkVolatilityOpen : Strategy
     {
         public enum InvertModeType
         {
@@ -1677,77 +1677,51 @@ namespace NinjaTrader.NinjaScript.Strategies
         [Display(Name = "Default Mode", Order = 1, GroupName = "MODE")]
         public bool DefaultMode { get; set; }
 
-        [NinjaScriptProperty, Category("Parameters"), DisplayName("Contract Quantity (máx)")]
         public int Contracts { get; set; }
-        [NinjaScriptProperty, Category("Parameters"), DisplayName("Stop fixo ($/contract)")]
         public double StopPerContract { get; set; }
-        [NinjaScriptProperty, Category("Parameters"), DisplayName("Entry Time Normal (HH:mm:ss)")]
         public string EntryTimeNormalHHmmss { get; set; }
-        [NinjaScriptProperty, Category("Parameters"), DisplayName("Entry Time DST USA (HH:mm:ss)")]
         public string EntryTimeDstUsaHHmmss { get; set; }
-        [NinjaScriptProperty, Category("Parameters"), DisplayName("Usar Stop ATR")]
         public bool UseStopATR { get; set; }
-        [NinjaScriptProperty, Category("Parameters"), DisplayName("Período ATR")]
         public int ATRPeriod { get; set; }
-        [NinjaScriptProperty, Category("Parameters"), DisplayName("Fator ATR")]
         public double ATRFactor { get; set; }
-        [NinjaScriptProperty, Category("Parameters"), DisplayName("ATR TimeFrame (min)")]
         public int ATRTimeFrame { get; set; }
-        [NinjaScriptProperty, Category("Parameters"), DisplayName("Max Risk ATR ($ por trade)")]
         public double MaxRiskPerTrade { get; set; }
-        [NinjaScriptProperty, Category("Parameters"), DisplayName("Target Factor (Risco x)")]
         public double TargetFactor { get; set; }
-        [NinjaScriptProperty, Category("Parameters"), DisplayName("Entrar Invertido (hedge)")]
         public bool EnterInverted { get; set; }
-        [NinjaScriptProperty, Category("Parameters"), DisplayName("Invert Mode")]
         public InvertModeType InvertMode { get; set; }
-        [NinjaScriptProperty, Category("Parameters"), DisplayName("Invert Stop Offset (ticks)")]
         public int InvertStopOffsetTicks { get; set; }
-        [NinjaScriptProperty, Category("Parameters"), DisplayName("BreakEven At (R múltiplos)")]
         public double BreakEvenAtRR { get; set; }
-        [NinjaScriptProperty, Category("Parameters"), DisplayName("BreakEven Lock (R múltiplos)")]
         public double BreakEvenLockRR { get; set; }
 
-        [NinjaScriptProperty, Category("SuperTrend"), DisplayName("Ativar filtro SuperTrend")]
         public bool UseSuperTrend { get; set; }
-        [NinjaScriptProperty, Category("SuperTrend"), DisplayName("SuperTrend TimeFrame (min)")]
         public int STTimeFrame { get; set; }
-        [NinjaScriptProperty, Category("SuperTrend"), DisplayName("Período ST")]
         public int STPeriod { get; set; }
-        [NinjaScriptProperty, Category("SuperTrend"), DisplayName("Fator ST")]
         public double STFactor { get; set; }
-        [NinjaScriptProperty, Category("SuperTrend"), DisplayName("MA Type")]
         public MovingAverageType STMaType { get; set; }
-        [NinjaScriptProperty, Category("SuperTrend"), DisplayName("Smooth")]
         public int STSmooth { get; set; }
-        [NinjaScriptProperty, Category("SuperTrend"), DisplayName("SuperTrend: Só barra fechada?")]
         public bool SuperTrendOnBarClose { get; set; }
 
-        [NinjaScriptProperty, Category("Risk / Session"), DisplayName("Auto-close enabled")]
+        [NinjaScriptProperty, Category("RISK / SESSION"), DisplayName("AutoClose Enabled")]
         public bool AutoCloseEnabled { get; set; }
-        [NinjaScriptProperty, Category("Risk / Session"), DisplayName("Auto-close time (HH:mm:ss Brasilia)")]
+        [NinjaScriptProperty, Category("RISK / SESSION"), DisplayName("AutoClose Time")]
         public string AutoCloseTimeHHmmss { get; set; }
-        [NinjaScriptProperty, Category("Parameters"), DisplayName("Panel StrategyKey (opcional)")]
         public string PanelStrategyKey { get; set; }
-        [NinjaScriptProperty, Category("Parameters"), DisplayName("Panel Title")]
         public string PanelTitle { get; set; }
 
-        [NinjaScriptProperty, Category("Parameters"), DisplayName("InstanceTag (opcional)")]
         public string InstanceTag { get; set; }
 
-        [NinjaScriptProperty, Category("Parameters"), DisplayName("Enable panel diagnostics")]
+        [NinjaScriptProperty, Category("PANEL"), DisplayName("Enable Panel Diagnostics")]
         public bool EnablePanelDiagnostics { get; set; }
 
-        [NinjaScriptProperty, Category("Diagnóstico"), DisplayName("Panel Publish Interval (s)")]
         public int PanelPublishIntervalSeconds { get; set; } = 1;
 
-        [NinjaScriptProperty, Category("Audit Log"), DisplayName("Enable Trade Audit Log")]
+        [NinjaScriptProperty, Category("AUDIT / LOG"), DisplayName("Enable Trade Audit Log")]
         public bool EnableTradeAuditLog { get; set; } = true;
-        [NinjaScriptProperty, Category("Audit Log"), DisplayName("Enable Debug Log")]
+        [NinjaScriptProperty, Category("AUDIT / LOG"), DisplayName("Enable Debug Log")]
         public bool EnableDebugLog { get; set; } = false;
-        [NinjaScriptProperty, Category("Audit Log"), DisplayName("Log to File")]
+        [NinjaScriptProperty, Category("AUDIT / LOG"), DisplayName("Log to File")]
         public bool LogToFile { get; set; } = false;
-        [NinjaScriptProperty, Category("Audit Log"), DisplayName("Log Throttle Seconds")]
+        [NinjaScriptProperty, Category("AUDIT / LOG"), DisplayName("Log Throttle Seconds")]
         public int LogThrottleSeconds { get; set; } = 5;
 
         // Campos internos
@@ -1881,7 +1855,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             if (State == State.SetDefaults)
             {
-                Name = "HawkVolatilityOpenDynamic";
+                Name = "HawkVolatilityOpen";
                 Description = "Hedge NQ/MNQ auto-dinâmico (v41 base).";
 
                 HedgeMode = false;
@@ -1916,7 +1890,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 SuperTrendOnBarClose = true;
 
                 AutoCloseEnabled = true;
-                AutoCloseTimeHHmmss = "17:55:00";
+                AutoCloseTimeHHmmss = "17:00:00";
 
                 LineLengthBars = 30;
                 LabelTickOffset = 2;
