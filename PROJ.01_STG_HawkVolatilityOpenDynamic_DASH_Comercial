@@ -1669,6 +1669,14 @@ namespace NinjaTrader.NinjaScript.Strategies
             InvertedStopEntry
         }
 
+        [NinjaScriptProperty]
+        [Display(Name = "Hedge Mode", Order = 0, GroupName = "MODE")]
+        public bool HedgeMode { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Default Mode", Order = 1, GroupName = "MODE")]
+        public bool DefaultMode { get; set; }
+
         [NinjaScriptProperty, Category("Parameters"), DisplayName("Contract Quantity (máx)")]
         public int Contracts { get; set; }
         [NinjaScriptProperty, Category("Parameters"), DisplayName("Stop fixo ($/contract)")]
@@ -1860,6 +1868,14 @@ namespace NinjaTrader.NinjaScript.Strategies
         // Exit reason hint
         private string exitReasonHint = null;
         private DateTime exitReasonHintTradingDay = DateTime.MinValue;
+        private bool hedgeModelApplied = false;
+        // Hedge Model é um preset travado: após State.Configure, parâmetros do Hedge
+        // (ATR, SuperTrend, Hedge, BE, AutoClose) não podem ser alterados fora do ApplyHedgeModel().
+        private bool hedgeModelFrozen = false;
+        private bool defaultModelApplied = false;
+        // Default Model é um preset travado: após State.Configure, parâmetros do Default
+        // (ATR, SuperTrend, BE, Target, AutoClose) não podem ser alterados fora do ApplyDefaultModel().
+        private bool defaultModelFrozen = false;
 
         protected override void OnStateChange()
         {
@@ -1867,6 +1883,9 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 Name = "HawkVolatilityOpenDynamic";
                 Description = "Hedge NQ/MNQ auto-dinâmico (v41 base).";
+
+                HedgeMode = false;
+                DefaultMode = false;
 
                 Contracts = 2;
                 StopPerContract = 25;
@@ -1920,6 +1939,14 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
             else if (State == State.Configure)
             {
+                if (DefaultMode)
+                    ApplyDefaultModel();
+                else if (HedgeMode)
+                    ApplyHedgeModel();
+
+                hedgeModelFrozen = true;
+                defaultModelFrozen = true;
+
                 if (ATRTimeFrame > 0)
                 {
                     AddDataSeries(Data.BarsPeriodType.Minute, ATRTimeFrame);
@@ -1968,6 +1995,78 @@ namespace NinjaTrader.NinjaScript.Strategies
                 PublishPanelOffSnapshot("Terminated");
                 try { panelHelper?.Dispose(); panelHelper = null; } catch { }
             }
+        }
+
+        private void ApplyHedgeModel()
+        {
+            // Guard centralizado: Hedge Model só aplica uma vez e apenas em State.Configure.
+            if (hedgeModelApplied || hedgeModelFrozen || State != State.Configure)
+                return;
+
+            // Parâmetros do Hedge Model (sem depender de defaults/DEV).
+            UseStopATR = true;
+            ATRPeriod = 14;
+            ATRFactor = 2.5;
+            ATRTimeFrame = 60;
+            MaxRiskPerTrade = 200.0;
+
+            TargetFactor = 3.0;
+
+            EnterInverted = true;
+            InvertMode = InvertModeType.InvertedStopEntry;
+            InvertStopOffsetTicks = 0;
+
+            BreakEvenAtRR = 2.5;
+            BreakEvenLockRR = 1.0;
+
+            UseSuperTrend = true;
+            STTimeFrame = 14;
+            STPeriod = 14;
+            STFactor = 2.618;
+            STMaType = MovingAverageType.TMA;
+            STSmooth = 14;
+            SuperTrendOnBarClose = false;
+
+            AutoCloseEnabled = true;
+            AutoCloseTimeHHmmss = "17:00:00";
+
+            hedgeModelApplied = true;
+        }
+
+        private void ApplyDefaultModel()
+        {
+            if (defaultModelApplied || defaultModelFrozen || State != State.Configure)
+                return;
+
+            // ===== DEFAULT MODE PRESET =====
+
+            UseStopATR = true;
+            ATRPeriod = 14;
+            ATRFactor = 2.0;
+            ATRTimeFrame = 60;
+            MaxRiskPerTrade = 150.0;
+
+            TargetFactor = 4.0;
+
+            BreakEvenAtRR = 3.0;
+            BreakEvenLockRR = 1.0;
+
+            EnterInverted = false;
+            InvertMode = InvertModeType.Disabled;
+            InvertStopOffsetTicks = 2;
+
+            UseSuperTrend = true;
+            STFactor = 2.618;
+            STMaType = MovingAverageType.HMA;
+            STPeriod = 14;
+            STSmooth = 14;
+            STTimeFrame = 9;
+            SuperTrendOnBarClose = false;
+
+            AutoCloseEnabled = true;
+            AutoCloseTimeHHmmss = "17:00:00";
+
+            defaultModelApplied = true;
         }
 
         private string GetCacheKey()
