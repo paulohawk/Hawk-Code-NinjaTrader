@@ -1671,34 +1671,53 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         [NinjaScriptProperty, Category("Parameters"), DisplayName("Contract Quantity (máx)")]
         public int Contracts { get; set; }
+        [NinjaScriptProperty, Category("Parameters"), DisplayName("Stop fixo ($/contract)")]
         public double StopPerContract { get; set; }
         [NinjaScriptProperty, Category("Parameters"), DisplayName("Entry Time Normal (HH:mm:ss)")]
         public string EntryTimeNormalHHmmss { get; set; }
         [NinjaScriptProperty, Category("Parameters"), DisplayName("Entry Time DST USA (HH:mm:ss)")]
         public string EntryTimeDstUsaHHmmss { get; set; }
+        [NinjaScriptProperty, Category("Parameters"), DisplayName("Usar Stop ATR")]
         public bool UseStopATR { get; set; }
+        [NinjaScriptProperty, Category("Parameters"), DisplayName("Período ATR")]
         public int ATRPeriod { get; set; }
+        [NinjaScriptProperty, Category("Parameters"), DisplayName("Fator ATR")]
         public double ATRFactor { get; set; }
+        [NinjaScriptProperty, Category("Parameters"), DisplayName("ATR TimeFrame (min)")]
         public int ATRTimeFrame { get; set; }
+        [NinjaScriptProperty, Category("Parameters"), DisplayName("Max Risk ATR ($ por trade)")]
         public double MaxRiskPerTrade { get; set; }
+        [NinjaScriptProperty, Category("Parameters"), DisplayName("Target Factor (Risco x)")]
         public double TargetFactor { get; set; }
         [NinjaScriptProperty, Category("Parameters"), DisplayName("Entrar Invertido (hedge)")]
         public bool EnterInverted { get; set; }
         [NinjaScriptProperty, Category("Parameters"), DisplayName("Invert Mode")]
         public InvertModeType InvertMode { get; set; }
+        [NinjaScriptProperty, Category("Parameters"), DisplayName("Invert Stop Offset (ticks)")]
         public int InvertStopOffsetTicks { get; set; }
+        [NinjaScriptProperty, Category("Parameters"), DisplayName("BreakEven At (R múltiplos)")]
         public double BreakEvenAtRR { get; set; }
+        [NinjaScriptProperty, Category("Parameters"), DisplayName("BreakEven Lock (R múltiplos)")]
         public double BreakEvenLockRR { get; set; }
 
+        [NinjaScriptProperty, Category("SuperTrend"), DisplayName("Ativar filtro SuperTrend")]
         public bool UseSuperTrend { get; set; }
+        [NinjaScriptProperty, Category("SuperTrend"), DisplayName("SuperTrend TimeFrame (min)")]
         public int STTimeFrame { get; set; }
+        [NinjaScriptProperty, Category("SuperTrend"), DisplayName("Período ST")]
         public int STPeriod { get; set; }
+        [NinjaScriptProperty, Category("SuperTrend"), DisplayName("Fator ST")]
         public double STFactor { get; set; }
+        [NinjaScriptProperty, Category("SuperTrend"), DisplayName("MA Type")]
         public MovingAverageType STMaType { get; set; }
+        [NinjaScriptProperty, Category("SuperTrend"), DisplayName("Smooth")]
         public int STSmooth { get; set; }
+        [NinjaScriptProperty, Category("SuperTrend"), DisplayName("SuperTrend: Só barra fechada?")]
         public bool SuperTrendOnBarClose { get; set; }
 
+        [NinjaScriptProperty, Category("Risk / Session"), DisplayName("Auto-close enabled")]
         public bool AutoCloseEnabled { get; set; }
+        [NinjaScriptProperty, Category("Risk / Session"), DisplayName("Auto-close time (HH:mm:ss Brasilia)")]
         public string AutoCloseTimeHHmmss { get; set; }
         [NinjaScriptProperty, Category("Parameters"), DisplayName("Panel StrategyKey (opcional)")]
         public string PanelStrategyKey { get; set; }
@@ -1846,8 +1865,8 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             if (State == State.SetDefaults)
             {
-                Name = "HawkVolatilityOpenDynamicHedge";
-                Description = "Estratégia automatizada de abertura com módulo Hedge integrado para NQ/MNQ.";
+                Name = "HawkVolatilityOpenDynamic";
+                Description = "Hedge NQ/MNQ auto-dinâmico (v41 base).";
 
                 Contracts = 2;
                 StopPerContract = 25;
@@ -1855,30 +1874,30 @@ namespace NinjaTrader.NinjaScript.Strategies
                 EntryTimeNormalHHmmss = "11:29:30";
                 EntryTimeDstUsaHHmmss = "10:29:30";
 
-                UseStopATR = true;
+                UseStopATR = false;
                 ATRPeriod = 14;
-                ATRFactor = 2.5;
-                ATRTimeFrame = 60;
+                ATRFactor = 1.0;
+                ATRTimeFrame = 5;
 
                 MaxRiskPerTrade = 200.0;
 
-                TargetFactor = 3.0;
+                TargetFactor = 5.0;
 
-                EnterInverted = true;
-                InvertMode = InvertModeType.InvertedStopEntry;
-                InvertStopOffsetTicks = 0;
-                BreakEvenAtRR = 2.5;
+                EnterInverted = false;
+                InvertMode = InvertModeType.Disabled;
+                InvertStopOffsetTicks = 2;
+                BreakEvenAtRR = 4.0;
                 BreakEvenLockRR = 1.0;
                 UseSuperTrend = true;
-                STTimeFrame = 14;
+                STTimeFrame = 5;
                 STPeriod = 14;
                 STFactor = 2.618;
-                STMaType = MovingAverageType.TMA;
+                STMaType = MovingAverageType.HMA;
                 STSmooth = 14;
-                SuperTrendOnBarClose = false;
+                SuperTrendOnBarClose = true;
 
                 AutoCloseEnabled = true;
-                AutoCloseTimeHHmmss = "17:00:00";
+                AutoCloseTimeHHmmss = "17:55:00";
 
                 LineLengthBars = 30;
                 LabelTickOffset = 2;
