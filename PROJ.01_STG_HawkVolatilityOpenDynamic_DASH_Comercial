@@ -1838,6 +1838,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         private string cachedPnlTotal = "-";
 
         private bool hedgeBlockedByTime = false;
+        private DateTime hedgeBlockTradingDay = DateTime.MinValue;
         private bool hedgeTimeWarningShown = false;
         private SimpleFont hedgeTimeWarningFont;
         private TimeSpan hedgeMinStartTime = new TimeSpan(11, 0, 0);
@@ -2062,10 +2063,17 @@ namespace NinjaTrader.NinjaScript.Strategies
                 strategyRealtimeStart = GetSafeTime();
                 hedgeTimeWarningShown = false;
 
-                hedgeBlockedByTime = IsREdgeTimeBlocked();
-                if (IsREdgeTimeBlocked())
+                DateTime td = GetTradingDay(strategyRealtimeStart);
+                if (IsREdgeConfigured() &&
+                    strategyRealtimeStart != Core.Globals.MinDate &&
+                    strategyRealtimeStart.TimeOfDay > hedgeMinStartTime)
+                    hedgeBlockTradingDay = td;
+                else
+                    hedgeBlockTradingDay = DateTime.MinValue;
+
+                hedgeBlockedByTime = IsREdgeTimeBlockedForDay(td);
+                if (hedgeBlockedByTime)
                 {
-                    DateTime td = GetTradingDay(strategyRealtimeStart);
                     if (invertPlanArmed || invertStopTriggered || (invertStopEntryOrder != null && IsOrderActive(invertStopEntryOrder)))
                         CancelAllHedgeArtifacts("BlockedByTime_Realtime", td);
 
@@ -3062,6 +3070,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             invertPlanBeArmed = false;
             activeEntrySignal = "";
             activeEntrySignalDay = DateTime.MinValue;
+            hedgeBlockTradingDay = DateTime.MinValue;
+            hedgeBlockedByTime = false;
 
             dayStatus = "Waiting";
             dayQtyCache = null;
@@ -3080,27 +3090,21 @@ namespace NinjaTrader.NinjaScript.Strategies
             return EnterInverted ? InvertModeType.InvertedImmediate : InvertModeType.Disabled;
         }
 
-        private bool IsStartTimeBlocked()
-        {
-            if (State != State.Realtime) return false;
-            if (strategyRealtimeStart == Core.Globals.MinDate) return false;
-
-            return strategyRealtimeStart.TimeOfDay > hedgeMinStartTime;
-        }
-
         private bool IsREdgeConfigured()
         {
             return InvertMode == InvertModeType.InvertedStopEntry;
         }
 
-        private bool IsREdgeTimeBlocked()
+        private bool IsREdgeTimeBlockedForDay(DateTime tradingDay)
         {
-            return IsREdgeConfigured() && IsStartTimeBlocked();
+            return IsREdgeConfigured()
+                && hedgeBlockTradingDay != DateTime.MinValue
+                && hedgeBlockTradingDay.Date == tradingDay.Date;
         }
 
-        private bool IsHedgeAllowedNow()
+        private bool IsHedgeAllowedNow(DateTime tradingDay)
         {
-            return State == State.Realtime && !IsREdgeTimeBlocked();
+            return State == State.Realtime && !IsREdgeTimeBlockedForDay(tradingDay);
         }
 
         private string GetActiveEntrySignal(DateTime tradingDay)
@@ -3163,7 +3167,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             if (State == State.Realtime)
             {
-                if (IsREdgeTimeBlocked())
+                if (IsREdgeTimeBlockedForDay(tradingDay))
                 {
                     CancelAllHedgeArtifacts("BlockedByTime_Arm", tradingDay);
                     Audit("InvertPlanBlockedByTime",
@@ -3336,9 +3340,12 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (BarsInProgress != 0) return;
             if (CurrentBars == null || CurrentBars.Length == 0) return;
 
+            DateTime closeTime = Times[0][0];
+            DateTime tradingDay = GetTradingDay(closeTime);
+
             if (State == State.Realtime)
             {
-                hedgeBlockedByTime = IsREdgeTimeBlocked();
+                hedgeBlockedByTime = IsREdgeTimeBlockedForDay(tradingDay);
                 if (hedgeBlockedByTime && !hedgeTimeWarningShown)
                 {
                     Draw.TextFixed(
@@ -3364,9 +3371,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
 
             if (CurrentBars[0] < 2) return;
-
-            DateTime closeTime = Times[0][0];
-            DateTime tradingDay = GetTradingDay(closeTime);
 
             if (lastTradeDate != tradingDay)
             {
@@ -3457,7 +3461,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     closeTime >= scheduledTime &&
                     closeTime <= scheduledTimeMax)
                 {
-                    if (IsREdgeTimeBlocked())
+                    if (IsREdgeTimeBlockedForDay(tradingDay))
                     {
                         DateTime td = tradingDay;
                         bool shouldAudit = lastInvertPlanCancelDate.Date != td.Date;
@@ -3543,7 +3547,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                                 lastInvertPlanCancelDate = tradingDay.Date;
                             }
                         }
-                        else if (!IsHedgeAllowedNow())
+                        else if (!IsHedgeAllowedNow(tradingDay))
                         {
                             if (lastInvertPlanCancelDate.Date != tradingDay.Date)
                             {
@@ -3569,7 +3573,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                                 BreakEvenAtRR, BreakEvenLockRR, entryRef, stopPrice, targetPrice);
                         }
 
-                        if (IsHedgeAllowedNow())
+                        if (IsHedgeAllowedNow(tradingDay))
                         {
                             tradedToday = true;
                             lastTradeDate = tradingDay;
@@ -3610,7 +3614,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (Position != null && Position.MarketPosition != MarketPosition.Flat)
                 EnsureBracketAlive("OnBarUpdate", "MissingOrDead");
 
-            if (State == State.Realtime && IsREdgeTimeBlocked())
+            if (State == State.Realtime && IsREdgeTimeBlockedForDay(tradingDay))
             {
                 dayStatus = "OUT OF TIME";
             }
@@ -3860,13 +3864,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             string orderName = order.Name ?? string.Empty;
 
-            if (IsREdgeTimeBlocked() &&
+            DateTime tradingDay = GetTradingDay(time);
+
+            if (IsREdgeTimeBlockedForDay(tradingDay) &&
                 (order == invertStopEntryOrder || orderName.Equals("InvertStopEntry", StringComparison.OrdinalIgnoreCase)))
             {
                 Audit("ExecutionBlockedByTime",
                     $"time={GetSafeTime():HH:mm:ss} execId={executionId} name={orderName} qty={quantity} price={F0(price)}");
 
-                DateTime tradingDay = GetTradingDay(time);
                 CancelAllHedgeArtifacts("BlockedByTime_Exec", tradingDay);
                 return;
             }
@@ -3876,7 +3881,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (order.OrderState == OrderState.Filled || order.OrderState == OrderState.PartFilled)
                 {
                     activeEntrySignal = "InvertStopEntry";
-                    activeEntrySignalDay = GetTradingDay(time);
+                    activeEntrySignalDay = tradingDay;
                     invertStopTriggered = true;
                     invertPlanArmed = false;
                     invertPlanBeArmed = false;
