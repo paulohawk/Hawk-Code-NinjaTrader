@@ -438,6 +438,7 @@ namespace NinjaTrader.NinjaScript
 
             streakStack.Children.Add(hedgeRow);
             streakStack.Children.Add(_hedgeStateText);
+            streakStack.Children.Add(_riskWarningText);
             streakRow.Children.Add(streakStack); Grid.SetColumn(streakStack, 2);
 
             main.Children.Add(streakRow);
