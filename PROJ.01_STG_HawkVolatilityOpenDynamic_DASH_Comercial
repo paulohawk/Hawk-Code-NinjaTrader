@@ -62,6 +62,7 @@ namespace NinjaTrader.NinjaScript
             public string EndDayText { get; set; }
             public bool? MainEnabled { get; set; }
             public bool? HedgeEnabled { get; set; }
+            public string RiskWarningText { get; set; }
 
             public string DayTradeStatus { get; set; }
             public int? DayQuantity { get; set; }
@@ -168,6 +169,7 @@ namespace NinjaTrader.NinjaScript
         private TextBlock _txtMaxLoss;
         private WpfEllipse _bulletHedge;
         private TextBlock _hedgeStateText;
+        private TextBlock _riskWarningText;
         private bool _hedgeEnabled = false;
 
         private TextBlock _lblDayResum;
@@ -420,8 +422,21 @@ namespace NinjaTrader.NinjaScript
 
             _hedgeStateText = new TextBlock { Text = "Off", Foreground = Brushes.Gray, FontSize = CompactFontSize, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, RowSpacing, 0, 0) };
 
+            _riskWarningText = new TextBlock
+            {
+                Text = "",
+                Foreground = Brushes.Goldenrod,
+                FontSize = 11,
+                Margin = new Thickness(0, 2, 0, 4),
+                TextWrapping = TextWrapping.NoWrap,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Visibility = Visibility.Collapsed
+            };
+
             streakStack.Children.Add(hedgeRow);
             streakStack.Children.Add(_hedgeStateText);
+            streakStack.Children.Add(_riskWarningText);
             streakRow.Children.Add(streakStack); Grid.SetColumn(streakStack, 2);
 
             main.Children.Add(streakRow);
@@ -614,6 +629,7 @@ namespace NinjaTrader.NinjaScript
             setFont(_txtMaxLoss);
             setFont(_drSentence, Math.Max(8.5, font - 1.0));
             if (_lblDayResum != null) _lblDayResum.FontSize = font;
+            if (_riskWarningText != null) _riskWarningText.FontSize = Math.Max(10.0, font);
         }
 
         private void SetDayResumBulletAndTitleColor(bool hasTradeOrOpen)
@@ -685,6 +701,7 @@ namespace NinjaTrader.NinjaScript
                 _hedgeEnabled = false;
                 if (_bulletHedge != null) _bulletHedge.Fill = InactiveBulletBrush;
                 if (_hedgeStateText != null) { _hedgeStateText.Text = "Off"; _hedgeStateText.Foreground = Brushes.Gray; }
+                if (_riskWarningText != null) { _riskWarningText.Text = ""; _riskWarningText.Visibility = Visibility.Collapsed; }
 
                 SetDayResum(null, null, null, null, null, null, null);
             }
@@ -850,6 +867,25 @@ namespace NinjaTrader.NinjaScript
                     _tbEndDayValue.Foreground = BronzeBrush;
                 }
                 UpdateBulletsAfterStateChange();
+            }
+            catch { }
+        }
+
+        public void SetRiskWarningText(string text)
+        {
+            try
+            {
+                if (_riskWarningText == null) return;
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    _riskWarningText.Text = text;
+                    _riskWarningText.Visibility = Visibility.Visible;
+                }
+                else
+                {
+                    _riskWarningText.Text = "";
+                    _riskWarningText.Visibility = Visibility.Collapsed;
+                }
             }
             catch { }
         }
@@ -1482,6 +1518,7 @@ namespace NinjaTrader.NinjaScript
                 embeddedControl.ForceSetATREnabled(snap.ATREnabled ?? false);
                 embeddedControl.ForceSetHedgeEnabled(snap.HedgeEnabled ?? false);
                 embeddedControl.ForceSetMainEnabled(snap.MainEnabled ?? false);
+                embeddedControl.SetRiskWarningText(snap.RiskWarningText);
 
                 embeddedControl.UpdateBulletsAfterStateChange();
             }
@@ -2239,7 +2276,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 riskOverlayWindow.Show();
 
-                riskOverlayTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
+                riskOverlayTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
                 riskOverlayTimer.Tick += (s, e) => Remove();
                 riskOverlayTimer.Start();
             }
@@ -2818,6 +2855,26 @@ namespace NinjaTrader.NinjaScript.Strategies
             snap.AtrDisplayText = (UseStopATR && lastAtrVal > 0) ? lastAtrVal.ToString("0.000") : "-";
             snap.MainEnabled = !offSnapshot;
             snap.HedgeEnabled = GetEffectiveInvertMode() != InvertModeType.Disabled;
+
+            // Aviso persistente no painel quando ligado fora do horário operacional
+            try
+            {
+                if (!offSnapshot)
+                {
+                    DateTime now = GetSafeTime();
+                    snap.RiskWarningText = (now.TimeOfDay > new TimeSpan(11, 0, 0))
+                        ? "Atenção: automação ligada fora do horário operacional."
+                        : null;
+                }
+                else
+                {
+                    snap.RiskWarningText = null;
+                }
+            }
+            catch
+            {
+                snap.RiskWarningText = null;
+            }
 
             RecalcPnLIfNeeded();
             snap.PnLDiaText = cachedPnlDay;
