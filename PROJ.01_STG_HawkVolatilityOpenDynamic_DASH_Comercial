@@ -3302,7 +3302,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                         "HEDGE DESATIVADO\nEstratégia iniciada fora do horário permitido",
                         TextPosition.Center,
                         Brushes.OrangeRed,
-                        new SimpleFont("Arial", 18),
                         Brushes.Transparent,
                         Brushes.Transparent,
                         100);
