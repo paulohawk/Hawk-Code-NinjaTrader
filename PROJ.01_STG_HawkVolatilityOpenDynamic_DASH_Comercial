@@ -2229,7 +2229,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     WindowStartupLocation = WindowStartupLocation.Manual,
                     ShowActivated = false,
                     Focusable = false,
-                    IsHitTestVisible = true
+                    IsHitTestVisible = false
                 };
 
                 UpdateOverlayBounds();
