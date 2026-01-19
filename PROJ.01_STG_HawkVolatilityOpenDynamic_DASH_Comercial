@@ -176,6 +176,7 @@ namespace NinjaTrader.NinjaScript
         private TextBlock _lblDayResum;
         private WpfEllipse _bulletDayResum;
         private TextBlock _drSentence;
+        private TextBlock _footerText;
 
         private int _qty = 1;
         private bool _beEnabled = false;
@@ -201,6 +202,7 @@ namespace NinjaTrader.NinjaScript
         {
             Background = Brushes.Transparent;
             Margin = new Thickness(6);
+            MinHeight = 420;
 
             var main = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(2) };
 
@@ -427,12 +429,12 @@ namespace NinjaTrader.NinjaScript
             {
                 Text = "",
                 Foreground = StopLossBrush,
-                FontSize = 11,
+                FontSize = 9.0,
                 Margin = new Thickness(0, 4, 0, 6),
-                TextWrapping = TextWrapping.NoWrap,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                TextAlignment = TextAlignment.Left,
+                TextWrapping = TextWrapping.Wrap,
+                TextTrimming = TextTrimming.None,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                TextAlignment = TextAlignment.Center,
                 Visibility = Visibility.Collapsed
             };
 
@@ -477,16 +479,22 @@ namespace NinjaTrader.NinjaScript
             };
             main.Children.Add(_drSentence);
 
-            var footer = new TextBlock
+            main.Children.Add(new Border
             {
-                Text = "-Produto oficial Dashflix-",
-                Foreground = BronzeBrush,
-                FontSize = CompactFontSize - 1,
+                Height = 6,
+                Background = Brushes.Transparent
+            });
+
+            _footerText = new TextBlock
+            {
+                Text = "-Produto Oficial Dashflix-",
+                Foreground = LightGrayBrush,
+                FontSize = 9.0,
                 HorizontalAlignment = HorizontalAlignment.Center,
-                Margin = new Thickness(0, 4, 0, 0),
+                Margin = new Thickness(0, 6, 0, 2),
                 TextTrimming = TextTrimming.None
             };
-            main.Children.Add(footer);
+            main.Children.Add(_footerText);
 
             Children.Add(main);
 
@@ -640,7 +648,8 @@ namespace NinjaTrader.NinjaScript
             setFont(_txtMaxLoss);
             setFont(_drSentence, Math.Max(8.5, font - 1.0));
             if (_lblDayResum != null) _lblDayResum.FontSize = font;
-            if (_riskWarningText != null) _riskWarningText.FontSize = Math.Max(10.0, font);
+            if (_riskWarningText != null)
+                _riskWarningText.MaxWidth = width * 0.78;
         }
 
         private void SetDayResumBulletAndTitleColor(bool hasTradeOrOpen)
@@ -887,16 +896,11 @@ namespace NinjaTrader.NinjaScript
             try
             {
                 if (_riskWarningText == null) return;
-                if (!string.IsNullOrWhiteSpace(text))
-                {
-                    _riskWarningText.Text = text;
-                    _riskWarningText.Visibility = Visibility.Visible;
-                }
-                else
-                {
-                    _riskWarningText.Text = "";
-                    _riskWarningText.Visibility = Visibility.Collapsed;
-                }
+                _riskWarningText.Text = text ?? "";
+                _riskWarningText.Visibility =
+                    string.IsNullOrWhiteSpace(text)
+                        ? Visibility.Collapsed
+                        : Visibility.Visible;
             }
             catch { }
         }
@@ -962,7 +966,7 @@ namespace NinjaTrader.NinjaScript
     public class HVO_PanelHelper
     {
         private const int AttachPollMs = 1000;
-        private const double EmbedHeightPx = 370.0;
+        private const double EmbedHeightPx = 420.0;
 
         private ChartControl chartControl;
         private NinjaTrader.Gui.Chart.Chart chartWindow;
@@ -1817,6 +1821,13 @@ namespace NinjaTrader.NinjaScript.Strategies
         private const int ATRSeriesIndex = 1;
         private const int STSeriesIndex = 2;
 
+        private static readonly TimeZoneInfo BrasiliaTimeZone =
+            TimeZoneInfo.FindSystemTimeZoneById(
+                Environment.OSVersion.Platform == PlatformID.Win32NT
+                    ? "E. South America Standard Time"
+                    : "America/Sao_Paulo"
+            );
+
         private readonly Brush BreakEvenBrush = Brushes.DodgerBlue;
         private readonly Brush StopLossBrush = Brushes.Red;
         private readonly Brush TakeProfitBrush = Brushes.Green;
@@ -1831,6 +1842,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         // Overlay informativo fora do horário (UI-only)
         private RiskOverlayHelper riskOverlayHelper;
+        private DateTime lastRiskWarningDate = DateTime.MinValue;
+        private DateTime lastRiskWarningResetDate = DateTime.MinValue;
 
         // Streaks
         private int currentStreak = 0; // positivo p/ ganhos, negativo p/ perdas
@@ -2179,6 +2192,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             private Window riskOverlayWindow;
             private DispatcherTimer riskOverlayTimer;
             private DateTime riskOverlayLastDate = DateTime.MinValue;
+            private DateTime riskOverlayResetDate = DateTime.MinValue;
             private ChartControl chartControl;
 
             public void TryShow(HawkVolatilityOpen owner)
@@ -2190,7 +2204,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (owner.ChartControl == null)
                     return;
 
-                DateTime now = owner.GetSafeTime();
+                DateTime now = owner.GetBrasiliaTime();
+                ResetDailyState(now);
                 // Overlay exibido no máximo uma vez por dia operacional.
                 if (now.Date == riskOverlayLastDate.Date)
                     return;
@@ -2199,6 +2214,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 riskOverlayLastDate = now.Date;
                 owner.ChartControl.Dispatcher.BeginInvoke(new Action(() => CreateAndShow(owner.ChartControl)));
+            }
+
+            private void ResetDailyState(DateTime now)
+            {
+                if (now.TimeOfDay >= new TimeSpan(0, 1, 0) && riskOverlayResetDate.Date != now.Date)
+                {
+                    riskOverlayLastDate = DateTime.MinValue;
+                    riskOverlayResetDate = now.Date;
+                }
             }
 
             public void Remove()
@@ -2340,6 +2364,11 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
             catch { }
             return DateTime.Now;
+        }
+
+        private DateTime GetBrasiliaTime()
+        {
+            return TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, BrasiliaTimeZone);
         }
 
         private bool IsSameAsPrimaryTimeframe(BarsPeriodType periodType, int periodValue)
@@ -2886,9 +2915,13 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 if (!offSnapshot)
                 {
-                    DateTime now = GetSafeTime();
-                    snap.RiskWarningText = (now.TimeOfDay > new TimeSpan(11, 0, 0))
-                        ? "Atenção: automação ligada fora do horário operacional."
+                    DateTime now = GetBrasiliaTime();
+                    ResetDailyRiskWarningState(now);
+                    if (now.TimeOfDay > new TimeSpan(11, 0, 0) && lastRiskWarningDate.Date != now.Date)
+                        lastRiskWarningDate = now.Date;
+
+                    snap.RiskWarningText = (lastRiskWarningDate.Date == now.Date)
+                        ? "Atenção: automação ligada fora do horário.\nMonitore possíveis falhas de stop e alvo."
                         : null;
                 }
                 else
@@ -3003,6 +3036,15 @@ namespace NinjaTrader.NinjaScript.Strategies
             snap.BEEnabled = breakevenAtivado;
             snap.DayQuantity = snap.Qty ?? dayQtyCache;
             return snap;
+        }
+
+        private void ResetDailyRiskWarningState(DateTime now)
+        {
+            if (now.TimeOfDay >= new TimeSpan(0, 1, 0) && lastRiskWarningResetDate.Date != now.Date)
+            {
+                lastRiskWarningDate = DateTime.MinValue;
+                lastRiskWarningResetDate = now.Date;
+            }
         }
 
         private void PublishPanelOffSnapshot(string context)
