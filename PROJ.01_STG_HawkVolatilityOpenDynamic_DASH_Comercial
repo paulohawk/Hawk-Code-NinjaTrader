@@ -2137,7 +2137,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 if (owner == null)
                     return;
-                if (owner.State != State.Realtime || owner.IsInHistorical)
+                if (owner.State != State.Realtime)
                     return;
                 if (owner.ChartControl == null)
                     return;
