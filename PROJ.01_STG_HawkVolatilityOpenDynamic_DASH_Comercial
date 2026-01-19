@@ -2870,7 +2870,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 double atrPoints = lastAtrVal;
                 double atrDollars = atrPoints * Instrument.MasterInstrument.PointValue;
-                snap.AtrDisplayText = $"{atrPoints:0.00} ({atrDollars:0.00} USD/ct)";
+                snap.AtrDisplayText = $"{atrPoints:0.00} ({atrDollars.ToString(\"0.00\", CultureInfo.InvariantCulture)} USD/ct)";
             }
             else
             {
