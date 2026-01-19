@@ -966,7 +966,7 @@ namespace NinjaTrader.NinjaScript
     public class HVO_PanelHelper
     {
         private const int AttachPollMs = 1000;
-        private const double EmbedHeightPx = 370.0;
+        private const double EmbedHeightPx = 420.0;
 
         private ChartControl chartControl;
         private NinjaTrader.Gui.Chart.Chart chartWindow;
