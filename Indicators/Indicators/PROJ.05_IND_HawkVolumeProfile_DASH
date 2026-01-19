@@ -193,7 +193,13 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				TextPosColorBrush			= Brushes.Snow;
 				TextNegColorBrush			= Brushes.Maroon;
 				PocColorBrush				= Brushes.Maroon;
-				ValueAreaColorBrush			= Brushes.DarkGoldenrod;
+				ValueAreaFillBrush			= Brushes.DarkGoldenrod;
+				ValueAreaFillOpacity		= 30;
+				ValueAreaLineBrush			= Brushes.DarkGoldenrod;
+				ValueAreaLineWidth			= 1;
+				ValueAreaLineOpacity		= 100;
+				PocLineWidth				= 2;
+				PocOpacity					= 100;
 				AskImbalanceBrush			= Brushes.DimGray;
 				BidImbalanceBrush			= Brushes.White;
 				
@@ -858,10 +864,16 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			textNegBrushDX.Opacity = (float)(OpacityText / 100.0);
 
 			SharpDX.Direct2D1.Brush pocBrushDX = PocColorBrush.ToDxBrush(RenderTarget);
-			pocBrushDX.Opacity = (float)(Opacity / 100.0);
+			float pocOpacity = (float)Math.Max(0.0, Math.Min(1.0, PocOpacity / 100.0));
+			pocBrushDX.Opacity = pocOpacity;
 
-			SharpDX.Direct2D1.Brush valueAreaBrushDX = ValueAreaColorBrush.ToDxBrush(RenderTarget);
-			valueAreaBrushDX.Opacity = (float)(Opacity / 100.0);
+			SharpDX.Direct2D1.Brush valueAreaFillBrushDX = ValueAreaFillBrush.ToDxBrush(RenderTarget);
+			float vaFillOpacity = (float)Math.Max(0.0, Math.Min(1.0, ValueAreaFillOpacity / 100.0));
+			valueAreaFillBrushDX.Opacity = vaFillOpacity;
+
+			SharpDX.Direct2D1.Brush valueAreaLineBrushDX = ValueAreaLineBrush.ToDxBrush(RenderTarget);
+			float vaLineOpacity = (float)Math.Max(0.0, Math.Min(1.0, ValueAreaLineOpacity / 100.0));
+			valueAreaLineBrushDX.Opacity = vaLineOpacity;
 
 			SharpDX.Direct2D1.Brush askImbalanceBrushDX	= AskImbalanceBrush.ToDxBrush(RenderTarget);
 			askImbalanceBrushDX.Opacity = (float)(OpacityText / 100.0);
@@ -937,6 +949,22 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 						if(ShowImbalance)
 						{
 							 FindImbalances(i, tickSize);
+						}
+
+						if(ShowValueArea && valueAreaHigh != 0)
+						{
+							foreach (KeyValuePair<double, VolItem> element in dictionaryList[i])
+							{
+								if(element.Key < valueAreaLow || element.Key > valueAreaHigh)
+								{
+									continue;
+								}
+
+								yUpper = chartScale.GetYByValue(element.Key + yUpperAdder);				//pixels
+								barWidth = (float)Math.Ceiling(element.Value.total * barWidthFac);		// .Ceiling makes 1 pixel minimum
+								GetXpos();
+								RenderTarget.FillRectangle(new SharpDX.RectangleF(xpos, yUpper, barWidth, barHeight), valueAreaFillBrushDX);
+							}
 						}
 						
 						if(ShowVolumeProfile == true)
@@ -1033,23 +1061,25 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 							}
 						}
 						
+						if(ShowValueArea && valueAreaHigh != 0)
+						{
+							barWidth = (float) (dictionaryList[i][poc].total * barWidthFac);
+							float vaLineWidth = (float)Math.Max(1, ValueAreaLineWidth);
+							yUpper = chartScale.GetYByValue(valueAreaHigh);								//pixels
+							GetXpos();
+							RenderTarget.DrawLine(new SharpDX.Vector2(xpos, yUpper), new SharpDX.Vector2(xpos + barWidth, yUpper), valueAreaLineBrushDX, vaLineWidth);
+							yUpper = chartScale.GetYByValue(valueAreaLow);								//pixels
+							RenderTarget.DrawLine(new SharpDX.Vector2(xpos, yUpper), new SharpDX.Vector2(xpos + barWidth, yUpper), valueAreaLineBrushDX, vaLineWidth);
+						}
+
 						if(ShowPoc && poc != 0)
 						{
 							yUpper = chartScale.GetYByValue(poc + yUpperAdder);				//pixels
 							barWidth = (float) (dictionaryList[i][poc].total * barWidthFac);
 							GetXpos();
-							RenderTarget.FillRectangle(new SharpDX.RectangleF(xpos, yUpper, barWidth, barHeight), pocBrushDX);
-						}
-
-						if(ShowValueArea && valueAreaHigh != 0)
-						{
-							barWidth = (float) (dictionaryList[i][poc].total * barWidthFac);
-							float bHeight = (float)Math.Max((barHeight * .1), 1);						//pixels
-							yUpper = chartScale.GetYByValue(valueAreaHigh) - (bHeight / 2);				//pixels
-							GetXpos();
-							RenderTarget.FillRectangle(new SharpDX.RectangleF(xpos, yUpper, barWidth, bHeight), valueAreaBrushDX);
-							yUpper = chartScale.GetYByValue(valueAreaLow) - (bHeight / 2);				//pixels
-							RenderTarget.FillRectangle(new SharpDX.RectangleF(xpos, yUpper, barWidth, bHeight), valueAreaBrushDX);
+							float pocY = yUpper + (barHeight / 2);
+							float pocLineWidth = (float)Math.Max(1, PocLineWidth);
+							RenderTarget.DrawLine(new SharpDX.Vector2(xpos, pocY), new SharpDX.Vector2(xpos + barWidth, pocY), pocBrushDX, pocLineWidth);
 						}
 
 						if(ShowScale != HawkVolumeProfileShowScaleType.None
@@ -1229,7 +1259,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			textPosBrushDX.Dispose();
 			textNegBrushDX.Dispose();
 			pocBrushDX.Dispose();
-			valueAreaBrushDX.Dispose();
+			valueAreaFillBrushDX.Dispose();
+			valueAreaLineBrushDX.Dispose();
 			askImbalanceBrushDX.Dispose();
 			bidImbalanceBrushDX.Dispose();
 			
@@ -1477,6 +1508,16 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		[Display(ResourceType = typeof(Custom.Resource), Name = "Show POC", Description=" ",  Order = 15, GroupName = "NinjaScriptParameters")]
 		public bool ShowPoc
 		{ get; set; }
+
+		[Range(1, int.MaxValue)]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "POC Line Width", Description=" ",  Order = 16, GroupName = "POC")]
+		public int PocLineWidth
+		{ get; set; }
+
+		[Range(0, 100)]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "POC Opacity", Description=" ",  Order = 17, GroupName = "POC")]
+		public double PocOpacity
+		{ get; set; }
 		
 		[Display(ResourceType = typeof(Custom.Resource), Name = "Show Value Area", Description=" ",  Order = 16, GroupName = "VA")]
 		public bool ShowValueArea
@@ -1490,6 +1531,43 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		[Range(1, int.MaxValue)]
 		[Display(ResourceType = typeof(Custom.Resource), Name = "Smooth VA", Description="Group n histogram levels to smooth.  Usually 2",  Order = 18, GroupName = "VA")]
 		public int SmoothVA
+		{ get; set; }
+
+		[XmlIgnore]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Value Area Fill Color", Order = 19, GroupName = "VA")]
+		public Brush ValueAreaFillBrush { get; set; }
+
+		[Browsable(false)]
+		public string ValueAreaFillBrushSerialize
+		{
+			get { return Serialize.BrushToString(ValueAreaFillBrush); }
+			set { ValueAreaFillBrush = Serialize.StringToBrush(value); }
+		}
+
+		[Range(0, 100)]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Value Area Fill Opacity", Description=" ", Order = 20, GroupName = "VA")]
+		public double ValueAreaFillOpacity
+		{ get; set; }
+
+		[XmlIgnore]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Value Area Line Color", Order = 21, GroupName = "VA")]
+		public Brush ValueAreaLineBrush { get; set; }
+
+		[Browsable(false)]
+		public string ValueAreaLineBrushSerialize
+		{
+			get { return Serialize.BrushToString(ValueAreaLineBrush); }
+			set { ValueAreaLineBrush = Serialize.StringToBrush(value); }
+		}
+
+		[Range(1, int.MaxValue)]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Value Area Line Width", Description=" ",  Order = 22, GroupName = "VA")]
+		public int ValueAreaLineWidth
+		{ get; set; }
+
+		[Range(0, 100)]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Value Area Line Opacity", Description=" ",  Order = 23, GroupName = "VA")]
+		public double ValueAreaLineOpacity
 		{ get; set; }
 
 		[Display(ResourceType = typeof(Custom.Resource), Name = "Show Volume Imbalance", Description="highlight diagonal delta greater than imbalance percent",  Order = 19, GroupName = "imbalance")]
@@ -1634,7 +1712,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		}
 
 		[XmlIgnore]
-		[Display(ResourceType = typeof(Custom.Resource), Name = "Value Area Color", Order = 38, GroupName = "NinjaScriptParameters")]
+		[Browsable(false)]
 		public Brush ValueAreaColorBrush { get; set; }
 
 		[Browsable(false)]
