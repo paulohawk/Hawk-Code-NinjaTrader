@@ -992,6 +992,11 @@ namespace NinjaTrader.NinjaScript
 
         public Action<string> LogAction { get; set; }
         public string CacheKey { get => cacheKey; set => cacheKey = value; }
+        public bool IsPanelReady =>
+            panelActive &&
+            embeddedControl != null &&
+            embeddedWrapper != null &&
+            embeddedWrapper.Parent != null;
 
         public HVO_PanelHelper(bool enableDiagLog = false)
         {
@@ -1832,6 +1837,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         // Painel embutido exclusivo
         private HVO_PanelHelper panelHelper;
+        private bool panelReady = false;
         private string cacheKey;
         private string chartToken = "HEADLESS";
 
@@ -2058,6 +2064,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             else if (State == State.DataLoaded)
             {
                 isStrategyActive = true;
+                panelReady = false;
                 sessionIterator = new SessionIterator(Bars);
 
                 chartToken = (ChartControl != null)
@@ -2084,7 +2091,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 isStrategyActive = true;
                 lastTradesCount = SystemPerformance.AllTrades.Count;
                 PublishPanelSnapshot("StateRealtime");
-                riskOverlayHelper?.TryShow(this);
             }
             else if (State == State.Terminated)
             {
@@ -2093,6 +2099,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 terminatedHandled = true;
 
                 isStrategyActive = false;
+                panelReady = false;
                 PublishPanelOffSnapshot("Terminated");
                 try { panelHelper?.Dispose(); panelHelper = null; } catch { }
                 riskOverlayHelper?.Remove();
@@ -2180,6 +2187,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             return $"{inst}::{acc}::{strat}::{discriminator}";
         }
 
+        public bool PanelReady => panelReady;
+
         private sealed class RiskOverlayHelper
         {
             private Window riskOverlayWindow;
@@ -2195,6 +2204,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (owner.State != State.Realtime)
                     return;
                 if (owner.ChartControl == null)
+                    return;
+                if (!owner.PanelReady)
                     return;
 
                 DateTime now = owner.GetSafeTime();
@@ -3038,6 +3049,10 @@ namespace NinjaTrader.NinjaScript.Strategies
                 var snap = BuildSnapshot(false, dayStatus);
                 HVO_PanelStateHub.Set(cacheKey, snap);
                 panelHelper?.ApplySnapshot(snap);
+                if (!panelReady && panelHelper?.IsPanelReady == true)
+                    panelReady = true;
+                if (State == State.Realtime && panelReady)
+                    riskOverlayHelper?.TryShow(this);
             }
             catch (Exception ex)
             {
