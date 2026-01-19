@@ -428,7 +428,7 @@ namespace NinjaTrader.NinjaScript
                 Text = "",
                 Foreground = StopLossBrush,
                 FontSize = 11,
-                Margin = new Thickness(0, 2, 0, 4),
+                Margin = new Thickness(0, 4, 0, 6),
                 TextWrapping = TextWrapping.NoWrap,
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 HorizontalAlignment = HorizontalAlignment.Left,
@@ -442,6 +442,10 @@ namespace NinjaTrader.NinjaScript
             streakRow.Children.Add(streakStack); Grid.SetColumn(streakStack, 2);
 
             main.Children.Add(streakRow);
+
+            main.Children.Add(_riskWarningText);
+            Grid.SetColumn(_riskWarningText, 0);
+            Grid.SetColumnSpan(_riskWarningText, 3);
 
             // DayResum
             var dayTitleRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, RowSpacing) };
@@ -784,7 +788,13 @@ namespace NinjaTrader.NinjaScript
 
         public void SetStopFinancial(string display)
         {
-            try { _txtStop.Text = string.IsNullOrEmpty(display) ? "-" : display; UpdateBulletsAfterStateChange(); } catch { }
+            try
+            {
+                _txtStop.Text = string.IsNullOrEmpty(display) ? "-" : display;
+                _txtStop.Foreground = string.IsNullOrEmpty(display) || display == "-" ? Brushes.White : StopLossBrush;
+                UpdateBulletsAfterStateChange();
+            }
+            catch { }
         }
 
         public void SetTakeFinancial(string display)
@@ -834,7 +844,7 @@ namespace NinjaTrader.NinjaScript
                 double.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out v))
             {
                 if (v > 0) tb.Foreground = Brushes.LightGreen;
-                else if (v < 0) tb.Foreground = Brushes.OrangeRed;
+                else if (v < 0) tb.Foreground = StopLossBrush;
                 else tb.Foreground = LightGrayBrush;
             }
             else
@@ -2171,6 +2181,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             private DispatcherTimer riskOverlayTimer;
             private DateTime riskOverlayLastDate = DateTime.MinValue;
             private ChartControl chartControl;
+            private Brush stopLossBrush = Brushes.Red;
 
             public void TryShow(HawkVolatilityOpen owner)
             {
@@ -2188,6 +2199,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (now.TimeOfDay <= new TimeSpan(11, 0, 0))
                     return;
 
+                stopLossBrush = owner.StopLossBrush ?? Brushes.Red;
                 riskOverlayLastDate = now.Date;
                 owner.ChartControl.Dispatcher.BeginInvoke(new Action(() => CreateAndShow(owner.ChartControl)));
             }
@@ -2235,7 +2247,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     Text = "AVISO AO TRADER",
                     FontSize = 22,
                     FontWeight = FontWeights.SemiBold,
-                    Foreground = Brushes.White,
+                    Foreground = stopLossBrush ?? Brushes.Red,
                     TextAlignment = TextAlignment.Center,
                     HorizontalAlignment = HorizontalAlignment.Center
                 };
@@ -2854,7 +2866,16 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             snap.EndDayText = AutoCloseEnabled ? AutoCloseTimeHHmmss : "-";
             snap.ATREnabled = UseStopATR;
-            snap.AtrDisplayText = (UseStopATR && lastAtrVal > 0) ? lastAtrVal.ToString("0.000") : "-";
+            if (UseStopATR && lastAtrVal > 0)
+            {
+                double atrPoints = lastAtrVal;
+                double atrDollars = atrPoints * Instrument.MasterInstrument.PointValue;
+                snap.AtrDisplayText = $"{atrPoints:0.00} ({atrDollars:0.00} USD/ct)";
+            }
+            else
+            {
+                snap.AtrDisplayText = "-";
+            }
             snap.MainEnabled = !offSnapshot;
             snap.HedgeEnabled = GetEffectiveInvertMode() != InvertModeType.Disabled;
 
