@@ -1781,6 +1781,9 @@ namespace NinjaTrader.NinjaScript.Strategies
         private string cacheKey;
         private string chartToken = "HEADLESS";
 
+        // Overlay informativo fora do horário (UI-only)
+        private RiskOverlayHelper riskOverlayHelper;
+
         // Streaks
         private int currentStreak = 0; // positivo p/ ganhos, negativo p/ perdas
         private int maxGainStreak = 0;
@@ -2019,6 +2022,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     };
                     panelHelper.Init(ChartControl);
                 }
+                riskOverlayHelper = new RiskOverlayHelper();
 
             }
             else if (State == State.Realtime)
@@ -2026,6 +2030,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 isStrategyActive = true;
                 lastTradesCount = SystemPerformance.AllTrades.Count;
                 PublishPanelSnapshot("StateRealtime");
+                riskOverlayHelper?.TryShow(this);
             }
             else if (State == State.Terminated)
             {
@@ -2036,6 +2041,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 isStrategyActive = false;
                 PublishPanelOffSnapshot("Terminated");
                 try { panelHelper?.Dispose(); panelHelper = null; } catch { }
+                riskOverlayHelper?.Remove();
             }
         }
 
@@ -2118,6 +2124,161 @@ namespace NinjaTrader.NinjaScript.Strategies
             var strat = string.IsNullOrWhiteSpace(PanelStrategyKey) ? Name : PanelStrategyKey;
             var discriminator = !string.IsNullOrWhiteSpace(InstanceTag) ? InstanceTag.Trim() : $"chart={chartToken}";
             return $"{inst}::{acc}::{strat}::{discriminator}";
+        }
+
+        private sealed class RiskOverlayHelper
+        {
+            private Window riskOverlayWindow;
+            private DispatcherTimer riskOverlayTimer;
+            private DateTime riskOverlayLastDate = DateTime.MinValue;
+            private Window chartWindow;
+
+            public void TryShow(HawkVolatilityOpen owner)
+            {
+                if (owner == null)
+                    return;
+                if (owner.State != State.Realtime)
+                    return;
+                if (owner.ChartControl == null)
+                    return;
+
+                DateTime now = owner.GetSafeTime();
+                // Overlay exibido no máximo uma vez por dia operacional.
+                if (now.Date == riskOverlayLastDate.Date)
+                    return;
+                if (now.TimeOfDay <= new TimeSpan(11, 0, 0))
+                    return;
+
+                riskOverlayLastDate = now.Date;
+                owner.ChartControl.Dispatcher.BeginInvoke(new Action(() => CreateAndShow(owner.ChartControl)));
+            }
+
+            public void Remove()
+            {
+                if (riskOverlayWindow == null)
+                    return;
+
+                if (riskOverlayWindow.Dispatcher == null || riskOverlayWindow.Dispatcher.HasShutdownStarted)
+                {
+                    Cleanup();
+                    return;
+                }
+
+                riskOverlayWindow.Dispatcher.BeginInvoke(new Action(Cleanup));
+            }
+
+            private void CreateAndShow(ChartControl chartControl)
+            {
+                if (riskOverlayWindow != null || chartControl == null)
+                    return;
+
+                chartWindow = Window.GetWindow(chartControl);
+                if (chartWindow == null)
+                    return;
+
+                // Window recebe hit test; conteúdo não captura interação.
+                var overlayGrid = new Grid
+                {
+                    Background = new SolidColorBrush(Color.FromRgb(0, 0, 0)),
+                    Opacity = 0.75,
+                    IsHitTestVisible = false
+                };
+
+                var stack = new StackPanel
+                {
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+
+                var titleText = new TextBlock
+                {
+                    Text = "AVISO AO TRADER",
+                    FontSize = 22,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = Brushes.White,
+                    TextAlignment = TextAlignment.Center,
+                    HorizontalAlignment = HorizontalAlignment.Center
+                };
+
+                var bodyText = new TextBlock
+                {
+                    Text = "Você ativou esta automação fora do horário operacional recomendado.\n\n" +
+                           "Para máxima estabilidade, recomenda-se manter a estratégia ativa antes das 11:00 ou utilizar VPS dedicada.\n\n" +
+                           "Ao prosseguir, você assume os riscos operacionais desta decisão.",
+                    FontSize = 16,
+                    Foreground = Brushes.White,
+                    TextAlignment = TextAlignment.Center,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    Margin = new Thickness(0, 16, 0, 0)
+                };
+
+                stack.Children.Add(titleText);
+                stack.Children.Add(bodyText);
+                overlayGrid.Children.Add(stack);
+
+                riskOverlayWindow = new Window
+                {
+                    WindowStyle = WindowStyle.None,
+                    AllowsTransparency = true,
+                    Background = Brushes.Transparent,
+                    Topmost = true,
+                    ShowInTaskbar = false,
+                    ResizeMode = ResizeMode.NoResize,
+                    Content = overlayGrid,
+                    Owner = chartWindow,
+                    WindowStartupLocation = WindowStartupLocation.Manual,
+                    ShowActivated = false,
+                    Focusable = false,
+                    IsHitTestVisible = false
+                };
+
+                UpdateOverlayBounds();
+                chartWindow.LocationChanged += OnChartWindowLocationChanged;
+                chartWindow.SizeChanged += OnChartWindowSizeChanged;
+
+                riskOverlayWindow.Show();
+
+                riskOverlayTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
+                riskOverlayTimer.Tick += (s, e) => Remove();
+                riskOverlayTimer.Start();
+            }
+
+            private void UpdateOverlayBounds()
+            {
+                if (riskOverlayWindow == null || chartWindow == null)
+                    return;
+
+                riskOverlayWindow.Left = chartWindow.Left;
+                riskOverlayWindow.Top = chartWindow.Top;
+                riskOverlayWindow.Width = chartWindow.ActualWidth;
+                riskOverlayWindow.Height = chartWindow.ActualHeight;
+            }
+
+            private void OnChartWindowLocationChanged(object sender, EventArgs e) => UpdateOverlayBounds();
+
+            private void OnChartWindowSizeChanged(object sender, SizeChangedEventArgs e) => UpdateOverlayBounds();
+
+            private void Cleanup()
+            {
+                if (riskOverlayTimer != null)
+                {
+                    riskOverlayTimer.Stop();
+                    riskOverlayTimer = null;
+                }
+
+                if (chartWindow != null)
+                {
+                    chartWindow.LocationChanged -= OnChartWindowLocationChanged;
+                    chartWindow.SizeChanged -= OnChartWindowSizeChanged;
+                    chartWindow = null;
+                }
+
+                if (riskOverlayWindow != null)
+                {
+                    riskOverlayWindow.Close();
+                    riskOverlayWindow = null;
+                }
+            }
         }
 
         private DateTime GetSafeTime()
