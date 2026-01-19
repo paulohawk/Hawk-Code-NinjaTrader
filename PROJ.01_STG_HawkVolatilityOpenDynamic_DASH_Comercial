@@ -202,6 +202,7 @@ namespace NinjaTrader.NinjaScript
         {
             Background = Brushes.Transparent;
             Margin = new Thickness(6);
+            MinHeight = 420;
 
             var main = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(2) };
 
@@ -2925,7 +2926,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                         lastRiskWarningDate = now.Date;
 
                     snap.RiskWarningText = (lastRiskWarningDate.Date == now.Date)
-                        ? "Atenção: automação ligada fora do horário operacional.\nMonitore possíveis falhas de stop e alvo."
+                        ? "Atenção: automação ligada fora do horário.\nMonitore possíveis falhas de stop e alvo."
                         : null;
                 }
                 else
