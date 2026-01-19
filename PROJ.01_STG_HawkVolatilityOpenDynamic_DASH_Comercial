@@ -1839,6 +1839,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         private bool hedgeBlockedByTime = false;
         private bool hedgeTimeWarningShown = false;
+        private SimpleFont hedgeTimeWarningFont;
         private TimeSpan hedgeMinStartTime = new TimeSpan(11, 0, 0);
         private DateTime strategyRealtimeStart = Core.Globals.MinDate;
 
@@ -1995,6 +1996,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 CircleChar = "●";
                 ShortLabelText = "BE";
                 LabelFontSize = 6;
+                hedgeTimeWarningFont = new SimpleFont("Arial", 18);
 
                 Calculate = Calculate.OnBarClose;
                 PanelStrategyKey = "";
@@ -3303,6 +3305,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                         "HEDGE DESATIVADO\nFora do horário permitido",
                         TextPosition.Center,
                         Brushes.OrangeRed,
+                        hedgeTimeWarningFont,
                         Brushes.Transparent,
                         Brushes.Transparent,
                         100);
