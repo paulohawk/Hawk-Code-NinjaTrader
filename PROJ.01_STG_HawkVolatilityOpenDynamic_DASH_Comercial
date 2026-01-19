@@ -428,7 +428,7 @@ namespace NinjaTrader.NinjaScript
                 Text = "",
                 Foreground = StopLossBrush,
                 FontSize = 11,
-                Margin = new Thickness(0, 4, 0, 6),
+                Margin = new Thickness(0, 2, 0, 4),
                 TextWrapping = TextWrapping.NoWrap,
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 HorizontalAlignment = HorizontalAlignment.Left,
@@ -442,15 +442,6 @@ namespace NinjaTrader.NinjaScript
             streakRow.Children.Add(streakStack); Grid.SetColumn(streakStack, 2);
 
             main.Children.Add(streakRow);
-
-            var riskRow = new Grid { Margin = new Thickness(0, 2, 0, 4) };
-            riskRow.ColumnDefinitions.Add(new ColumnDefinition());
-            riskRow.ColumnDefinitions.Add(new ColumnDefinition());
-            riskRow.ColumnDefinitions.Add(new ColumnDefinition());
-            riskRow.Children.Add(_riskWarningText);
-            Grid.SetColumn(_riskWarningText, 0);
-            Grid.SetColumnSpan(_riskWarningText, 3);
-            main.Children.Add(riskRow);
 
             // DayResum
             var dayTitleRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, RowSpacing) };
@@ -793,13 +784,7 @@ namespace NinjaTrader.NinjaScript
 
         public void SetStopFinancial(string display)
         {
-            try
-            {
-                _txtStop.Text = string.IsNullOrEmpty(display) ? "-" : display;
-                _txtStop.Foreground = string.IsNullOrEmpty(display) || display == "-" ? Brushes.White : StopLossBrush;
-                UpdateBulletsAfterStateChange();
-            }
-            catch { }
+            try { _txtStop.Text = string.IsNullOrEmpty(display) ? "-" : display; UpdateBulletsAfterStateChange(); } catch { }
         }
 
         public void SetTakeFinancial(string display)
@@ -849,7 +834,7 @@ namespace NinjaTrader.NinjaScript
                 double.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out v))
             {
                 if (v > 0) tb.Foreground = Brushes.LightGreen;
-                else if (v < 0) tb.Foreground = StopLossBrush;
+                else if (v < 0) tb.Foreground = Brushes.OrangeRed;
                 else tb.Foreground = LightGrayBrush;
             }
             else
@@ -992,11 +977,6 @@ namespace NinjaTrader.NinjaScript
 
         public Action<string> LogAction { get; set; }
         public string CacheKey { get => cacheKey; set => cacheKey = value; }
-        public bool IsPanelReady =>
-            panelActive &&
-            embeddedControl != null &&
-            embeddedWrapper != null &&
-            embeddedWrapper.Parent != null;
 
         public HVO_PanelHelper(bool enableDiagLog = false)
         {
@@ -1837,7 +1817,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         // Painel embutido exclusivo
         private HVO_PanelHelper panelHelper;
-        private bool panelReady = false;
         private string cacheKey;
         private string chartToken = "HEADLESS";
 
@@ -2064,7 +2043,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             else if (State == State.DataLoaded)
             {
                 isStrategyActive = true;
-                panelReady = false;
                 sessionIterator = new SessionIterator(Bars);
 
                 chartToken = (ChartControl != null)
@@ -2091,6 +2069,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 isStrategyActive = true;
                 lastTradesCount = SystemPerformance.AllTrades.Count;
                 PublishPanelSnapshot("StateRealtime");
+                riskOverlayHelper?.TryShow(this);
             }
             else if (State == State.Terminated)
             {
@@ -2099,7 +2078,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 terminatedHandled = true;
 
                 isStrategyActive = false;
-                panelReady = false;
                 PublishPanelOffSnapshot("Terminated");
                 try { panelHelper?.Dispose(); panelHelper = null; } catch { }
                 riskOverlayHelper?.Remove();
@@ -2187,15 +2165,12 @@ namespace NinjaTrader.NinjaScript.Strategies
             return $"{inst}::{acc}::{strat}::{discriminator}";
         }
 
-        public bool PanelReady => panelReady;
-
         private sealed class RiskOverlayHelper
         {
             private Window riskOverlayWindow;
             private DispatcherTimer riskOverlayTimer;
             private DateTime riskOverlayLastDate = DateTime.MinValue;
             private ChartControl chartControl;
-            private Brush stopLossBrush = Brushes.Red;
 
             public void TryShow(HawkVolatilityOpen owner)
             {
@@ -2205,8 +2180,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                     return;
                 if (owner.ChartControl == null)
                     return;
-                if (!owner.PanelReady)
-                    return;
 
                 DateTime now = owner.GetSafeTime();
                 // Overlay exibido no máximo uma vez por dia operacional.
@@ -2215,7 +2188,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (now.TimeOfDay <= new TimeSpan(11, 0, 0))
                     return;
 
-                stopLossBrush = owner.StopLossBrush ?? Brushes.Red;
                 riskOverlayLastDate = now.Date;
                 owner.ChartControl.Dispatcher.BeginInvoke(new Action(() => CreateAndShow(owner.ChartControl)));
             }
@@ -2263,7 +2235,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     Text = "AVISO AO TRADER",
                     FontSize = 22,
                     FontWeight = FontWeights.SemiBold,
-                    Foreground = stopLossBrush ?? Brushes.Red,
+                    Foreground = Brushes.White,
                     TextAlignment = TextAlignment.Center,
                     HorizontalAlignment = HorizontalAlignment.Center
                 };
@@ -2882,23 +2854,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             snap.EndDayText = AutoCloseEnabled ? AutoCloseTimeHHmmss : "-";
             snap.ATREnabled = UseStopATR;
-            // ATR display: pontos + dólares por contrato
-            if (UseStopATR && lastAtrVal > 0)
-            {
-                double atrPoints = lastAtrVal;
-                double atrDollars = atrPoints * Instrument.MasterInstrument.PointValue;
-
-                snap.AtrDisplayText = string.Format(
-                    System.Globalization.CultureInfo.InvariantCulture,
-                    "{0:0.00} ({1:0.00} USD/ct)",
-                    atrPoints,
-                    atrDollars
-                );
-            }
-            else
-            {
-                snap.AtrDisplayText = "-";
-            }
+            snap.AtrDisplayText = (UseStopATR && lastAtrVal > 0) ? lastAtrVal.ToString("0.000") : "-";
             snap.MainEnabled = !offSnapshot;
             snap.HedgeEnabled = GetEffectiveInvertMode() != InvertModeType.Disabled;
 
@@ -3049,10 +3005,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 var snap = BuildSnapshot(false, dayStatus);
                 HVO_PanelStateHub.Set(cacheKey, snap);
                 panelHelper?.ApplySnapshot(snap);
-                if (!panelReady && panelHelper?.IsPanelReady == true)
-                    panelReady = true;
-                if (State == State.Realtime && panelReady)
-                    riskOverlayHelper?.TryShow(this);
             }
             catch (Exception ex)
             {
