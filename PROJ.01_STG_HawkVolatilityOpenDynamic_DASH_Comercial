@@ -896,16 +896,11 @@ namespace NinjaTrader.NinjaScript
             try
             {
                 if (_riskWarningText == null) return;
-                if (!string.IsNullOrWhiteSpace(text))
-                {
-                    _riskWarningText.Text = text;
-                    _riskWarningText.Visibility = Visibility.Visible;
-                }
-                else
-                {
-                    _riskWarningText.Text = "";
-                    _riskWarningText.Visibility = Visibility.Collapsed;
-                }
+                _riskWarningText.Text = text ?? "";
+                _riskWarningText.Visibility =
+                    string.IsNullOrWhiteSpace(text)
+                        ? Visibility.Collapsed
+                        : Visibility.Visible;
             }
             catch { }
         }
