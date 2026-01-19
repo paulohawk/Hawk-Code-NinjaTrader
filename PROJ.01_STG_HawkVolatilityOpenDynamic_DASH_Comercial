@@ -443,9 +443,14 @@ namespace NinjaTrader.NinjaScript
 
             main.Children.Add(streakRow);
 
-            main.Children.Add(_riskWarningText);
+            var riskRow = new Grid { Margin = new Thickness(0, 2, 0, 4) };
+            riskRow.ColumnDefinitions.Add(new ColumnDefinition());
+            riskRow.ColumnDefinitions.Add(new ColumnDefinition());
+            riskRow.ColumnDefinitions.Add(new ColumnDefinition());
+            riskRow.Children.Add(_riskWarningText);
             Grid.SetColumn(_riskWarningText, 0);
             Grid.SetColumnSpan(_riskWarningText, 3);
+            main.Children.Add(riskRow);
 
             // DayResum
             var dayTitleRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, RowSpacing) };
