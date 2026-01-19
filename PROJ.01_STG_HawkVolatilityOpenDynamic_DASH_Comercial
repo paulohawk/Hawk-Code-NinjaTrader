@@ -2871,11 +2871,18 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             snap.EndDayText = AutoCloseEnabled ? AutoCloseTimeHHmmss : "-";
             snap.ATREnabled = UseStopATR;
+            // ATR display: pontos + dólares por contrato
             if (UseStopATR && lastAtrVal > 0)
             {
                 double atrPoints = lastAtrVal;
                 double atrDollars = atrPoints * Instrument.MasterInstrument.PointValue;
-                snap.AtrDisplayText = $"{atrPoints:0.00} ({atrDollars.ToString(\"0.00\", CultureInfo.InvariantCulture)} USD/ct)";
+
+                snap.AtrDisplayText = string.Format(
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    "{0:0.00} ({1:0.00} USD/ct)",
+                    atrPoints,
+                    atrDollars
+                );
             }
             else
             {
