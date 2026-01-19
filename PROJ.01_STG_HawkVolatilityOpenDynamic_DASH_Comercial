@@ -17,6 +17,7 @@ using System.Windows.Media.Effects;
 using System.Windows.Threading;
 using NinjaTrader.Cbi;
 using NinjaTrader.Data; // SessionIterator
+using NinjaTrader.Gui.Tools;
 using NinjaTrader.Gui.Chart;
 using NinjaTrader.NinjaScript;
 using NinjaTrader.NinjaScript.DrawingTools;
@@ -1838,6 +1839,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         private bool hedgeBlockedByTime = false;
         private bool hedgeTimeWarningShown = false;
+        private SimpleFont hedgeTimeWarningFont;
         private TimeSpan hedgeMinStartTime = new TimeSpan(11, 0, 0);
         private DateTime strategyRealtimeStart = Core.Globals.MinDate;
 
@@ -1994,6 +1996,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 CircleChar = "●";
                 ShortLabelText = "BE";
                 LabelFontSize = 6;
+                hedgeTimeWarningFont = new SimpleFont("Arial", 18);
 
                 Calculate = Calculate.OnBarClose;
                 PanelStrategyKey = "";
@@ -3299,10 +3302,10 @@ namespace NinjaTrader.NinjaScript.Strategies
                     Draw.TextFixed(
                         this,
                         "HEDGE_TIME_BLOCK",
-                        "HEDGE DESATIVADO\nEstratégia iniciada fora do horário permitido",
+                        "HEDGE DESATIVADO\nFora do horário permitido",
                         TextPosition.Center,
                         Brushes.OrangeRed,
-                        new SimpleFont("Arial", 18),
+                        hedgeTimeWarningFont,
                         Brushes.Transparent,
                         Brushes.Transparent,
                         100);
