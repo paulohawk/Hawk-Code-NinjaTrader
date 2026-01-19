@@ -2131,7 +2131,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             private Window riskOverlayWindow;
             private DispatcherTimer riskOverlayTimer;
             private DateTime riskOverlayLastDate = DateTime.MinValue;
-            private Window chartWindow;
+            private ChartControl chartControl;
 
             public void TryShow(HawkVolatilityOpen owner)
             {
@@ -2172,7 +2172,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (riskOverlayWindow != null || chartControl == null)
                     return;
 
-                chartWindow = Window.GetWindow(chartControl);
+                this.chartControl = chartControl;
+                var chartWindow = Window.GetWindow(chartControl);
                 if (chartWindow == null)
                     return;
 
@@ -2232,9 +2233,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                     IsHitTestVisible = false
                 };
 
-                UpdateOverlayBounds();
-                chartWindow.LocationChanged += OnChartWindowLocationChanged;
-                chartWindow.SizeChanged += OnChartWindowSizeChanged;
+                UpdateOverlayBounds(chartControl);
+                chartControl.SizeChanged += OnChartControlSizeChanged;
+                chartControl.LayoutUpdated += OnChartControlLayoutUpdated;
 
                 riskOverlayWindow.Show();
 
@@ -2243,20 +2244,21 @@ namespace NinjaTrader.NinjaScript.Strategies
                 riskOverlayTimer.Start();
             }
 
-            private void UpdateOverlayBounds()
+            private void UpdateOverlayBounds(ChartControl chartControl)
             {
-                if (riskOverlayWindow == null || chartWindow == null)
+                if (riskOverlayWindow == null || chartControl == null)
                     return;
 
-                riskOverlayWindow.Left = chartWindow.Left;
-                riskOverlayWindow.Top = chartWindow.Top;
-                riskOverlayWindow.Width = chartWindow.ActualWidth;
-                riskOverlayWindow.Height = chartWindow.ActualHeight;
+                Point topLeft = chartControl.PointToScreen(new Point(0, 0));
+                riskOverlayWindow.Left = topLeft.X;
+                riskOverlayWindow.Top = topLeft.Y;
+                riskOverlayWindow.Width = chartControl.ActualWidth;
+                riskOverlayWindow.Height = chartControl.ActualHeight;
             }
 
-            private void OnChartWindowLocationChanged(object sender, EventArgs e) => UpdateOverlayBounds();
+            private void OnChartControlSizeChanged(object sender, SizeChangedEventArgs e) => UpdateOverlayBounds(chartControl);
 
-            private void OnChartWindowSizeChanged(object sender, SizeChangedEventArgs e) => UpdateOverlayBounds();
+            private void OnChartControlLayoutUpdated(object sender, EventArgs e) => UpdateOverlayBounds(chartControl);
 
             private void Cleanup()
             {
@@ -2266,11 +2268,11 @@ namespace NinjaTrader.NinjaScript.Strategies
                     riskOverlayTimer = null;
                 }
 
-                if (chartWindow != null)
+                if (chartControl != null)
                 {
-                    chartWindow.LocationChanged -= OnChartWindowLocationChanged;
-                    chartWindow.SizeChanged -= OnChartWindowSizeChanged;
-                    chartWindow = null;
+                    chartControl.SizeChanged -= OnChartControlSizeChanged;
+                    chartControl.LayoutUpdated -= OnChartControlLayoutUpdated;
+                    chartControl = null;
                 }
 
                 if (riskOverlayWindow != null)
