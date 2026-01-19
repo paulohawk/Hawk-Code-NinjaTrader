@@ -481,14 +481,14 @@ namespace NinjaTrader.NinjaScript
 
             main.Children.Add(new Border
             {
-                Height = 6,
+                Height = 3,
                 Background = Brushes.Transparent
             });
 
             _footerText = new TextBlock
             {
                 Text = "-Produto Oficial Dashflix-",
-                Foreground = LightGrayBrush,
+                Foreground = BronzeBrush,
                 FontSize = 9.0,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 Margin = new Thickness(0, 6, 0, 2),
