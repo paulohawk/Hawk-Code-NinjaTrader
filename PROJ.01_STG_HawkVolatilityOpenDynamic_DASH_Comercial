@@ -428,7 +428,7 @@ namespace NinjaTrader.NinjaScript
                 Text = "",
                 Foreground = StopLossBrush,
                 FontSize = 11,
-                Margin = new Thickness(0, 2, 0, 4),
+                Margin = new Thickness(0, 4, 0, 6),
                 TextWrapping = TextWrapping.NoWrap,
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 HorizontalAlignment = HorizontalAlignment.Left,
@@ -438,10 +438,19 @@ namespace NinjaTrader.NinjaScript
 
             streakStack.Children.Add(hedgeRow);
             streakStack.Children.Add(_hedgeStateText);
-            streakStack.Children.Add(_riskWarningText);
             streakRow.Children.Add(streakStack); Grid.SetColumn(streakStack, 2);
 
             main.Children.Add(streakRow);
+
+            // Risk warning row (mesclado em 3 colunas, abaixo do EndDay)
+            var riskRow = new Grid { Margin = new Thickness(0, 2, 0, 4) };
+            riskRow.ColumnDefinitions.Add(new ColumnDefinition());
+            riskRow.ColumnDefinitions.Add(new ColumnDefinition());
+            riskRow.ColumnDefinitions.Add(new ColumnDefinition());
+            riskRow.Children.Add(_riskWarningText);
+            Grid.SetColumn(_riskWarningText, 0);
+            Grid.SetColumnSpan(_riskWarningText, 3);
+            main.Children.Add(riskRow);
 
             // DayResum
             var dayTitleRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, RowSpacing) };
@@ -834,7 +843,7 @@ namespace NinjaTrader.NinjaScript
                 double.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out v))
             {
                 if (v > 0) tb.Foreground = Brushes.LightGreen;
-                else if (v < 0) tb.Foreground = Brushes.OrangeRed;
+                else if (v < 0) tb.Foreground = StopLossBrush;
                 else tb.Foreground = LightGrayBrush;
             }
             else
@@ -2235,7 +2244,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     Text = "AVISO AO TRADER",
                     FontSize = 22,
                     FontWeight = FontWeights.SemiBold,
-                    Foreground = Brushes.White,
+                    Foreground = Brushes.Red,
                     TextAlignment = TextAlignment.Center,
                     HorizontalAlignment = HorizontalAlignment.Center
                 };
@@ -2854,7 +2863,21 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             snap.EndDayText = AutoCloseEnabled ? AutoCloseTimeHHmmss : "-";
             snap.ATREnabled = UseStopATR;
-            snap.AtrDisplayText = (UseStopATR && lastAtrVal > 0) ? lastAtrVal.ToString("0.000") : "-";
+            if (UseStopATR && lastAtrVal > 0)
+            {
+                double atrPoints = lastAtrVal;
+                double atrDollars = atrPoints * Instrument.MasterInstrument.PointValue;
+                snap.AtrDisplayText = string.Format(
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    "{0:0.00} ({1:0.00} USD/ct)",
+                    atrPoints,
+                    atrDollars
+                );
+            }
+            else
+            {
+                snap.AtrDisplayText = "-";
+            }
             snap.MainEnabled = !offSnapshot;
             snap.HedgeEnabled = GetEffectiveInvertMode() != InvertModeType.Disabled;
 
