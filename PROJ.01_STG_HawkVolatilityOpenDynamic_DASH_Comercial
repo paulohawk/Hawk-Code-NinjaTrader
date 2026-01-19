@@ -481,7 +481,7 @@ namespace NinjaTrader.NinjaScript
 
             main.Children.Add(new Border
             {
-                Height = 3,
+                Height = 1,
                 Background = Brushes.Transparent
             });
 
@@ -491,7 +491,7 @@ namespace NinjaTrader.NinjaScript
                 Foreground = BronzeBrush,
                 FontSize = 9.0,
                 HorizontalAlignment = HorizontalAlignment.Center,
-                Margin = new Thickness(0, 6, 0, 2),
+                Margin = new Thickness(0, 2, 0, 0),
                 TextTrimming = TextTrimming.None
             };
             main.Children.Add(_footerText);
