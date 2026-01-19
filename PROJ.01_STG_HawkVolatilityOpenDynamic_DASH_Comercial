@@ -3903,7 +3903,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }
                 else if (order.OrderState == OrderState.Cancelled || order.OrderState == OrderState.Rejected)
                 {
-                    DateTime tradingDay = GetTradingDay(time);
                     Audit("HedgeInvertPlanCancelled_EOD",
                         $"td={tradingDay:yyyy-MM-dd} state={order.OrderState} execId={executionId}");
                     CancelInvertPlan("EOD", tradingDay);
