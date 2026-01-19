@@ -2293,7 +2293,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             try { if (ordemTPShort != null) CancelOrder(ordemTPShort); } catch { }
 
             double tickSize = Instrument.MasterInstrument.TickSize;
-            double stopPrice, targetPrice;
+            double stopPrice = 0, targetPrice = 0;
             double bid = 0;
             double ask = 0;
             bool hasQuotes = false;
