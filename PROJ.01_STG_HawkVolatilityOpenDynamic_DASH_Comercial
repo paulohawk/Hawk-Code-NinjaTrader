@@ -1763,6 +1763,8 @@ namespace NinjaTrader.NinjaScript.Strategies
         private int watchdogRebuildCountToday = 0;
         private DateTime watchdogTradingDay = Core.Globals.MinDate;
         private bool pendingWatchdogRebuild = false;
+        private string lastWatchdogReason = "";
+        private string lastWatchdogContext = "";
 
         private const int ATRSeriesIndex = 1;
         private const int STSeriesIndex = 2;
@@ -1845,6 +1847,60 @@ namespace NinjaTrader.NinjaScript.Strategies
         // Helpers de formatação invariável
         private string F(double v, string fmt = "0.########") => v.ToString(fmt, CultureInfo.InvariantCulture);
         private string F0(double v) => v.ToString("0.00", CultureInfo.InvariantCulture);
+        private MarketPosition GetAuditMarketPosition()
+        {
+            if (Position != null && Position.MarketPosition != MarketPosition.Flat)
+                return Position.MarketPosition;
+
+            if (string.Equals(lastOpenSide, "Long", StringComparison.OrdinalIgnoreCase))
+                return MarketPosition.Long;
+            if (string.Equals(lastOpenSide, "Short", StringComparison.OrdinalIgnoreCase))
+                return MarketPosition.Short;
+
+            return MarketPosition.Flat;
+        }
+
+        private int GetAuditQty()
+        {
+            if (Position != null && Position.MarketPosition != MarketPosition.Flat)
+                return Math.Abs(Position.Quantity);
+
+            return lastOpenQty > 0 ? lastOpenQty : 0;
+        }
+
+        private double GetAuditAvg()
+        {
+            if (Position != null && Position.MarketPosition != MarketPosition.Flat)
+                return Position.AveragePrice;
+
+            return lastOpenAvg;
+        }
+
+        private void GetBracketPrices(MarketPosition side, out double stopPrice, out double targetPrice)
+        {
+            stopPrice = 0;
+            targetPrice = 0;
+
+            if (side == MarketPosition.Long)
+            {
+                stopPrice = ordemStopLong?.StopPrice ?? 0;
+                targetPrice = ordemTPLong?.LimitPrice ?? 0;
+            }
+            else if (side == MarketPosition.Short)
+            {
+                stopPrice = ordemStopShort?.StopPrice ?? 0;
+                targetPrice = ordemTPShort?.LimitPrice ?? 0;
+            }
+        }
+
+        private string FormatBracketAudit(string reason, string context, MarketPosition side, int qty, double avg, double stopPrice, double targetPrice, string extra = "")
+        {
+            string baseMsg = $"reason={reason} context={context} side={side} qty={qty} avg={F0(avg)} stopPrice={F0(stopPrice)} targetPrice={F0(targetPrice)}";
+            if (string.IsNullOrWhiteSpace(extra))
+                return baseMsg;
+
+            return $"{baseMsg} {extra}";
+        }
 
         // Termination guard
         private bool terminatedHandled = false;
@@ -2169,10 +2225,18 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (stop == null || tp == null)
                 return true;
 
+            if (stop.OrderState == OrderState.Cancelled || stop.OrderState == OrderState.Rejected)
+                return true;
+            if (tp.OrderState == OrderState.Cancelled || tp.OrderState == OrderState.Rejected)
+                return true;
+
             bool stopActive = IsOrderActive(stop);
             bool tpActive = IsOrderActive(tp);
 
             if (!stopActive || !tpActive)
+                return true;
+
+            if (Math.Abs(stop.Quantity) != posQtyAbs || Math.Abs(tp.Quantity) != posQtyAbs)
                 return true;
 
             if (lastBracketQty != posQtyAbs)
@@ -2221,7 +2285,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         }
 
         private void SubmitBracketOrders(Position position, double averagePrice, int posQtyAbs, DateTime tradingDay, double stopTicks,
-            double targetTicks, double stopDollars, string reason, bool isWatchdog)
+            double targetTicks, double stopDollars, string reason, string context, bool isWatchdog)
         {
             try { if (ordemStopLong != null) CancelOrder(ordemStopLong); } catch { }
             try { if (ordemStopShort != null) CancelOrder(ordemStopShort); } catch { }
@@ -2263,8 +2327,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                     if (Math.Abs(originalStop - stopPrice) > 0 || Math.Abs(originalTarget - targetPrice) > 0)
                     {
+                        string adjustMsg = FormatBracketAudit(reason, context, MarketPosition.Long, posQtyAbs, averagePrice, stopPrice, targetPrice,
+                            $"bid={F0(bid)} ask={F0(ask)} originalStop={F0(originalStop)} originalTarget={F0(originalTarget)}");
                         Audit("BracketPriceAdjusted",
-                            $"side=Long bid={F0(bid)} ask={F0(ask)} stopAdj={F0(stopPrice)} targetAdj={F0(targetPrice)}");
+                            adjustMsg);
                     }
                 }
 
@@ -2290,8 +2356,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                     if (Math.Abs(originalStop - stopPrice) > 0 || Math.Abs(originalTarget - targetPrice) > 0)
                     {
+                        string adjustMsg = FormatBracketAudit(reason, context, MarketPosition.Short, posQtyAbs, averagePrice, stopPrice, targetPrice,
+                            $"bid={F0(bid)} ask={F0(ask)} originalStop={F0(originalStop)} originalTarget={F0(originalTarget)}");
                         Audit("BracketPriceAdjusted",
-                            $"side=Short bid={F0(bid)} ask={F0(ask)} stopAdj={F0(stopPrice)} targetAdj={F0(targetPrice)}");
+                            adjustMsg);
                     }
                 }
 
@@ -2316,31 +2384,67 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             double riskDollars = stopDollars * posQtyAbs;
             double targetDollars = riskDollars * TargetFactor;
+            double stopAuditPrice = position.MarketPosition == MarketPosition.Long
+                ? ordemStopLong?.StopPrice ?? stopPrice
+                : ordemStopShort?.StopPrice ?? stopPrice;
+            double targetAuditPrice = position.MarketPosition == MarketPosition.Long
+                ? ordemTPLong?.LimitPrice ?? targetPrice
+                : ordemTPShort?.LimitPrice ?? targetPrice;
 
             if (isWatchdog)
             {
                 pendingWatchdogRebuild = true;
+                lastWatchdogReason = reason;
+                lastWatchdogContext = context;
+                string rebuildMsg = FormatBracketAudit(reason, context, position.MarketPosition, posQtyAbs, averagePrice, stopAuditPrice, targetAuditPrice,
+                    $"stopTicks={stopTicks} targetTicks={targetTicks} riskDollars={F0(riskDollars)} targetDollars={F0(targetDollars)}");
                 Audit("BracketWatchdogRebuildSubmitted",
-                    $"reason={reason} side={position.MarketPosition} qty={posQtyAbs} avg={F0(averagePrice)} stopPrice={F0(position.MarketPosition==MarketPosition.Long?ordemStopLong?.StopPrice??0:ordemStopShort?.StopPrice??0)} targetPrice={F0(position.MarketPosition==MarketPosition.Long?ordemTPLong?.LimitPrice??0:ordemTPShort?.LimitPrice??0)} stopTicks={stopTicks} targetTicks={targetTicks} riskDollars={F0(riskDollars)} targetDollars={F0(targetDollars)}");
+                    rebuildMsg);
                 return;
             }
 
+            string bracketMsg = FormatBracketAudit(reason, context, position.MarketPosition, posQtyAbs, averagePrice, stopAuditPrice, targetAuditPrice,
+                $"stopTicks={stopTicks} targetTicks={targetTicks} riskDollars={F0(riskDollars)} targetDollars={F0(targetDollars)} useATR={UseStopATR} atr={F(lastAtrVal, "0.000")} stopDollars={F0(stopDollars)}");
             Audit("BracketSet",
-                $"side={position.MarketPosition} qty={posQtyAbs} avg={F0(averagePrice)} stopPrice={F0(position.MarketPosition==MarketPosition.Long?ordemStopLong?.StopPrice??0:ordemStopShort?.StopPrice??0)} targetPrice={F0(position.MarketPosition==MarketPosition.Long?ordemTPLong?.LimitPrice??0:ordemTPShort?.LimitPrice??0)} stopTicks={stopTicks} targetTicks={targetTicks} riskDollars={F0(riskDollars)} targetDollars={F0(targetDollars)} useATR={UseStopATR} atr={F(lastAtrVal, "0.000")} stopDollars={F0(stopDollars)}");
+                bracketMsg);
         }
 
-        private void EnsureBracketAlive(string reason)
+        private bool IsPositionClosingFinal()
+        {
+            if (Position == null || Position.MarketPosition == MarketPosition.Flat)
+                return false;
+
+            bool isLong = Position.MarketPosition == MarketPosition.Long;
+            Order stop = isLong ? ordemStopLong : ordemStopShort;
+            Order tp = isLong ? ordemTPLong : ordemTPShort;
+
+            bool stopFinal = stop != null && (stop.OrderState == OrderState.Filled || stop.OrderState == OrderState.PartFilled);
+            bool tpFinal = tp != null && (tp.OrderState == OrderState.Filled || tp.OrderState == OrderState.PartFilled);
+
+            return stopFinal || tpFinal;
+        }
+
+        private void EnsureBracketAlive(string context, string reason)
         {
             if (!EnableBracketWatchdog) return;
             if (State != State.Realtime) return;
             if (Position == null || Position.MarketPosition == MarketPosition.Flat) return;
-            if (pendingWatchdogRebuild) return;
+            if (IsPositionClosingFinal()) return;
+            if (pendingWatchdogRebuild)
+            {
+                if (!IsBracketMissingOrDead() || !WatchdogCooldownOk())
+                    return;
+
+                pendingWatchdogRebuild = false;
+            }
             if (!WatchdogCooldownOk()) return;
             if (!IsBracketMissingOrDead()) return;
 
             lastWatchdogAttemptUtc = DateTime.UtcNow;
             lastWatchdogPositionQty = Math.Abs(Position.Quantity);
             lastWatchdogMktPos = Position.MarketPosition;
+            lastWatchdogReason = reason;
+            lastWatchdogContext = context;
 
             DateTime tradingDay = GetTradingDay(GetSafeTime());
             if (watchdogTradingDay.Date != tradingDay.Date)
@@ -2366,8 +2470,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             if (!ShouldThrottleAudit($"WATCHDOG_{tradingDay:yyyyMMdd}", LogThrottleSeconds))
             {
+                double stopPriceAudit;
+                double targetPriceAudit;
+                GetBracketPrices(lastWatchdogMktPos, out stopPriceAudit, out targetPriceAudit);
+                string watchdogMsg = FormatBracketAudit(reason, context, lastWatchdogMktPos, lastWatchdogPositionQty, Position.AveragePrice, stopPriceAudit, targetPriceAudit,
+                    $"hasQuotes={hasQuotes} bid={F0(bid)} ask={F0(ask)} lastBracketQty={lastBracketQty} rebuildCountToday={watchdogRebuildCountToday}");
                 Audit("BracketWatchdogTriggered",
-                    $"reason={reason} side={lastWatchdogMktPos} qty={lastWatchdogPositionQty} avg={F0(Position.AveragePrice)} hasQuotes={hasQuotes} bid={F0(bid)} ask={F0(ask)} lastBracketQty={lastBracketQty} rebuildCountToday={watchdogRebuildCountToday}");
+                    watchdogMsg);
             }
 
             double stopTicks;
@@ -2381,7 +2490,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 riscoPrecoAtual = stopTicks * Instrument.MasterInstrument.TickSize;
 
             lastBracketQty = 0;
-            SubmitBracketOrders(Position, Position.AveragePrice, Math.Abs(Position.Quantity), tradingDay, stopTicks, targetTicks, stopDollars, reason, true);
+            SubmitBracketOrders(Position, Position.AveragePrice, Math.Abs(Position.Quantity), tradingDay, stopTicks, targetTicks, stopDollars, reason, context, true);
         }
 
         private void Log(string tag, string message, DateTime? when = null)
@@ -3336,7 +3445,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
 
             if (Position != null && Position.MarketPosition != MarketPosition.Flat)
-                EnsureBracketAlive("OnBarUpdate");
+                EnsureBracketAlive("OnBarUpdate", "MissingOrDead");
 
             PublishSnapshotHeartbeat("OnBarUpdate");
         }
@@ -3417,6 +3526,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 activeEntrySignal = "";
                 activeEntrySignalDay = DateTime.MinValue;
                 pendingWatchdogRebuild = false;
+                lastWatchdogReason = "";
+                lastWatchdogContext = "";
                 ordemStopLong = null;
                 ordemStopShort = null;
                 ordemTPLong = null;
@@ -3491,7 +3602,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             if (mustRebuild)
             {
-                SubmitBracketOrders(position, averagePrice, posQtyAbs, tradingDay, stopTicks, targetTicks, stopDollars, "PositionOpen", false);
+                SubmitBracketOrders(position, averagePrice, posQtyAbs, tradingDay, stopTicks, targetTicks, stopDollars, "PositionOpen", "OnPositionUpdate", false);
             }
 
             PublishPanelSnapshot("OnPositionUpdate_bracket");
@@ -3521,8 +3632,16 @@ namespace NinjaTrader.NinjaScript.Strategies
             bool isBracket = order == ordemStopLong || order == ordemStopShort || order == ordemTPLong || order == ordemTPShort;
             if ((orderState == OrderState.Rejected || orderState == OrderState.Cancelled) && isBracket)
             {
+                MarketPosition side = GetAuditMarketPosition();
+                int qty = GetAuditQty();
+                double avg = GetAuditAvg();
+                double stopPriceAudit;
+                double targetPriceAudit;
+                GetBracketPrices(side, out stopPriceAudit, out targetPriceAudit);
+                string deadMsg = FormatBracketAudit(orderState.ToString(), "OnOrderUpdate", side, qty, avg, stopPriceAudit, targetPriceAudit,
+                    $"source=OnOrderUpdate name={orderName} error={error} nativeError={nativeError}");
                 Audit("BracketOrderDead",
-                    $"source=OnOrderUpdate name={orderName} state={orderState} error={error} nativeError={nativeError}");
+                    deadMsg);
 
                 if (order == ordemStopLong) ordemStopLong = null;
                 if (order == ordemStopShort) ordemStopShort = null;
@@ -3530,8 +3649,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (order == ordemTPShort) ordemTPShort = null;
 
                 lastBracketQty = 0;
+                pendingWatchdogRebuild = false;
 
-                EnsureBracketAlive("OnOrderUpdateDead");
+                EnsureBracketAlive("OnOrderUpdate", "OrderDead");
             }
 
             if (pendingWatchdogRebuild && isBracket &&
@@ -3539,9 +3659,22 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 if (Position != null && Position.MarketPosition != MarketPosition.Flat && AreBracketOrdersActive())
                 {
+                    double stopPriceAudit;
+                    double targetPriceAudit;
+                    GetBracketPrices(Position.MarketPosition, out stopPriceAudit, out targetPriceAudit);
+                    string okMsg = FormatBracketAudit(
+                        string.IsNullOrWhiteSpace(lastWatchdogReason) ? "WatchdogRebuildOk" : lastWatchdogReason,
+                        string.IsNullOrWhiteSpace(lastWatchdogContext) ? "OnOrderUpdate" : lastWatchdogContext,
+                        Position.MarketPosition,
+                        Math.Abs(Position.Quantity),
+                        Position.AveragePrice,
+                        stopPriceAudit,
+                        targetPriceAudit);
                     Audit("BracketWatchdogRebuildOk",
-                        $"side={Position.MarketPosition} qty={Position.Quantity} avg={F0(Position.AveragePrice)} stop={F0(Position.MarketPosition==MarketPosition.Long?ordemStopLong?.StopPrice??0:ordemStopShort?.StopPrice??0)} target={F0(Position.MarketPosition==MarketPosition.Long?ordemTPLong?.LimitPrice??0:ordemTPShort?.LimitPrice??0)}");
+                        okMsg);
                     pendingWatchdogRebuild = false;
+                    lastWatchdogReason = "";
+                    lastWatchdogContext = "";
                 }
             }
         }
@@ -3613,8 +3746,16 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             if (order.OrderState == OrderState.Rejected || order.OrderState == OrderState.Cancelled)
             {
+                MarketPosition side = GetAuditMarketPosition();
+                int qty = GetAuditQty();
+                double avg = GetAuditAvg();
+                double stopPriceAudit;
+                double targetPriceAudit;
+                GetBracketPrices(side, out stopPriceAudit, out targetPriceAudit);
+                string deadMsg = FormatBracketAudit(order.OrderState.ToString(), "OnExecutionUpdate", side, qty, avg, stopPriceAudit, targetPriceAudit,
+                    $"name={orderName} execId={executionId} qtyExec={quantity} priceExec={F0(price)}");
                 Audit("BracketOrderDead",
-                    $"name={orderName} state={order.OrderState} execId={executionId} qty={quantity} price={F0(price)}");
+                    deadMsg);
 
                 if (order == ordemStopLong) ordemStopLong = null;
                 if (order == ordemStopShort) ordemStopShort = null;
@@ -3622,9 +3763,10 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (order == ordemTPShort) ordemTPShort = null;
 
                 lastBracketQty = 0;
+                pendingWatchdogRebuild = false;
 
                 PublishPanelSnapshot("OnExecutionUpdate_dead");
-                EnsureBracketAlive("OnExecutionUpdateDead");
+                EnsureBracketAlive("OnExecutionUpdate", "OrderDead");
             }
         }
 
