@@ -127,6 +127,7 @@ namespace NinjaTrader.NinjaScript
         private readonly Brush LightGrayBrush = Brushes.LightGray;
         private readonly Brush InactiveBulletBrush = new SolidColorBrush(Color.FromRgb(150, 150, 150));
         private readonly Brush MainOnBrush = new SolidColorBrush(Color.FromRgb(60, 200, 120));
+        private readonly Brush StopLossBrush = Brushes.Red;
 
         public string PanelTitle { get; set; } = "Hawk";
 
@@ -425,12 +426,13 @@ namespace NinjaTrader.NinjaScript
             _riskWarningText = new TextBlock
             {
                 Text = "",
-                Foreground = Brushes.Goldenrod,
+                Foreground = StopLossBrush,
                 FontSize = 11,
                 Margin = new Thickness(0, 2, 0, 4),
                 TextWrapping = TextWrapping.NoWrap,
                 TextTrimming = TextTrimming.CharacterEllipsis,
-                HorizontalAlignment = HorizontalAlignment.Right,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                TextAlignment = TextAlignment.Left,
                 Visibility = Visibility.Collapsed
             };
 
