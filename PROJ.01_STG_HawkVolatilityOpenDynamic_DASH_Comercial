@@ -17,6 +17,7 @@ using System.Windows.Media.Effects;
 using System.Windows.Threading;
 using NinjaTrader.Cbi;
 using NinjaTrader.Data; // SessionIterator
+using NinjaTrader.Gui.Tools;
 using NinjaTrader.Gui.Chart;
 using NinjaTrader.NinjaScript;
 using NinjaTrader.NinjaScript.DrawingTools;
@@ -3299,7 +3300,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     Draw.TextFixed(
                         this,
                         "HEDGE_TIME_BLOCK",
-                        "HEDGE DESATIVADO\nEstratégia iniciada fora do horário permitido",
+                        "HEDGE DESATIVADO\nFora do horário permitido",
                         TextPosition.Center,
                         Brushes.OrangeRed,
                         new SimpleFont("Arial", 18),
