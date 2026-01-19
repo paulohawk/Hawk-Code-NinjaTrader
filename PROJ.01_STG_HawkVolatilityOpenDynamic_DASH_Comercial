@@ -176,6 +176,7 @@ namespace NinjaTrader.NinjaScript
         private TextBlock _lblDayResum;
         private WpfEllipse _bulletDayResum;
         private TextBlock _drSentence;
+        private TextBlock _footerText;
 
         private int _qty = 1;
         private bool _beEnabled = false;
@@ -431,8 +432,8 @@ namespace NinjaTrader.NinjaScript
                 Margin = new Thickness(0, 4, 0, 6),
                 TextWrapping = TextWrapping.Wrap,
                 TextTrimming = TextTrimming.None,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                TextAlignment = TextAlignment.Left,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                TextAlignment = TextAlignment.Center,
                 Visibility = Visibility.Collapsed
             };
 
@@ -477,16 +478,16 @@ namespace NinjaTrader.NinjaScript
             };
             main.Children.Add(_drSentence);
 
-            var footer = new TextBlock
+            _footerText = new TextBlock
             {
                 Text = "-Produto oficial Dashflix-",
-                Foreground = BronzeBrush,
-                FontSize = CompactFontSize - 1,
+                Foreground = LightGrayBrush,
+                FontSize = Math.Max(9.5, CompactFontSize - 0.5),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 Margin = new Thickness(0, 4, 0, 0),
                 TextTrimming = TextTrimming.None
             };
-            main.Children.Add(footer);
+            main.Children.Add(_footerText);
 
             Children.Add(main);
 
@@ -642,9 +643,11 @@ namespace NinjaTrader.NinjaScript
             if (_lblDayResum != null) _lblDayResum.FontSize = font;
             if (_riskWarningText != null)
             {
-                // Fonte padrão 9.5, mas responsiva para painéis estreitos
-                _riskWarningText.FontSize = Math.Min(9.5, Math.Max(8.0, font - 1.0));
+                // Fonte base mais legível, com responsividade controlada
+                _riskWarningText.FontSize = Math.Max(10.5, Math.Min(11.5, font));
             }
+            if (_footerText != null)
+                _footerText.FontSize = Math.Max(9.5, font - 0.5);
         }
 
         private void SetDayResumBulletAndTitleColor(bool hasTradeOrOpen)
