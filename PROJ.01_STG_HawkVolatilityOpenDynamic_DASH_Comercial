@@ -3779,6 +3779,16 @@ namespace NinjaTrader.NinjaScript.Strategies
             PublishSnapshotHeartbeat("OnBarUpdate");
         }
 
+        protected override void OnMarketData(MarketDataEventArgs e)
+        {
+            if (!AutoCloseEnabled)
+                return;
+            if (Position == null || Position.MarketPosition == MarketPosition.Flat)
+                return;
+
+            TryAutoCloseIfScheduled(e.Time);
+        }
+
         protected override void OnPositionUpdate(Position position, double averagePrice, int quantity, MarketPosition marketPosition)
         {
             if (position.Account != Account || position.Instrument != Instrument)
