@@ -3204,7 +3204,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (!AutoCloseEnabled) return;
 
             DateTime brasiliaNow = ConvertToBrasilia(barTime);
-            DateTime tradingDay = GetTradingDay(barTime); // usa trading day da série principal
+            DateTime tradingDay = GetTradingDay(Times[0][0]); // usa trading day da série principal
 
             // já executou neste trading day?
             if (lastAutoCloseDate.Date == tradingDay.Date) return;
@@ -3216,6 +3216,23 @@ namespace NinjaTrader.NinjaScript.Strategies
                 scheduled = new TimeSpan(int.Parse(parts[0]), int.Parse(parts[1]), int.Parse(parts[2]));
             }
             catch { scheduled = new TimeSpan(17, 55, 0); }
+
+            if (EnableDebugLog)
+            {
+                string sourceTz = GetBarTimeZone()?.Id ?? "Unknown";
+                DebugLog("AutoCloseDiag", $"sourceTZ={sourceTz} bip={BarsInProgress} mainTime={Times[0][0]:O} barTime={barTime:O} brNow={brasiliaNow:O} scheduled={scheduled} tradingDay={tradingDay:yyyy-MM-dd}");
+            }
+
+            TimeSpan windowDelta = brasiliaNow.TimeOfDay - scheduled;
+            if (Math.Abs(windowDelta.TotalMinutes) <= 2)
+            {
+                if (!ShouldThrottleAudit($"AUTOCLOSE_WINDOW_{tradingDay:yyyyMMdd}", LogThrottleSeconds))
+                {
+                    var marketPosition = Position?.MarketPosition ?? MarketPosition.Flat;
+                    var quantity = Position?.Quantity ?? 0;
+                    Log("AutoCloseWindow", $"barTime={barTime:O} brNow={brasiliaNow:O} scheduled={scheduled} bip={BarsInProgress} state={State} pos={marketPosition} qty={quantity}");
+                }
+            }
 
             if (brasiliaNow.TimeOfDay < scheduled) return;
 
