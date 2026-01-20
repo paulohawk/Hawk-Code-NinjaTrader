@@ -24,7 +24,7 @@ using NinjaTrader.NinjaScript;
 // - FlexGapWidth = 90 (print).
 namespace NinjaTrader.NinjaScript.Indicators
 {
-    public class OrderLineDecoratorBoleta : Indicator
+    public class HawkOrderDecorator : Indicator
     {
         private readonly List<OrderType> stopTypes   = new List<OrderType> { OrderType.StopMarket, OrderType.StopLimit, OrderType.MIT };
         private readonly List<OrderType> targetTypes = new List<OrderType> { OrderType.Limit };
@@ -57,8 +57,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             if (State == State.SetDefaults)
             {
-                Name = "OrderLineDecoratorBoleta";
-                Description = "Decora ordens STOP/TARGET com labels de ticks e valor.";
+                Name = "HawkOrderDecorator";
+                Description = "Decorador oficial Hawk para ordens de Stop e Target.";
                 IsOverlay = true;
                 Calculate = Calculate.OnPriceChange; // não usar OnEachTick
                 DrawOnPricePanel = true;
@@ -246,6 +246,23 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (State == State.Historical) return;
                 if (ChartControl == null || Instrument == null) return;
 
+                if (HawkOrderDecoratorHub.Enabled)
+                {
+                    var entryPrice = HawkOrderDecoratorHub.EntryPrice;
+                    var stopPrice = HawkOrderDecoratorHub.StopPrice;
+                    var targetPrice = HawkOrderDecoratorHub.TargetPrice;
+                    var quantity = HawkOrderDecoratorHub.Quantity;
+                    var side = HawkOrderDecoratorHub.Side;
+
+                    if (side == MarketPosition.Flat || quantity <= 0)
+                        return;
+
+                    AddHubDecor(DecorKind.STOP, stopPrice, entryPrice, quantity, side);
+                    AddHubDecor(DecorKind.TARGET, targetPrice, entryPrice, quantity, side);
+                    ForceRefresh();
+                    return;
+                }
+
                 // Resolve conta selecionada ou uma conta com posição no instrumento
                 if (selectedAccount == null)
                 {
@@ -318,6 +335,27 @@ namespace NinjaTrader.NinjaScript.Indicators
                 }
             }
             ForceRefresh();
+        }
+
+        private void AddHubDecor(DecorKind kind, double price, double entryPrice, int quantity, MarketPosition side)
+        {
+            if (price <= 0) return;
+
+            double priceDiff = (side == MarketPosition.Long) ? (price - entryPrice) : (entryPrice - price);
+            int ticks = (int)Math.Round(priceDiff / TickSize);
+            double points = priceDiff * quantity;
+            double currencyValue = priceDiff * Instrument.MasterInstrument.PointValue * quantity;
+            double accCash = 0.0;
+
+            string text = $"{(kind == DecorKind.STOP ? "STOP" : "TARGET")} ({quantity})";
+            text += DisplayTicks ? $"  :  {((kind == DecorKind.STOP && ticks > 0) ? "+" : "")}{ticks} T" : "";
+            text += DisplayPoints ? $"  :  {((kind == DecorKind.STOP && points > 0) ? "+" : "")}{points:F2} P" : "";
+            text += DisplayCurrency ? $"  :  {Symbol} {currencyValue:N2}" : "";
+            if (DisplayPercentOfAccount && accCash > 0)
+                text += $"  :  {(currencyValue / accCash):P2}";
+
+            var item = new DecorInfo { Kind = kind, Text = text };
+            toRender.AddOrUpdate(price, item, (_, __) => item);
         }
 
         private DecorKind GetDecorKind(OrderType ot)
@@ -414,48 +452,58 @@ namespace NinjaTrader.NinjaScript.Indicators
         #endregion
 
         #region Parameters
+        [Browsable(false)]
         [NinjaScriptProperty]
         [Display(Name = "Symbol", GroupName = "Display", Order = 1, Description = "Símbolo para o valor monetário")]
         public string Symbol { get; set; }
 
+        [Browsable(false)]
         [NinjaScriptProperty]
         [Display(Name = "Ticks", GroupName = "Display", Order = 10)]
         public bool DisplayTicks { get; set; }
 
+        [Browsable(false)]
         [NinjaScriptProperty]
         [Display(Name = "Points", GroupName = "Display", Order = 20)]
         public bool DisplayPoints { get; set; }
 
+        [Browsable(false)]
         [NinjaScriptProperty]
         [Display(Name = "Currency", GroupName = "Display", Order = 30)]
         public bool DisplayCurrency { get; set; }
 
+        [Browsable(false)]
         [NinjaScriptProperty]
         [Display(Name = "Percent (Account)", GroupName = "Display", Order = 40)]
         public bool DisplayPercentOfAccount { get; set; }
 
+        [Browsable(false)]
         [NinjaScriptProperty]
         [Display(Name = "Decorator Gap (px)", Description = "Gap à esquerda do bloco padrão do ChartTrader", GroupName = "UI", Order = 100)]
         public int FlexGapWidth { get; set; }
 
+        [Browsable(false)]
         [NinjaScriptProperty, XmlIgnore]
         [Display(Name = "Stop Fill Color", Order = 200, GroupName = "Colors")]
         public Brush StopFillBrush { get; set; }
         [Browsable(false)]
         public string StopFillBrushSerializable { get => Serialize.BrushToString(StopFillBrush); set => StopFillBrush = Serialize.StringToBrush(value); }
 
+        [Browsable(false)]
         [NinjaScriptProperty, XmlIgnore]
         [Display(Name = "Target Fill Color", Order = 210, GroupName = "Colors")]
         public Brush TargetFillBrush { get; set; }
         [Browsable(false)]
         public string TargetFillBrushSerializable { get => Serialize.BrushToString(TargetFillBrush); set => TargetFillBrush = Serialize.StringToBrush(value); }
 
+        [Browsable(false)]
         [NinjaScriptProperty, XmlIgnore]
         [Display(Name = "Outline Color", Order = 220, GroupName = "Colors")]
         public Brush OutlineBrush { get; set; }
         [Browsable(false)]
         public string OutlineBrushSerializable { get => Serialize.BrushToString(OutlineBrush); set => OutlineBrush = Serialize.StringToBrush(value); }
 
+        [Browsable(false)]
         [NinjaScriptProperty, XmlIgnore]
         [Display(Name = "Text Color", Order = 230, GroupName = "Colors")]
         public Brush TextBrush { get; set; }
@@ -471,19 +519,19 @@ namespace NinjaTrader.NinjaScript.Indicators
 {
 	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
 	{
-		private OrderLineDecoratorBoleta[] cacheOrderLineDecoratorBoleta;
-		public OrderLineDecoratorBoleta OrderLineDecoratorBoleta(string symbol, bool displayTicks, bool displayPoints, bool displayCurrency, bool displayPercentOfAccount, int flexGapWidth, Brush stopFillBrush, Brush targetFillBrush, Brush outlineBrush, Brush textBrush)
+		private HawkOrderDecorator[] cacheHawkOrderDecorator;
+		public HawkOrderDecorator HawkOrderDecorator(string symbol, bool displayTicks, bool displayPoints, bool displayCurrency, bool displayPercentOfAccount, int flexGapWidth, Brush stopFillBrush, Brush targetFillBrush, Brush outlineBrush, Brush textBrush)
 		{
-			return OrderLineDecoratorBoleta(Input, symbol, displayTicks, displayPoints, displayCurrency, displayPercentOfAccount, flexGapWidth, stopFillBrush, targetFillBrush, outlineBrush, textBrush);
+			return HawkOrderDecorator(Input, symbol, displayTicks, displayPoints, displayCurrency, displayPercentOfAccount, flexGapWidth, stopFillBrush, targetFillBrush, outlineBrush, textBrush);
 		}
 
-		public OrderLineDecoratorBoleta OrderLineDecoratorBoleta(ISeries<double> input, string symbol, bool displayTicks, bool displayPoints, bool displayCurrency, bool displayPercentOfAccount, int flexGapWidth, Brush stopFillBrush, Brush targetFillBrush, Brush outlineBrush, Brush textBrush)
+		public HawkOrderDecorator HawkOrderDecorator(ISeries<double> input, string symbol, bool displayTicks, bool displayPoints, bool displayCurrency, bool displayPercentOfAccount, int flexGapWidth, Brush stopFillBrush, Brush targetFillBrush, Brush outlineBrush, Brush textBrush)
 		{
-			if (cacheOrderLineDecoratorBoleta != null)
-				for (int idx = 0; idx < cacheOrderLineDecoratorBoleta.Length; idx++)
-					if (cacheOrderLineDecoratorBoleta[idx] != null && cacheOrderLineDecoratorBoleta[idx].Symbol == symbol && cacheOrderLineDecoratorBoleta[idx].DisplayTicks == displayTicks && cacheOrderLineDecoratorBoleta[idx].DisplayPoints == displayPoints && cacheOrderLineDecoratorBoleta[idx].DisplayCurrency == displayCurrency && cacheOrderLineDecoratorBoleta[idx].DisplayPercentOfAccount == displayPercentOfAccount && cacheOrderLineDecoratorBoleta[idx].FlexGapWidth == flexGapWidth && cacheOrderLineDecoratorBoleta[idx].StopFillBrush == stopFillBrush && cacheOrderLineDecoratorBoleta[idx].TargetFillBrush == targetFillBrush && cacheOrderLineDecoratorBoleta[idx].OutlineBrush == outlineBrush && cacheOrderLineDecoratorBoleta[idx].TextBrush == textBrush && cacheOrderLineDecoratorBoleta[idx].EqualsInput(input))
-						return cacheOrderLineDecoratorBoleta[idx];
-			return CacheIndicator<OrderLineDecoratorBoleta>(new OrderLineDecoratorBoleta(){ Symbol = symbol, DisplayTicks = displayTicks, DisplayPoints = displayPoints, DisplayCurrency = displayCurrency, DisplayPercentOfAccount = displayPercentOfAccount, FlexGapWidth = flexGapWidth, StopFillBrush = stopFillBrush, TargetFillBrush = targetFillBrush, OutlineBrush = outlineBrush, TextBrush = textBrush }, input, ref cacheOrderLineDecoratorBoleta);
+			if (cacheHawkOrderDecorator != null)
+				for (int idx = 0; idx < cacheHawkOrderDecorator.Length; idx++)
+					if (cacheHawkOrderDecorator[idx] != null && cacheHawkOrderDecorator[idx].Symbol == symbol && cacheHawkOrderDecorator[idx].DisplayTicks == displayTicks && cacheHawkOrderDecorator[idx].DisplayPoints == displayPoints && cacheHawkOrderDecorator[idx].DisplayCurrency == displayCurrency && cacheHawkOrderDecorator[idx].DisplayPercentOfAccount == displayPercentOfAccount && cacheHawkOrderDecorator[idx].FlexGapWidth == flexGapWidth && cacheHawkOrderDecorator[idx].StopFillBrush == stopFillBrush && cacheHawkOrderDecorator[idx].TargetFillBrush == targetFillBrush && cacheHawkOrderDecorator[idx].OutlineBrush == outlineBrush && cacheHawkOrderDecorator[idx].TextBrush == textBrush && cacheHawkOrderDecorator[idx].EqualsInput(input))
+						return cacheHawkOrderDecorator[idx];
+			return CacheIndicator<HawkOrderDecorator>(new HawkOrderDecorator(){ Symbol = symbol, DisplayTicks = displayTicks, DisplayPoints = displayPoints, DisplayCurrency = displayCurrency, DisplayPercentOfAccount = displayPercentOfAccount, FlexGapWidth = flexGapWidth, StopFillBrush = stopFillBrush, TargetFillBrush = targetFillBrush, OutlineBrush = outlineBrush, TextBrush = textBrush }, input, ref cacheHawkOrderDecorator);
 		}
 	}
 }
@@ -492,14 +540,14 @@ namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
 {
 	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
 	{
-		public Indicators.OrderLineDecoratorBoleta OrderLineDecoratorBoleta(string symbol, bool displayTicks, bool displayPoints, bool displayCurrency, bool displayPercentOfAccount, int flexGapWidth, Brush stopFillBrush, Brush targetFillBrush, Brush outlineBrush, Brush textBrush)
+		public Indicators.HawkOrderDecorator HawkOrderDecorator(string symbol, bool displayTicks, bool displayPoints, bool displayCurrency, bool displayPercentOfAccount, int flexGapWidth, Brush stopFillBrush, Brush targetFillBrush, Brush outlineBrush, Brush textBrush)
 		{
-			return indicator.OrderLineDecoratorBoleta(Input, symbol, displayTicks, displayPoints, displayCurrency, displayPercentOfAccount, flexGapWidth, stopFillBrush, targetFillBrush, outlineBrush, textBrush);
+			return indicator.HawkOrderDecorator(Input, symbol, displayTicks, displayPoints, displayCurrency, displayPercentOfAccount, flexGapWidth, stopFillBrush, targetFillBrush, outlineBrush, textBrush);
 		}
 
-		public Indicators.OrderLineDecoratorBoleta OrderLineDecoratorBoleta(ISeries<double> input , string symbol, bool displayTicks, bool displayPoints, bool displayCurrency, bool displayPercentOfAccount, int flexGapWidth, Brush stopFillBrush, Brush targetFillBrush, Brush outlineBrush, Brush textBrush)
+		public Indicators.HawkOrderDecorator HawkOrderDecorator(ISeries<double> input , string symbol, bool displayTicks, bool displayPoints, bool displayCurrency, bool displayPercentOfAccount, int flexGapWidth, Brush stopFillBrush, Brush targetFillBrush, Brush outlineBrush, Brush textBrush)
 		{
-			return indicator.OrderLineDecoratorBoleta(input, symbol, displayTicks, displayPoints, displayCurrency, displayPercentOfAccount, flexGapWidth, stopFillBrush, targetFillBrush, outlineBrush, textBrush);
+			return indicator.HawkOrderDecorator(input, symbol, displayTicks, displayPoints, displayCurrency, displayPercentOfAccount, flexGapWidth, stopFillBrush, targetFillBrush, outlineBrush, textBrush);
 		}
 	}
 }
@@ -508,14 +556,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
 	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
 	{
-		public Indicators.OrderLineDecoratorBoleta OrderLineDecoratorBoleta(string symbol, bool displayTicks, bool displayPoints, bool displayCurrency, bool displayPercentOfAccount, int flexGapWidth, Brush stopFillBrush, Brush targetFillBrush, Brush outlineBrush, Brush textBrush)
+		public Indicators.HawkOrderDecorator HawkOrderDecorator(string symbol, bool displayTicks, bool displayPoints, bool displayCurrency, bool displayPercentOfAccount, int flexGapWidth, Brush stopFillBrush, Brush targetFillBrush, Brush outlineBrush, Brush textBrush)
 		{
-			return indicator.OrderLineDecoratorBoleta(Input, symbol, displayTicks, displayPoints, displayCurrency, displayPercentOfAccount, flexGapWidth, stopFillBrush, targetFillBrush, outlineBrush, textBrush);
+			return indicator.HawkOrderDecorator(Input, symbol, displayTicks, displayPoints, displayCurrency, displayPercentOfAccount, flexGapWidth, stopFillBrush, targetFillBrush, outlineBrush, textBrush);
 		}
 
-		public Indicators.OrderLineDecoratorBoleta OrderLineDecoratorBoleta(ISeries<double> input , string symbol, bool displayTicks, bool displayPoints, bool displayCurrency, bool displayPercentOfAccount, int flexGapWidth, Brush stopFillBrush, Brush targetFillBrush, Brush outlineBrush, Brush textBrush)
+		public Indicators.HawkOrderDecorator HawkOrderDecorator(ISeries<double> input , string symbol, bool displayTicks, bool displayPoints, bool displayCurrency, bool displayPercentOfAccount, int flexGapWidth, Brush stopFillBrush, Brush targetFillBrush, Brush outlineBrush, Brush textBrush)
 		{
-			return indicator.OrderLineDecoratorBoleta(input, symbol, displayTicks, displayPoints, displayCurrency, displayPercentOfAccount, flexGapWidth, stopFillBrush, targetFillBrush, outlineBrush, textBrush);
+			return indicator.HawkOrderDecorator(input, symbol, displayTicks, displayPoints, displayCurrency, displayPercentOfAccount, flexGapWidth, stopFillBrush, targetFillBrush, outlineBrush, textBrush);
 		}
 	}
 }
