@@ -1866,22 +1866,22 @@ namespace NinjaTrader.NinjaScript.Strategies
         private const string DecorSampleText = "XXXXXXXX XXX XXXX";
 
         private SimpleFont decorChartFont;
-        private TextFormat decorTextFormat;
+        private SharpDX.DirectWrite.TextFormat decorTextFormat;
         private float decorSampleTextWidth;
 
-        private static readonly LinearGradientBrush DecorStopFillBrush = new LinearGradientBrush
+        private static readonly System.Windows.Media.LinearGradientBrush DecorStopFillBrush = new System.Windows.Media.LinearGradientBrush
         {
-            StartPoint = new Point(0, 0),
-            EndPoint = new Point(0, 1),
-            GradientStops = new GradientStopCollection
+            StartPoint = new System.Windows.Point(0, 0),
+            EndPoint = new System.Windows.Point(0, 1),
+            GradientStops = new System.Windows.Media.GradientStopCollection
             {
-                new GradientStop(Color.FromRgb(130, 130, 130), 0.0),
-                new GradientStop(Color.FromRgb(90, 90, 90), 1.0)
+                new System.Windows.Media.GradientStop(System.Windows.Media.Color.FromRgb(130, 130, 130), 0.0),
+                new System.Windows.Media.GradientStop(System.Windows.Media.Color.FromRgb(90, 90, 90), 1.0)
             }
         };
-        private static readonly Brush DecorTargetFillBrush = Brushes.DarkGoldenrod;
-        private static readonly Brush DecorOutlineBrush = Brushes.DimGray;
-        private static readonly Brush DecorTextBrush = Brushes.White;
+        private static readonly System.Windows.Media.Brush DecorTargetFillBrush = Brushes.DarkGoldenrod;
+        private static readonly System.Windows.Media.Brush DecorOutlineBrush = Brushes.DimGray;
+        private static readonly System.Windows.Media.Brush DecorTextBrush = Brushes.White;
         #endregion
 
         // Streaks
@@ -4125,7 +4125,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 snapshot = new Dictionary<double, DecorInfo>(toRender);
             }
 
-            var renderTarget = RenderTarget;
+            var renderTarget = chartControl.RenderTarget;
             if (renderTarget == null)
                 return;
 
@@ -4154,17 +4154,17 @@ namespace NinjaTrader.NinjaScript.Strategies
                     if (double.IsNaN(yPx))
                         continue;
 
-                    using (var layout = new TextLayout(Core.Globals.DirectWriteFactory, info.Text, decorTextFormat, float.MaxValue, float.MaxValue))
+                    using (var layout = new SharpDX.DirectWrite.TextLayout(Core.Globals.DirectWriteFactory, info.Text, decorTextFormat, float.MaxValue, float.MaxValue))
                     {
                         float tw = layout.Metrics.Width;
                         float th = layout.Metrics.Height;
                         float x = (float)(ChartPanel.W - (barPx + tw + decorSampleTextWidth + DecorFlexGapWidth));
                         float y = (float)(yPx - ((th + 7f) / 2f));
 
-                        var rect = new RectangleF(x, y, tw + 8f, th + 6f);
-                        var textPos = new Vector2(x + 4f, y + 3f);
-                        var lineStart = new Vector2(x + tw + 9f, (float)yPx);
-                        var lineEnd = new Vector2((float)ChartPanel.W, (float)yPx);
+                        var rect = new SharpDX.RectangleF(x, y, tw + 8f, th + 6f);
+                        var textPos = new SharpDX.Vector2(x + 4f, y + 3f);
+                        var lineStart = new SharpDX.Vector2(x + tw + 9f, (float)yPx);
+                        var lineEnd = new SharpDX.Vector2((float)ChartPanel.W, (float)yPx);
 
                         renderTarget.FillRectangle(rect, info.Kind == DecorKind.STOP ? stopFill : targetFill);
                         renderTarget.DrawRectangle(rect, outline, 1f);
@@ -4297,11 +4297,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             switch (order.OrderType)
             {
-                case OrderType.StopMarket:
-                case OrderType.StopLimit:
-                case OrderType.MarketIfTouched:
-                    kind = DecorKind.STOP;
-                    return true;
+                    case OrderType.StopMarket:
+                    case OrderType.StopLimit:
+                        kind = DecorKind.STOP;
+                        return true;
                 case OrderType.Limit:
                     kind = DecorKind.TARGET;
                     return true;
@@ -4348,17 +4347,22 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (labelFont == null)
                 return;
 
-            if (decorChartFont != null && decorChartFont.Equals(labelFont) && decorTextFormat != null)
+            if (decorChartFont != null
+                && decorChartFont.Size == labelFont.Size
+                && decorChartFont.Family == labelFont.Family
+                && decorTextFormat != null)
+            {
                 return;
+            }
 
             DisposeDecorResources();
             decorChartFont = labelFont;
             decorTextFormat = labelFont.ToDirectWriteTextFormat();
             decorTextFormat.TextAlignment = SharpDX.DirectWrite.TextAlignment.Leading;
-            decorTextFormat.ParagraphAlignment = ParagraphAlignment.Near;
-            decorTextFormat.WordWrapping = WordWrapping.NoWrap;
+            decorTextFormat.ParagraphAlignment = SharpDX.DirectWrite.ParagraphAlignment.Near;
+            decorTextFormat.WordWrapping = SharpDX.DirectWrite.WordWrapping.NoWrap;
 
-            using (var layout = new TextLayout(Core.Globals.DirectWriteFactory, DecorSampleText, decorTextFormat, float.MaxValue, float.MaxValue))
+            using (var layout = new SharpDX.DirectWrite.TextLayout(Core.Globals.DirectWriteFactory, DecorSampleText, decorTextFormat, float.MaxValue, float.MaxValue))
             {
                 decorSampleTextWidth = layout.Metrics.Width;
             }
