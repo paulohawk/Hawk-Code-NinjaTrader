@@ -202,7 +202,7 @@ namespace NinjaTrader.NinjaScript
         {
             Background = Brushes.Transparent;
             Margin = new Thickness(6);
-            MinHeight = 420;
+            MinHeight = 399;
 
             var main = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(2) };
 
@@ -481,7 +481,7 @@ namespace NinjaTrader.NinjaScript
 
             main.Children.Add(new Border
             {
-                Height = 1,
+                Height = 11,
                 Background = Brushes.Transparent
             });
 
@@ -966,7 +966,7 @@ namespace NinjaTrader.NinjaScript
     public class HVO_PanelHelper
     {
         private const int AttachPollMs = 1000;
-        private const double EmbedHeightPx = 420.0;
+        private const double EmbedHeightPx = 399.0;
 
         private ChartControl chartControl;
         private NinjaTrader.Gui.Chart.Chart chartWindow;
