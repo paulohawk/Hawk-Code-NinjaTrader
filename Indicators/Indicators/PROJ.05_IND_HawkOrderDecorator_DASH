@@ -246,13 +246,13 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (State == State.Historical) return;
                 if (ChartControl == null || Instrument == null) return;
 
-                if (HawkOrderDecoratorHub.Enabled)
+                if (HawkOrderDecoratorState.Enabled)
                 {
-                    var entryPrice = HawkOrderDecoratorHub.EntryPrice;
-                    var stopPrice = HawkOrderDecoratorHub.StopPrice;
-                    var targetPrice = HawkOrderDecoratorHub.TargetPrice;
-                    var quantity = HawkOrderDecoratorHub.Quantity;
-                    var side = HawkOrderDecoratorHub.Side;
+                    var entryPrice = HawkOrderDecoratorState.EntryPrice;
+                    var stopPrice = HawkOrderDecoratorState.StopPrice;
+                    var targetPrice = HawkOrderDecoratorState.TargetPrice;
+                    var quantity = HawkOrderDecoratorState.Quantity;
+                    var side = HawkOrderDecoratorState.Side;
 
                     if (side == MarketPosition.Flat || quantity <= 0)
                         return;
