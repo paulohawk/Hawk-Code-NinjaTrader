@@ -1840,6 +1840,10 @@ namespace NinjaTrader.NinjaScript.Strategies
         private string cacheKey;
         private string chartToken = "HEADLESS";
 
+        // --- Hawk Order Decorator bridge ---
+        private HawkOrderDecorator hawkOrderDecorator;
+        private bool hawkOrderDecoratorAttached;
+
         // Overlay informativo fora do horário (UI-only)
         private RiskOverlayHelper riskOverlayHelper;
         private DateTime lastRiskWarningDate = DateTime.MinValue;
@@ -1966,6 +1970,81 @@ namespace NinjaTrader.NinjaScript.Strategies
             return $"{baseMsg} {extra}";
         }
 
+        private void UpdateHawkOrderDecoratorState()
+        {
+            try
+            {
+                if (Position == null || Position.MarketPosition == MarketPosition.Flat)
+                {
+                    HawkOrderDecoratorState.Clear();
+                    return;
+                }
+
+                HawkOrderDecoratorState.Side = Position.MarketPosition;
+                HawkOrderDecoratorState.Quantity = Math.Abs(Position.Quantity);
+                HawkOrderDecoratorState.EntryPrice = Position.AveragePrice;
+
+                if (Position.MarketPosition == MarketPosition.Long)
+                {
+                    HawkOrderDecoratorState.StopPrice = ordemStopLong?.StopPrice ?? 0;
+                    HawkOrderDecoratorState.TargetPrice = ordemTPLong?.LimitPrice ?? 0;
+                }
+                else if (Position.MarketPosition == MarketPosition.Short)
+                {
+                    HawkOrderDecoratorState.StopPrice = ordemStopShort?.StopPrice ?? 0;
+                    HawkOrderDecoratorState.TargetPrice = ordemTPShort?.LimitPrice ?? 0;
+                }
+                else
+                {
+                    HawkOrderDecoratorState.StopPrice = 0;
+                    HawkOrderDecoratorState.TargetPrice = 0;
+                }
+
+                bool hasStop = HawkOrderDecoratorState.StopPrice > 0;
+                bool hasTarget = HawkOrderDecoratorState.TargetPrice > 0;
+                HawkOrderDecoratorState.Enabled = (hasStop || hasTarget);
+
+                HawkOrderDecoratorState.LastUpdateUtc = Core.Globals.Now;
+            }
+            catch
+            {
+                // silêncio proposital: não pode quebrar a estratégia por causa do decorator
+            }
+        }
+
+        private void EnsureHawkOrderDecoratorAttached()
+        {
+            if (hawkOrderDecoratorAttached)
+                return;
+
+            if (ChartControl == null)
+                return;
+
+            var stopGradient = new LinearGradientBrush
+            {
+                StartPoint = new System.Windows.Point(0, 0),
+                EndPoint = new System.Windows.Point(0, 1)
+            };
+            stopGradient.GradientStops.Add(new GradientStop(System.Windows.Media.Color.FromRgb(130, 130, 130), 0.0));
+            stopGradient.GradientStops.Add(new GradientStop(System.Windows.Media.Color.FromRgb(90, 90, 90), 1.0));
+
+            hawkOrderDecorator = HawkOrderDecorator(
+                "$",
+                true,
+                true,
+                true,
+                true,
+                90,
+                stopGradient,
+                Brushes.DarkGoldenrod,
+                Brushes.DimGray,
+                Brushes.White
+            );
+
+            AddChartIndicator(hawkOrderDecorator);
+            hawkOrderDecoratorAttached = true;
+        }
+
         // Termination guard
         private bool terminatedHandled = false;
 
@@ -2084,12 +2163,15 @@ namespace NinjaTrader.NinjaScript.Strategies
                     panelHelper.Init(ChartControl);
                 }
                 riskOverlayHelper = new RiskOverlayHelper();
+                EnsureHawkOrderDecoratorAttached();
 
             }
             else if (State == State.Realtime)
             {
                 isStrategyActive = true;
                 lastTradesCount = SystemPerformance.AllTrades.Count;
+                EnsureHawkOrderDecoratorAttached();
+                UpdateHawkOrderDecoratorState();
                 PublishPanelSnapshot("StateRealtime");
                 riskOverlayHelper?.TryShow(this);
             }
@@ -2101,6 +2183,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 isStrategyActive = false;
                 PublishPanelOffSnapshot("Terminated");
+                HawkOrderDecoratorState.Clear();
                 try { panelHelper?.Dispose(); panelHelper = null; } catch { }
                 riskOverlayHelper?.Remove();
             }
@@ -3306,6 +3389,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             dayTargetDollars = "-";
             dayBreakevenDollars = "-";
 
+            HawkOrderDecoratorState.Clear();
+
             Audit("DayReset", $"td={tradingDay:yyyy-MM-dd}");
         }
 
@@ -3823,6 +3908,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 dayQtyCache = null;
                 dayStatus = tradedToday ? "Closed" : "Waiting";
 
+                HawkOrderDecoratorState.Clear();
+
                 Audit("PositionClosed", $"side={lastOpenSide} qty={lastOpenQty} avgEntry={F0(lastOpenAvg)} exitReason={exitReason} dayStatus={dayStatus}");
 
                 exitReasonHint = null;
@@ -3892,6 +3979,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 SubmitBracketOrders(position, averagePrice, posQtyAbs, tradingDay, stopTicks, targetTicks, stopDollars, "PositionOpen", "OnPositionUpdate", false);
             }
 
+            UpdateHawkOrderDecoratorState();
             PublishPanelSnapshot("OnPositionUpdate_bracket");
         }
 
@@ -3964,6 +4052,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                     lastWatchdogContext = "";
                 }
             }
+
+            if (isBracket)
+                UpdateHawkOrderDecoratorState();
         }
 
         protected override void OnExecutionUpdate(Execution execution, string executionId, double price, int quantity,
@@ -4054,6 +4145,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 PublishPanelSnapshot("OnExecutionUpdate_dead");
                 EnsureBracketAlive("OnExecutionUpdate", "OrderDead");
+            }
+
+            bool isBracketExec =
+                order == ordemStopLong ||
+                order == ordemStopShort ||
+                order == ordemTPLong ||
+                order == ordemTPShort;
+
+            if (isBracketExec)
+            {
+                UpdateHawkOrderDecoratorState();
             }
         }
 
