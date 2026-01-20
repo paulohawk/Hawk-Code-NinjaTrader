@@ -22,6 +22,9 @@ using NinjaTrader.Gui.Tools;
 using NinjaTrader.NinjaScript;
 using NinjaTrader.NinjaScript.DrawingTools;
 using NinjaTrader.NinjaScript.Indicators;
+using SharpDX;
+using SharpDX.Direct2D1;
+using SharpDX.DirectWrite;
 // Aliases para evitar conflitos WPF vs DrawingTools / IO
 using IOPath = System.IO.Path;
 using WpfEllipse = System.Windows.Shapes.Ellipse;
