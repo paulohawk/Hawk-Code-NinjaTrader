@@ -1818,8 +1818,9 @@ namespace NinjaTrader.NinjaScript.Strategies
         private string lastWatchdogReason = "";
         private string lastWatchdogContext = "";
 
-        private const int ATRSeriesIndex = 1;
-        private const int STSeriesIndex = 2;
+        private const int BIP_AUTOCLOSE = 1;
+        private int atrBip = -1;
+        private int stBip = -1;
 
         private static readonly TimeZoneInfo BrasiliaTimeZone =
             TimeZoneInfo.FindSystemTimeZoneById(
@@ -2053,13 +2054,21 @@ namespace NinjaTrader.NinjaScript.Strategies
                 hedgeModelFrozen = true;
                 defaultModelFrozen = true;
 
+                // Timeframe auxiliar EXCLUSIVO para AutoClose
+                AddDataSeries(Data.BarsPeriodType.Minute, 1);
+
+                int nextBip = 2;
                 if (ATRTimeFrame > 0)
                 {
                     AddDataSeries(Data.BarsPeriodType.Minute, ATRTimeFrame);
+                    atrBip = nextBip;
+                    nextBip++;
                 }
                 if (STTimeFrame > 0)
                 {
                     AddDataSeries(Data.BarsPeriodType.Minute, STTimeFrame);
+                    stBip = nextBip;
+                    nextBip++;
                 }
             }
             else if (State == State.DataLoaded)
@@ -3195,10 +3204,11 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (!AutoCloseEnabled) return;
 
             DateTime brasiliaNow = ConvertToBrasilia(barTime);
-            DateTime tradingDay = GetTradingDay(barTime); // usa trading day da série principal
+            DateTime tradingDay = GetTradingDay(Times[0][0]); // usa trading day da série principal
+            DateTime brDate = brasiliaNow.Date;
 
-            // já executou neste trading day?
-            if (lastAutoCloseDate.Date == tradingDay.Date) return;
+            // já executou neste dia (Brasília)?
+            if (lastAutoCloseDate.Date == brDate) return;
 
             TimeSpan scheduled;
             try
@@ -3207,6 +3217,23 @@ namespace NinjaTrader.NinjaScript.Strategies
                 scheduled = new TimeSpan(int.Parse(parts[0]), int.Parse(parts[1]), int.Parse(parts[2]));
             }
             catch { scheduled = new TimeSpan(17, 55, 0); }
+
+            if (EnableDebugLog)
+            {
+                string sourceTz = GetBarTimeZone()?.Id ?? "Unknown";
+                DebugLog("AutoCloseDiag", $"sourceTZ={sourceTz} bip={BarsInProgress} mainTime={Times[0][0]:O} barTime={barTime:O} brNow={brasiliaNow:O} scheduled={scheduled} tradingDay={tradingDay:yyyy-MM-dd}");
+            }
+
+            TimeSpan windowDelta = brasiliaNow.TimeOfDay - scheduled;
+            if (Math.Abs(windowDelta.TotalMinutes) <= 2)
+            {
+                if (!ShouldThrottleAudit($"AUTOCLOSE_WINDOW_{tradingDay:yyyyMMdd}", LogThrottleSeconds))
+                {
+                    var marketPosition = Position?.MarketPosition ?? MarketPosition.Flat;
+                    var quantity = Position?.Quantity ?? 0;
+                    Log("AutoCloseWindow", $"barTime={barTime:O} brNow={brasiliaNow:O} scheduled={scheduled} bip={BarsInProgress} state={State} pos={marketPosition} qty={quantity}");
+                }
+            }
 
             if (brasiliaNow.TimeOfDay < scheduled) return;
 
@@ -3219,14 +3246,14 @@ namespace NinjaTrader.NinjaScript.Strategies
                     Audit("AutoClose", $"scheduled={scheduled} brNow={brasiliaNow:HH\\:mm\\:ss} action=CancelInvertPlan");
                 }
 
-                lastAutoCloseDate = tradingDay.Date;
+                lastAutoCloseDate = brDate;
                 autoCloseTriggeredToday = true;
                 PublishPanelSnapshot("AutoClose_flat");
                 return;
             }
 
             // Marca dia e executa
-            lastAutoCloseDate = tradingDay.Date;
+            lastAutoCloseDate = brDate;
             autoCloseTriggeredToday = true;
             exitReasonHint = "AutoClose";
             exitReasonHintTradingDay = tradingDay;
@@ -3257,6 +3284,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                         ExitShort("AutoClose");
                 }
 
+                Audit("AutoClose", $"action=ExitSent side={Position.MarketPosition} qty={Position.Quantity} avg={F0(Position.AveragePrice)}");
+                PublishPanelSnapshot("AutoClose_exit_sent");
                 PublishPanelSnapshot("AutoClose");
             }
             catch (Exception ex)
@@ -3484,13 +3513,30 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         protected override void OnBarUpdate()
         {
-            // Processa BIP do SuperTrend para memo
-            if (BarsInProgress == STSeriesIndex)
+            if (CurrentBars == null || CurrentBars.Length == 0)
+                return;
+
+            // Segurança padrão
+            if (CurrentBars[BarsInProgress] < 1)
+                return;
+
+            // ============================
+            // MOTOR DE AUTOCLOSE
+            // ============================
+            if (BarsInProgress == BIP_AUTOCLOSE)
             {
-                if (CurrentBars[STSeriesIndex] > Math.Max(STPeriod, STSmooth))
+                if (State == State.Realtime)
+                    TryAutoCloseIfScheduled(Times[BarsInProgress][0]);
+                return;
+            }
+
+            // Processa BIP do SuperTrend para memo
+            if (stBip >= 0 && BarsInProgress == stBip)
+            {
+                if (CurrentBars[stBip] > Math.Max(STPeriod, STSmooth))
                 {
                     var st = TSSuperTrend(
-                        Closes[STSeriesIndex],
+                        Closes[stBip],
                         SuperTrendMode.ATR,
                         STPeriod,
                         STFactor,
@@ -3502,7 +3548,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                     memoSuperTrendUpValue = st.UpTrend[0];
                     memoSuperTrendDownValue = st.DownTrend[0];
-                    double closeST = Closes[STSeriesIndex][0];
+                    double closeST = Closes[stBip][0];
 
                     memoSuperTrendUpTrend =
                         ((memoSuperTrendDownValue == 0 && memoSuperTrendUpValue > 0) ||
@@ -3513,25 +3559,29 @@ namespace NinjaTrader.NinjaScript.Strategies
                          (memoSuperTrendUpValue > 0 && closeST <= memoSuperTrendUpValue));
 
                     memoSuperTrendReady = true;
-                    memoSuperTrendTime = Times[STSeriesIndex][0];
+                    memoSuperTrendTime = Times[stBip][0];
                 }
                 return;
             }
 
             // Processa BIP do ATR para memo
-            if (BarsInProgress == ATRSeriesIndex)
+            if (atrBip >= 0 && BarsInProgress == atrBip)
             {
-                if (CurrentBars[ATRSeriesIndex] > ATRPeriod)
+                if (CurrentBars[atrBip] > ATRPeriod)
                 {
-                    lastAtrVal = ATR(BarsArray[ATRSeriesIndex], ATRPeriod)[0];
+                    lastAtrVal = ATR(BarsArray[atrBip], ATRPeriod)[0];
                 }
                 return;
             }
 
             // BIP principal
             if (BarsInProgress != 0) return;
-            if (CurrentBars == null || CurrentBars.Length == 0) return;
             if (CurrentBars[0] < 2) return;
+
+            if (State == State.Historical)
+            {
+                TryAutoCloseIfScheduled(Times[0][0]);
+            }
 
             DateTime closeTime = Times[0][0];
             DateTime tradingDay = GetTradingDay(closeTime);
@@ -3541,7 +3591,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 ResetDayCaches(tradingDay);
             }
 
-            TryAutoCloseIfScheduled(closeTime);
             EvaluateInvertPlanLifecycle(closeTime, tradingDay);
 
             string entryHms = IsUsaDst(closeTime) ? EntryTimeDstUsaHHmmss : EntryTimeNormalHHmmss;
@@ -3580,10 +3629,10 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
             else if (UseSuperTrend && !SuperTrendOnBarClose)
             {
-                if (CurrentBars.Length > STSeriesIndex && CurrentBars[STSeriesIndex] > Math.Max(STPeriod, STSmooth))
+                if (stBip >= 0 && CurrentBars.Length > stBip && CurrentBars[stBip] > Math.Max(STPeriod, STSmooth))
                 {
                     var supertrendRealtime = TSSuperTrend(
-                        Closes[STSeriesIndex],
+                        Closes[stBip],
                         SuperTrendMode.ATR,
                         STPeriod,
                         STFactor,
@@ -3593,7 +3642,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                         false,
                         false);
 
-                    double pxSt = Closes[STSeriesIndex][0];
+                    double pxSt = Closes[stBip][0];
 
                     liberarLong = supertrendRealtime.UpTrend[0] > 0.0 && pxSt > supertrendRealtime.UpTrend[0];
                     liberarShort = supertrendRealtime.DownTrend[0] > 0.0 && pxSt < supertrendRealtime.DownTrend[0];
@@ -3735,6 +3784,18 @@ namespace NinjaTrader.NinjaScript.Strategies
                 EnsureBracketAlive("OnBarUpdate", "MissingOrDead");
 
             PublishSnapshotHeartbeat("OnBarUpdate");
+        }
+
+        protected override void OnMarketData(MarketDataEventArgs e)
+        {
+            if (!AutoCloseEnabled)
+                return;
+            if (State != State.Realtime)
+                return;
+            if (Position == null || Position.MarketPosition == MarketPosition.Flat)
+                return;
+
+            TryAutoCloseIfScheduled(e.Time);
         }
 
         protected override void OnPositionUpdate(Position position, double averagePrice, int quantity, MarketPosition marketPosition)
