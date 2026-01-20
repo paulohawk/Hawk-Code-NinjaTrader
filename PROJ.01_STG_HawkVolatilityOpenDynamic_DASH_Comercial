@@ -429,7 +429,7 @@ namespace NinjaTrader.NinjaScript
             {
                 Text = "",
                 Foreground = StopLossBrush,
-                FontSize = 9.0,
+                FontSize = 10.0,
                 Margin = new Thickness(0, 4, 0, 6),
                 TextWrapping = TextWrapping.Wrap,
                 TextTrimming = TextTrimming.None,
