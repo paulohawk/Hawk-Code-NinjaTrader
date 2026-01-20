@@ -3205,9 +3205,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             DateTime brasiliaNow = ConvertToBrasilia(barTime);
             DateTime tradingDay = GetTradingDay(Times[0][0]); // usa trading day da série principal
+            DateTime brDate = brasiliaNow.Date;
 
-            // já executou neste trading day?
-            if (lastAutoCloseDate.Date == tradingDay.Date) return;
+            // já executou neste dia (Brasília)?
+            if (lastAutoCloseDate.Date == brDate) return;
 
             TimeSpan scheduled;
             try
@@ -3245,14 +3246,14 @@ namespace NinjaTrader.NinjaScript.Strategies
                     Audit("AutoClose", $"scheduled={scheduled} brNow={brasiliaNow:HH\\:mm\\:ss} action=CancelInvertPlan");
                 }
 
-                lastAutoCloseDate = tradingDay.Date;
+                lastAutoCloseDate = brDate;
                 autoCloseTriggeredToday = true;
                 PublishPanelSnapshot("AutoClose_flat");
                 return;
             }
 
             // Marca dia e executa
-            lastAutoCloseDate = tradingDay.Date;
+            lastAutoCloseDate = brDate;
             autoCloseTriggeredToday = true;
             exitReasonHint = "AutoClose";
             exitReasonHintTradingDay = tradingDay;
@@ -3524,7 +3525,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             // ============================
             if (BarsInProgress == BIP_AUTOCLOSE)
             {
-                TryAutoCloseIfScheduled(Times[BarsInProgress][0]);
+                if (State == State.Realtime)
+                    TryAutoCloseIfScheduled(Times[BarsInProgress][0]);
                 return;
             }
 
@@ -3575,6 +3577,11 @@ namespace NinjaTrader.NinjaScript.Strategies
             // BIP principal
             if (BarsInProgress != 0) return;
             if (CurrentBars[0] < 2) return;
+
+            if (State == State.Historical)
+            {
+                TryAutoCloseIfScheduled(Times[0][0]);
+            }
 
             DateTime closeTime = Times[0][0];
             DateTime tradingDay = GetTradingDay(closeTime);
@@ -3782,6 +3789,8 @@ namespace NinjaTrader.NinjaScript.Strategies
         protected override void OnMarketData(MarketDataEventArgs e)
         {
             if (!AutoCloseEnabled)
+                return;
+            if (State != State.Realtime)
                 return;
             if (Position == null || Position.MarketPosition == MarketPosition.Flat)
                 return;
