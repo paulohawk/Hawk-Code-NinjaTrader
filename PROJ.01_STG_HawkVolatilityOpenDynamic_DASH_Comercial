@@ -3283,6 +3283,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                         ExitShort("AutoClose");
                 }
 
+                Audit("AutoClose", $"action=ExitSent side={Position.MarketPosition} qty={Position.Quantity} avg={F0(Position.AveragePrice)}");
+                PublishPanelSnapshot("AutoClose_exit_sent");
                 PublishPanelSnapshot("AutoClose");
             }
             catch (Exception ex)
