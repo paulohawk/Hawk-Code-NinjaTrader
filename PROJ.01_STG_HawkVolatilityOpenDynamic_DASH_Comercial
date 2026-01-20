@@ -29,6 +29,19 @@ using SharpDX.DirectWrite;
 using IOPath = System.IO.Path;
 using WpfEllipse = System.Windows.Shapes.Ellipse;
 using WpfPath = System.Windows.Shapes.Path;
+// --- WPF aliases (evitam ambiguidade com SharpDX) ---
+using WpfBrush = System.Windows.Media.Brush;
+using WpfSolidColorBrush = System.Windows.Media.SolidColorBrush;
+using WpfColor = System.Windows.Media.Color;
+using WpfPoint = System.Windows.Point;
+using WpfGeometry = System.Windows.Media.Geometry;
+using WpfLinearGradientBrush = System.Windows.Media.LinearGradientBrush;
+using WpfGradientStop = System.Windows.Media.GradientStop;
+using WpfGradientStopCollection = System.Windows.Media.GradientStopCollection;
+// --- SharpDX enums aliases (somente onde necessário) ---
+using DxTextAlignment = SharpDX.DirectWrite.TextAlignment;
+using DxParagraphAlignment = SharpDX.DirectWrite.ParagraphAlignment;
+using DxWordWrapping = SharpDX.DirectWrite.WordWrapping;
 #endregion
 
 // -----------------------------------------------------------------------------
@@ -126,12 +139,12 @@ namespace NinjaTrader.NinjaScript
         private double CompactFontSize = 10.0;
         private double RowSpacing = 1.0;
 
-        private readonly Brush BronzeBrush = new SolidColorBrush(Color.FromRgb(170, 120, 60));
-        private readonly Brush GraphiteBrush = new SolidColorBrush(Color.FromRgb(72, 72, 72));
-        private readonly Brush LightGrayBrush = Brushes.LightGray;
-        private readonly Brush InactiveBulletBrush = new SolidColorBrush(Color.FromRgb(150, 150, 150));
-        private readonly Brush MainOnBrush = new SolidColorBrush(Color.FromRgb(60, 200, 120));
-        private readonly Brush StopLossBrush = Brushes.Red;
+        private readonly WpfBrush BronzeBrush = new WpfSolidColorBrush(WpfColor.FromRgb(170, 120, 60));
+        private readonly WpfBrush GraphiteBrush = new WpfSolidColorBrush(WpfColor.FromRgb(72, 72, 72));
+        private readonly WpfBrush LightGrayBrush = Brushes.LightGray;
+        private readonly WpfBrush InactiveBulletBrush = new WpfSolidColorBrush(WpfColor.FromRgb(150, 150, 150));
+        private readonly WpfBrush MainOnBrush = new WpfSolidColorBrush(WpfColor.FromRgb(60, 200, 120));
+        private readonly WpfBrush StopLossBrush = Brushes.Red;
 
         public string PanelTitle { get; set; } = "Hawk";
 
@@ -217,15 +230,15 @@ namespace NinjaTrader.NinjaScript
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
             var iconHolder = new Grid { Width = 18, Height = 18, Margin = new Thickness(0, 0, 4, 0) };
-            var outer = new WpfEllipse { Width = 18, Height = 18, Stroke = new SolidColorBrush(Color.FromRgb(58, 58, 58)), StrokeThickness = 1.0, Fill = Brushes.Transparent };
-            var radial = new RadialGradientBrush { GradientOrigin = new Point(0.35, 0.25), Center = new Point(0.35, 0.25), RadiusX = 0.8, RadiusY = 0.8 };
-            radial.GradientStops.Add(new GradientStop(Color.FromRgb(170, 120, 60), 0.0));
-            radial.GradientStops.Add(new GradientStop(Color.FromRgb(130, 80, 35), 0.9));
+            var outer = new WpfEllipse { Width = 18, Height = 18, Stroke = new WpfSolidColorBrush(WpfColor.FromRgb(58, 58, 58)), StrokeThickness = 1.0, Fill = Brushes.Transparent };
+            var radial = new RadialGradientBrush { GradientOrigin = new WpfPoint(0.35, 0.25), Center = new WpfPoint(0.35, 0.25), RadiusX = 0.8, RadiusY = 0.8 };
+            radial.GradientStops.Add(new WpfGradientStop(WpfColor.FromRgb(170, 120, 60), 0.0));
+            radial.GradientStops.Add(new WpfGradientStop(WpfColor.FromRgb(130, 80, 35), 0.9));
             var bronzeCircle = new WpfEllipse { Width = 14, Height = 14, Fill = radial, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             var star = new WpfPath
             {
                 Fill = Brushes.Black,
-                Data = Geometry.Parse("M7 0 L8.6 4.2 L13 4.2 L9.1 6.5 L10.6 10.7 L7 8.3 L3.4 10.7 L4.9 6.5 L1 4.2 L5.4 4.2 Z"),
+                Data = WpfGeometry.Parse("M7 0 L8.6 4.2 L13 4.2 L9.1 6.5 L10.6 10.7 L7 8.3 L3.4 10.7 L4.9 6.5 L1 4.2 L5.4 4.2 Z"),
                 Width = 9,
                 Height = 9,
                 Stretch = System.Windows.Media.Stretch.Uniform,
@@ -1165,7 +1178,7 @@ namespace NinjaTrader.NinjaScript
                 var outer = new Border
                 {
                     BorderThickness = new Thickness(1),
-                    BorderBrush = new SolidColorBrush(Color.FromArgb(220, 90, 65, 35)),
+                    BorderBrush = new WpfSolidColorBrush(WpfColor.FromArgb(220, 90, 65, 35)),
                     CornerRadius = new CornerRadius(3),
                     SnapsToDevicePixels = true,
                     VerticalAlignment = VerticalAlignment.Top,
@@ -1173,17 +1186,17 @@ namespace NinjaTrader.NinjaScript
                     Margin = new Thickness(0, 0, 0, 4),
                     Background = new LinearGradientBrush(
                         new GradientStopCollection {
-                            new GradientStop(Color.FromRgb(14,14,14), 0.0),
-                            new GradientStop(Color.FromRgb(24,24,26), 0.35),
-                            new GradientStop(Color.FromRgb(12,12,14), 1.0)
+                            new WpfGradientStop(WpfColor.FromRgb(14,14,14), 0.0),
+                            new WpfGradientStop(WpfColor.FromRgb(24,24,26), 0.35),
+                            new WpfGradientStop(WpfColor.FromRgb(12,12,14), 1.0)
                         },
-                        new Point(0,0),
-                        new Point(1,1))
+                        new WpfPoint(0,0),
+                        new WpfPoint(1,1))
                 };
 
                 outer.Effect = new DropShadowEffect
                 {
-                    Color = Color.FromArgb(180, 0, 0, 0),
+                    Color = WpfColor.FromArgb(180, 0, 0, 0),
                     BlurRadius = 14,
                     ShadowDepth = 2,
                     Opacity = 0.55,
@@ -1194,13 +1207,13 @@ namespace NinjaTrader.NinjaScript
                 {
                     Background = new LinearGradientBrush(
                         new GradientStopCollection {
-                            new GradientStop(Color.FromArgb(220, 22,22,24), 0.0),
-                            new GradientStop(Color.FromArgb(220, 28,28,30), 0.45),
-                            new GradientStop(Color.FromArgb(220, 18,18,20), 1.0)
+                            new WpfGradientStop(WpfColor.FromArgb(220, 22,22,24), 0.0),
+                            new WpfGradientStop(WpfColor.FromArgb(220, 28,28,30), 0.45),
+                            new WpfGradientStop(WpfColor.FromArgb(220, 18,18,20), 1.0)
                         },
-                        new Point(0,0),
-                        new Point(0,1)),
-                    BorderBrush = new SolidColorBrush(Color.FromArgb(180, 170, 120, 60)),
+                        new WpfPoint(0,0),
+                        new WpfPoint(0,1)),
+                    BorderBrush = new WpfSolidColorBrush(WpfColor.FromArgb(180, 170, 120, 60)),
                     BorderThickness = new Thickness(1),
                     CornerRadius = new CornerRadius(2),
                     SnapsToDevicePixels = true,
@@ -1615,9 +1628,9 @@ namespace NinjaTrader.NinjaScript
 
                 if (parentPanel == null) return;
 
-                Point chartTopLeft;
-                try { chartTopLeft = chartControl.TransformToVisual(parentPanel).Transform(new Point(0, 0)); }
-                catch { chartTopLeft = new Point(0, 0); }
+                WpfPoint chartTopLeft;
+                try { chartTopLeft = chartControl.TransformToVisual(parentPanel).Transform(new WpfPoint(0, 0)); }
+                catch { chartTopLeft = new WpfPoint(0, 0); }
 
                 double left = chartTopLeft.X + 8.0;
                 double top = chartTopLeft.Y + 20.0;
@@ -1832,9 +1845,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                     : "America/Sao_Paulo"
             );
 
-        private readonly Brush BreakEvenBrush = Brushes.DodgerBlue;
-        private readonly Brush StopLossBrush = Brushes.Red;
-        private readonly Brush TakeProfitBrush = Brushes.Green;
+        private readonly WpfBrush BreakEvenBrush = Brushes.DodgerBlue;
+        private readonly WpfBrush StopLossBrush = Brushes.Red;
+        private readonly WpfBrush TakeProfitBrush = Brushes.Green;
 
         private DateTime lastAutoCloseDate = DateTime.MinValue;
         private double lastAtrVal = 0.0;
@@ -1869,19 +1882,19 @@ namespace NinjaTrader.NinjaScript.Strategies
         private SharpDX.DirectWrite.TextFormat decorTextFormat;
         private float decorSampleTextWidth;
 
-        private static readonly System.Windows.Media.LinearGradientBrush DecorStopFillBrush = new System.Windows.Media.LinearGradientBrush
+        private static readonly WpfLinearGradientBrush DecorStopFillBrush = new WpfLinearGradientBrush
         {
-            StartPoint = new System.Windows.Point(0, 0),
-            EndPoint = new System.Windows.Point(0, 1),
-            GradientStops = new System.Windows.Media.GradientStopCollection
+            StartPoint = new WpfPoint(0, 0),
+            EndPoint = new WpfPoint(0, 1),
+            GradientStops = new WpfGradientStopCollection
             {
-                new System.Windows.Media.GradientStop(System.Windows.Media.Color.FromRgb(130, 130, 130), 0.0),
-                new System.Windows.Media.GradientStop(System.Windows.Media.Color.FromRgb(90, 90, 90), 1.0)
+                new WpfGradientStop(WpfColor.FromRgb(130, 130, 130), 0.0),
+                new WpfGradientStop(WpfColor.FromRgb(90, 90, 90), 1.0)
             }
         };
-        private static readonly System.Windows.Media.Brush DecorTargetFillBrush = Brushes.DarkGoldenrod;
-        private static readonly System.Windows.Media.Brush DecorOutlineBrush = Brushes.DimGray;
-        private static readonly System.Windows.Media.Brush DecorTextBrush = Brushes.White;
+        private static readonly WpfBrush DecorTargetFillBrush = Brushes.DarkGoldenrod;
+        private static readonly WpfBrush DecorOutlineBrush = Brushes.DimGray;
+        private static readonly WpfBrush DecorTextBrush = Brushes.White;
         #endregion
 
         // Streaks
@@ -2293,7 +2306,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 // Window recebe hit test; conteúdo não captura interação.
                 var overlayGrid = new Grid
                 {
-                    Background = new SolidColorBrush(Color.FromRgb(0, 0, 0)),
+                    Background = new WpfSolidColorBrush(WpfColor.FromRgb(0, 0, 0)),
                     Opacity = 0.75,
                     IsHitTestVisible = false
                 };
@@ -2362,7 +2375,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (riskOverlayWindow == null || chartControl == null)
                     return;
 
-                Point topLeft = chartControl.PointToScreen(new Point(0, 0));
+                WpfPoint topLeft = chartControl.PointToScreen(new WpfPoint(0, 0));
                 riskOverlayWindow.Left = topLeft.X;
                 riskOverlayWindow.Top = topLeft.Y;
                 riskOverlayWindow.Width = chartControl.ActualWidth;
@@ -3131,7 +3144,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             PublishPanelSnapshot(reason);
         }
 
-        private void DrawExitSimple(string tagBase, double price, bool isRight, string label, Brush brush)
+        private void DrawExitSimple(string tagBase, double price, bool isRight, string label, WpfBrush brush)
         {
             int L = Math.Max(1, LineLengthBars);
             double tick = Instrument.MasterInstrument.TickSize;
@@ -4125,7 +4138,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 snapshot = new Dictionary<double, DecorInfo>(toRender);
             }
 
-            var renderTarget = chartControl.RenderTarget;
+            var renderTarget = RenderTarget;
             if (renderTarget == null)
                 return;
 
@@ -4358,9 +4371,9 @@ namespace NinjaTrader.NinjaScript.Strategies
             DisposeDecorResources();
             decorChartFont = labelFont;
             decorTextFormat = labelFont.ToDirectWriteTextFormat();
-            decorTextFormat.TextAlignment = SharpDX.DirectWrite.TextAlignment.Leading;
-            decorTextFormat.ParagraphAlignment = SharpDX.DirectWrite.ParagraphAlignment.Near;
-            decorTextFormat.WordWrapping = SharpDX.DirectWrite.WordWrapping.NoWrap;
+            decorTextFormat.TextAlignment = DxTextAlignment.Leading;
+            decorTextFormat.ParagraphAlignment = DxParagraphAlignment.Near;
+            decorTextFormat.WordWrapping = DxWordWrapping.NoWrap;
 
             using (var layout = new SharpDX.DirectWrite.TextLayout(Core.Globals.DirectWriteFactory, DecorSampleText, decorTextFormat, float.MaxValue, float.MaxValue))
             {
