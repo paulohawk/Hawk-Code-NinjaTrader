@@ -1,6 +1,5 @@
 #region Using declarations
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
@@ -37,9 +36,14 @@ namespace NinjaTrader.NinjaScript.Indicators
             public string Text;
         }
 
-        private readonly ConcurrentDictionary<string, int> qtyByKey = new ConcurrentDictionary<string, int>();
-        private readonly ConcurrentDictionary<double, DecorInfo> toRender = new ConcurrentDictionary<double, DecorInfo>();
-        private readonly object _lock = new object();
+        private class DecorSnapshot
+        {
+            public double Price;
+            public string Text;
+            public DecorKind Kind;
+        }
+
+        private volatile DecorSnapshot[] renderCache = Array.Empty<DecorSnapshot>();
 
         private Account selectedAccount;
         private AccountSelector accountSelector;
@@ -238,106 +242,157 @@ namespace NinjaTrader.NinjaScript.Indicators
         #region Core compute
         private void ComputeValues()
         {
-            lock (_lock)
+            List<DecorSnapshot> snapshots = new List<DecorSnapshot>();
+
+            if (State == State.Terminated) return;
+            if (ChartControl == null || Instrument == null)
             {
-                qtyByKey.Clear();
-                toRender.Clear();
+                UpdateRenderCache(Array.Empty<DecorSnapshot>());
+                return;
+            }
 
-                if (State == State.Historical) return;
-                if (ChartControl == null || Instrument == null) return;
+            var qtyByKey = new Dictionary<string, int>();
+            var toRender = new Dictionary<double, DecorInfo>();
 
-                if (HawkOrderDecoratorState.Enabled)
+            if (HawkOrderDecoratorState.Enabled)
+            {
+                var entryPrice = HawkOrderDecoratorState.EntryPrice;
+                var stopPrice = HawkOrderDecoratorState.StopPrice;
+                var targetPrice = HawkOrderDecoratorState.TargetPrice;
+                var quantity = HawkOrderDecoratorState.Quantity;
+                var side = HawkOrderDecoratorState.Side;
+
+                if (side == MarketPosition.Flat || quantity <= 0)
                 {
-                    var entryPrice = HawkOrderDecoratorState.EntryPrice;
-                    var stopPrice = HawkOrderDecoratorState.StopPrice;
-                    var targetPrice = HawkOrderDecoratorState.TargetPrice;
-                    var quantity = HawkOrderDecoratorState.Quantity;
-                    var side = HawkOrderDecoratorState.Side;
-
-                    if (side == MarketPosition.Flat || quantity <= 0)
-                        return;
-
-                    AddHubDecor(DecorKind.STOP, stopPrice, entryPrice, quantity, side);
-                    AddHubDecor(DecorKind.TARGET, targetPrice, entryPrice, quantity, side);
-                    ForceRefresh();
+                    UpdateRenderCache(Array.Empty<DecorSnapshot>());
                     return;
                 }
 
-                // Resolve conta selecionada ou uma conta com posição no instrumento
-                if (selectedAccount == null)
+                AddHubDecor(toRender, DecorKind.STOP, stopPrice, entryPrice, quantity, side);
+                AddHubDecor(toRender, DecorKind.TARGET, targetPrice, entryPrice, quantity, side);
+                snapshots = BuildSnapshots(toRender);
+                UpdateRenderCache(snapshots.ToArray());
+                return;
+            }
+
+            // Resolve conta selecionada ou uma conta com posição no instrumento
+            if (selectedAccount == null)
+            {
+                try
                 {
-                    try
-                    {
-                        chartWindow = Window.GetWindow(ChartControl?.Parent) as Chart;
-                        accountSelector = chartWindow?.FindFirst("ChartTraderControlAccountSelector") as AccountSelector;
-                        selectedAccount = accountSelector?.SelectedAccount;
-                    }
-                    catch { }
+                    chartWindow = Window.GetWindow(ChartControl?.Parent) as Chart;
+                    accountSelector = chartWindow?.FindFirst("ChartTraderControlAccountSelector") as AccountSelector;
+                    selectedAccount = accountSelector?.SelectedAccount;
                 }
-                if (selectedAccount == null)
+                catch { }
+            }
+            if (selectedAccount == null)
+            {
+                // tenta achar conta com posição no instrumento
+                selectedAccount = Account.All.FirstOrDefault(acc => acc.Positions.Any(p => p.Instrument == Instrument && p.MarketPosition != MarketPosition.Flat));
+            }
+            if (selectedAccount == null && Account.All.Count > 0)
+            {
+                selectedAccount = Account.All.FirstOrDefault();
+            }
+            if (selectedAccount == null)
+            {
+                UpdateRenderCache(Array.Empty<DecorSnapshot>());
+                return;
+            }
+
+            foreach (var pos in selectedAccount.Positions)
+            {
+                if (pos.Instrument != Instrument) continue;
+                if (pos.MarketPosition == MarketPosition.Flat) continue;
+
+                double entryPrice = pos.AveragePrice;
+
+                foreach (var order in selectedAccount.Orders)
                 {
-                    // tenta achar conta com posição no instrumento
-                    selectedAccount = Account.All.FirstOrDefault(acc => acc.Positions.Any(p => p.Instrument == Instrument && p.MarketPosition != MarketPosition.Flat));
-                }
-                if (selectedAccount == null && Account.All.Count > 0)
-                {
-                    selectedAccount = Account.All.FirstOrDefault();
-                }
-                if (selectedAccount == null) return;
+                    if (order == null) continue;
+                    if (order.Instrument != Instrument) continue;
 
-                foreach (var pos in selectedAccount.Positions)
-                {
-                    if (pos.Instrument != Instrument) continue;
-                    if (pos.MarketPosition == MarketPosition.Flat) continue;
+                    if (order.OrderState != OrderState.Accepted &&
+                        order.OrderState != OrderState.Working &&
+                        order.OrderState != OrderState.PartFilled) continue;
 
-                    double entryPrice = pos.AveragePrice;
+                    // saída
+                    if (pos.MarketPosition == MarketPosition.Long && order.IsLong) continue;
+                    if (pos.MarketPosition == MarketPosition.Short && order.IsShort) continue;
 
-                    foreach (var order in selectedAccount.Orders)
-                    {
-                        if (order == null) continue;
-                        if (order.Instrument != Instrument) continue;
+                    double ordPrice = GetOrderPrice(order);
+                    if (ordPrice <= 0) continue;
 
-                        if (order.OrderState != OrderState.Accepted &&
-                            order.OrderState != OrderState.Working &&
-                            order.OrderState != OrderState.PartFilled) continue;
+                    var kind = GetDecorKind(order.OrderType);
+                    if (kind == DecorKind.OTHER) continue;
 
-                        // saída
-                        if (pos.MarketPosition == MarketPosition.Long && order.IsLong) continue;
-                        if (pos.MarketPosition == MarketPosition.Short && order.IsShort) continue;
+                    string key = ordPrice.ToString("G17") + kind.ToString();
+                    int aggQty = order.Quantity;
+                    if (qtyByKey.TryGetValue(key, out int currentQty))
+                        aggQty = currentQty + order.Quantity;
+                    qtyByKey[key] = aggQty;
 
-                        double ordPrice = GetOrderPrice(order);
-                        if (ordPrice <= 0) continue;
+                    double priceDiff = (pos.MarketPosition == MarketPosition.Long) ? (ordPrice - entryPrice) : (entryPrice - ordPrice);
+                    int ticks = (int)Math.Round(priceDiff / TickSize);
+                    double points = priceDiff * aggQty;
+                    double currencyValue = priceDiff * Instrument.MasterInstrument.PointValue * aggQty;
 
-                        var kind = GetDecorKind(order.OrderType);
-                        if (kind == DecorKind.OTHER) continue;
+                    double accCash = 0.0;
+                    try { accCash = selectedAccount.GetAccountItem(AccountItem.CashValue, Currency.UsDollar).Value; } catch { }
 
-                        string key = ordPrice.ToString("G17") + kind.ToString();
-                        int aggQty = qtyByKey.AddOrUpdate(key, order.Quantity, (_, old) => old + order.Quantity);
+                    string text = $"{(kind == DecorKind.STOP ? "STOP" : "TARGET")} ({aggQty})";
+                    text += DisplayTicks ? $"  :  {((kind == DecorKind.STOP && ticks > 0) ? "+" : "")}{ticks} T" : "";
+                    text += DisplayPoints ? $"  :  {((kind == DecorKind.STOP && points > 0) ? "+" : "")}{points:F2} P" : "";
+                    text += DisplayCurrency ? $"  :  {Symbol} {currencyValue:N2}" : "";
+                    if (DisplayPercentOfAccount && accCash > 0)
+                        text += $"  :  {(currencyValue / accCash):P2}";
 
-                        double priceDiff = (pos.MarketPosition == MarketPosition.Long) ? (ordPrice - entryPrice) : (entryPrice - ordPrice);
-                        int ticks = (int)Math.Round(priceDiff / TickSize);
-                        double points = priceDiff * aggQty;
-                        double currencyValue = priceDiff * Instrument.MasterInstrument.PointValue * aggQty;
-
-                        double accCash = 0.0;
-                        try { accCash = selectedAccount.GetAccountItem(AccountItem.CashValue, Currency.UsDollar).Value; } catch { }
-
-                        string text = $"{(kind == DecorKind.STOP ? "STOP" : "TARGET")} ({aggQty})";
-                        text += DisplayTicks ? $"  :  {((kind == DecorKind.STOP && ticks > 0) ? "+" : "")}{ticks} T" : "";
-                        text += DisplayPoints ? $"  :  {((kind == DecorKind.STOP && points > 0) ? "+" : "")}{points:F2} P" : "";
-                        text += DisplayCurrency ? $"  :  {Symbol} {currencyValue:N2}" : "";
-                        if (DisplayPercentOfAccount && accCash > 0)
-                            text += $"  :  {(currencyValue / accCash):P2}";
-
-                        var item = new DecorInfo { Kind = kind, Text = text };
-                        toRender.AddOrUpdate(ordPrice, item, (_, __) => item);
-                    }
+                    var item = new DecorInfo { Kind = kind, Text = text };
+                    toRender[ordPrice] = item;
                 }
             }
-            ForceRefresh();
+
+            if (toRender.Count == 0)
+            {
+                UpdateRenderCache(Array.Empty<DecorSnapshot>());
+                return;
+            }
+
+            snapshots = BuildSnapshots(toRender);
+
+            UpdateRenderCache(snapshots.ToArray());
         }
 
-        private void AddHubDecor(DecorKind kind, double price, double entryPrice, int quantity, MarketPosition side)
+        private List<DecorSnapshot> BuildSnapshots(Dictionary<double, DecorInfo> toRender)
+        {
+            var snapshots = new List<DecorSnapshot>();
+            foreach (var item in toRender)
+            {
+                snapshots.Add(new DecorSnapshot
+                {
+                    Price = item.Key,
+                    Kind = item.Value.Kind,
+                    Text = item.Value.Text
+                });
+            }
+            return snapshots;
+        }
+
+        private void UpdateRenderCache(DecorSnapshot[] snapshots)
+        {
+            var dispatcher = ChartControl?.Dispatcher;
+            if (dispatcher == null)
+                return;
+
+            dispatcher.InvokeAsync(() =>
+            {
+                renderCache = snapshots ?? Array.Empty<DecorSnapshot>();
+                ForceRefresh();
+            });
+        }
+
+        private void AddHubDecor(Dictionary<double, DecorInfo> toRender, DecorKind kind, double price, double entryPrice, int quantity, MarketPosition side)
         {
             if (price <= 0) return;
 
@@ -355,7 +410,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 text += $"  :  {(currencyValue / accCash):P2}";
 
             var item = new DecorInfo { Kind = kind, Text = text };
-            toRender.AddOrUpdate(price, item, (_, __) => item);
+            toRender[price] = item;
         }
 
         private DecorKind GetDecorKind(OrderType ot)
@@ -377,8 +432,9 @@ namespace NinjaTrader.NinjaScript.Indicators
         #region Render
         protected override void OnRender(ChartControl chartControl, ChartScale chartScale)
         {
-            if (State == State.Historical) return;
-            if (toRender.IsEmpty) return;
+            if (State == State.Terminated) return;
+            var localCache = renderCache;
+            if (localCache == null || localCache.Length == 0) return;
             if (ChartPanel == null) return;
 
             if (chartControl.Properties.LabelFont != chartFont)
@@ -396,14 +452,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                 double barPct = chartControl.OwnerChart?.ChartTrader?.Properties?.OrderDisplayBarLength ?? 0;
                 double barPx = ChartPanel.W * (barPct / 100.0);
 
-                foreach (var kvp in toRender)
+                foreach (var item in localCache)
                 {
-                    double price = kvp.Key;
-                    DecorInfo info = kvp.Value;
-
                     var layout = new SharpDX.DirectWrite.TextLayout(
                         NinjaTrader.Core.Globals.DirectWriteFactory,
-                        info.Text,
+                        item.Text,
                         textFormat,
                         ChartPanel.X + ChartPanel.W,
                         textFormat.FontSize);
@@ -412,7 +465,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     float th = layout.Metrics.Height;
 
                     float x = (float)(ChartPanel.W - (barPx + tw + sampleTextWidth + FlexGapWidth));
-                    int yPx = chartScale.GetYByValue(price);
+                    int yPx = chartScale.GetYByValue(item.Price);
                     float y = yPx - ((th + 7) / 2);
 
                     var start = new SharpDX.Vector2(x, y);
@@ -421,7 +474,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     var lineEnd = new SharpDX.Vector2(ChartPanel.W, yPx);
 
                     var rect = new SharpDX.RectangleF(start.X, start.Y, tw + 8, th + 6);
-                    RenderTarget.FillRectangle(rect, info.Kind == DecorKind.STOP ? stopDx : targetDx);
+                    RenderTarget.FillRectangle(rect, item.Kind == DecorKind.STOP ? stopDx : targetDx);
                     RenderTarget.DrawRectangle(rect, borderDx, 1f);
                     RenderTarget.DrawLine(lineStart, lineEnd, borderDx);
 
@@ -447,7 +500,14 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private void ForceRefresh()
         {
-            try { ChartControl?.InvalidateVisual(); } catch { }
+            var dispatcher = ChartControl?.Dispatcher;
+            if (dispatcher == null)
+                return;
+
+            dispatcher.InvokeAsync(() =>
+            {
+                try { ChartControl?.InvalidateVisual(); } catch { }
+            });
         }
         #endregion
 
