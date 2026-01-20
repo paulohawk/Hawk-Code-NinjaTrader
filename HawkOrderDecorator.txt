@@ -1,0 +1,523 @@
+#region Using declarations
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.ComponentModel.DataAnnotations;
+using System.Linq;
+using System.Windows;
+using System.Windows.Media;
+using System.Xml.Serialization;
+using NinjaTrader.Cbi;
+using NinjaTrader.Gui;
+using NinjaTrader.Gui.Chart;
+using NinjaTrader.Gui.Tools;
+using NinjaTrader.NinjaScript;
+#endregion
+
+// Decorador de ordens (STOP / TARGET) para exibir caixas com ticks e $ ao lado das linhas de ordem.
+// Ajustes:
+// - Removeu dependência de ChartTrader visível (renderiza mesmo com ChartTrader fechado).
+// - Reforçou busca de conta: se não achar via selector, tenta conta com posição no instrumento, senão primeira conta.
+// - Mantém disparo via eventos (Order/Execution/Position/AccountItem) para aparecer rápido sem OnEachTick.
+// - Defaults de cores conforme print: Stop = gradient gray, Target = DarkGoldenrod, Outline = DimGray, Text = White.
+// - FlexGapWidth = 90 (print).
+namespace NinjaTrader.NinjaScript.Indicators
+{
+    public class OrderLineDecoratorBoleta : Indicator
+    {
+        private readonly List<OrderType> stopTypes   = new List<OrderType> { OrderType.StopMarket, OrderType.StopLimit, OrderType.MIT };
+        private readonly List<OrderType> targetTypes = new List<OrderType> { OrderType.Limit };
+
+        private enum DecorKind { STOP, TARGET, OTHER }
+
+        private class DecorInfo
+        {
+            public DecorKind Kind;
+            public string Text;
+        }
+
+        private readonly ConcurrentDictionary<string, int> qtyByKey = new ConcurrentDictionary<string, int>();
+        private readonly ConcurrentDictionary<double, DecorInfo> toRender = new ConcurrentDictionary<double, DecorInfo>();
+        private readonly object _lock = new object();
+
+        private Account selectedAccount;
+        private AccountSelector accountSelector;
+        private Chart chartWindow;
+        private bool subscribedChartTraderVisibility;
+        private bool isSubscribedToAccounts;
+
+        private SimpleFont chartFont;
+        private SharpDX.DirectWrite.TextFormat textFormat;
+        private float sampleTextWidth;
+        private const string sampleText = "XXXXXXXX XXX XXXX";
+
+        #region Ninja defaults
+        protected override void OnStateChange()
+        {
+            if (State == State.SetDefaults)
+            {
+                Name = "OrderLineDecoratorBoleta";
+                Description = "Decora ordens STOP/TARGET com labels de ticks e valor.";
+                IsOverlay = true;
+                Calculate = Calculate.OnPriceChange; // não usar OnEachTick
+                DrawOnPricePanel = true;
+                IsSuspendedWhileInactive = true;
+
+                Symbol = "$";
+                DisplayTicks = true;
+                DisplayPoints = true;
+                DisplayCurrency = true;
+                DisplayPercentOfAccount = true;
+
+                FlexGapWidth = 90;
+
+                // Stop Fill: gradient gray
+                var stopGradient = new LinearGradientBrush
+                {
+                    StartPoint = new Point(0, 0),
+                    EndPoint = new Point(0, 1)
+                };
+                stopGradient.GradientStops.Add(new GradientStop(Color.FromRgb(130, 130, 130), 0.0));
+                stopGradient.GradientStops.Add(new GradientStop(Color.FromRgb(90, 90, 90), 1.0));
+                StopFillBrush = stopGradient;
+
+                TargetFillBrush = Brushes.DarkGoldenrod;
+                OutlineBrush    = Brushes.DimGray;
+                TextBrush       = Brushes.White;
+            }
+            else if (State == State.Configure)
+            {
+                SubscribeAccounts();
+            }
+            else if (State == State.DataLoaded)
+            {
+                HookAccountSelector();
+            }
+            else if (State == State.Realtime)
+            {
+                ComputeValues();
+                ForceRefresh();
+            }
+            else if (State == State.Terminated)
+            {
+                UnsubscribeAccounts();
+                UnsubscribeChartTraderVisibility();
+                UnhookAccountSelector();
+            }
+        }
+        #endregion
+
+        #region Account selector hookup
+        private void HookAccountSelector()
+        {
+            try
+            {
+                ChartControl?.Dispatcher.InvokeAsync(() =>
+                {
+                    chartWindow = Window.GetWindow(ChartControl?.Parent) as Chart;
+                    accountSelector = chartWindow?.FindFirst("ChartTraderControlAccountSelector") as AccountSelector;
+                    if (accountSelector != null)
+                        accountSelector.SelectionChanged += AccountSelector_SelectionChanged;
+                    selectedAccount = accountSelector?.SelectedAccount;
+                });
+            }
+            catch { }
+        }
+
+        private void UnhookAccountSelector()
+        {
+            try
+            {
+                if (accountSelector != null)
+                    accountSelector.SelectionChanged -= AccountSelector_SelectionChanged;
+            }
+            catch { }
+        }
+
+        private void AccountSelector_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            selectedAccount = accountSelector?.SelectedAccount;
+            ComputeValues();
+        }
+        #endregion
+
+        #region Subscriptions
+        private void SubscribeAccounts()
+        {
+            if (isSubscribedToAccounts) return;
+            lock (Account.All)
+            {
+                foreach (var a in Account.All)
+                {
+                    a.AccountItemUpdate -= OnAccountItemUpdate;
+                    a.AccountItemUpdate += OnAccountItemUpdate;
+
+                    a.OrderUpdate -= OnOrderUpdate;
+                    a.OrderUpdate += OnOrderUpdate;
+
+                    a.ExecutionUpdate -= OnExecutionUpdate;
+                    a.ExecutionUpdate += OnExecutionUpdate;
+
+                    a.PositionUpdate -= OnPositionUpdate;
+                    a.PositionUpdate += OnPositionUpdate;
+                }
+            }
+            isSubscribedToAccounts = true;
+        }
+
+        private void UnsubscribeAccounts()
+        {
+            if (!isSubscribedToAccounts) return;
+            lock (Account.All)
+            {
+                foreach (var a in Account.All)
+                {
+                    a.AccountItemUpdate -= OnAccountItemUpdate;
+                    a.OrderUpdate       -= OnOrderUpdate;
+                    a.ExecutionUpdate   -= OnExecutionUpdate;
+                    a.PositionUpdate    -= OnPositionUpdate;
+                }
+            }
+            isSubscribedToAccounts = false;
+        }
+
+        private void UnsubscribeChartTraderVisibility()
+        {
+            try
+            {
+                if (subscribedChartTraderVisibility && chartWindow?.ChartTrader != null)
+                    chartWindow.ChartTrader.IsVisibleChanged -= OnChartTraderVisibilityChanged;
+            }
+            catch { }
+            subscribedChartTraderVisibility = false;
+        }
+
+        private void OnChartTraderVisibilityChanged(object sender, DependencyPropertyChangedEventArgs e)
+        {
+            // Mantém o evento, mas não bloqueia render se ChartTrader estiver oculto.
+            ComputeValues();
+            ForceRefresh();
+        }
+        #endregion
+
+        #region Events -> recompute
+        private void OnOrderUpdate(object sender, OrderEventArgs e)
+        {
+            if (e == null || e.Order == null) return;
+            var st = e.OrderState;
+            if (st != OrderState.Accepted && st != OrderState.Working && st != OrderState.PartFilled && st != OrderState.Filled)
+                return;
+            ComputeValues();
+        }
+
+        private void OnExecutionUpdate(object sender, ExecutionEventArgs e)
+        {
+            if (e == null || e.Execution == null) return;
+            ComputeValues();
+        }
+
+        private void OnPositionUpdate(object sender, PositionEventArgs e)
+        {
+            if (e == null || e.Position == null) return;
+            ComputeValues();
+        }
+
+        private void OnAccountItemUpdate(object sender, AccountItemEventArgs e)
+        {
+            if (e.AccountItem != AccountItem.UnrealizedProfitLoss) return;
+            ComputeValues();
+        }
+
+        protected override void OnBarUpdate()
+        {
+            // Mantido vazio (event-driven). Se quiser fallback, pode chamar ComputeValues(), mas não é necessário.
+        }
+        #endregion
+
+        #region Core compute
+        private void ComputeValues()
+        {
+            lock (_lock)
+            {
+                qtyByKey.Clear();
+                toRender.Clear();
+
+                if (State == State.Historical) return;
+                if (ChartControl == null || Instrument == null) return;
+
+                // Resolve conta selecionada ou uma conta com posição no instrumento
+                if (selectedAccount == null)
+                {
+                    try
+                    {
+                        chartWindow = Window.GetWindow(ChartControl?.Parent) as Chart;
+                        accountSelector = chartWindow?.FindFirst("ChartTraderControlAccountSelector") as AccountSelector;
+                        selectedAccount = accountSelector?.SelectedAccount;
+                    }
+                    catch { }
+                }
+                if (selectedAccount == null)
+                {
+                    // tenta achar conta com posição no instrumento
+                    selectedAccount = Account.All.FirstOrDefault(acc => acc.Positions.Any(p => p.Instrument == Instrument && p.MarketPosition != MarketPosition.Flat));
+                }
+                if (selectedAccount == null && Account.All.Count > 0)
+                {
+                    selectedAccount = Account.All.FirstOrDefault();
+                }
+                if (selectedAccount == null) return;
+
+                foreach (var pos in selectedAccount.Positions)
+                {
+                    if (pos.Instrument != Instrument) continue;
+                    if (pos.MarketPosition == MarketPosition.Flat) continue;
+
+                    double entryPrice = pos.AveragePrice;
+
+                    foreach (var order in selectedAccount.Orders)
+                    {
+                        if (order == null) continue;
+                        if (order.Instrument != Instrument) continue;
+
+                        if (order.OrderState != OrderState.Accepted &&
+                            order.OrderState != OrderState.Working &&
+                            order.OrderState != OrderState.PartFilled) continue;
+
+                        // saída
+                        if (pos.MarketPosition == MarketPosition.Long && order.IsLong) continue;
+                        if (pos.MarketPosition == MarketPosition.Short && order.IsShort) continue;
+
+                        double ordPrice = GetOrderPrice(order);
+                        if (ordPrice <= 0) continue;
+
+                        var kind = GetDecorKind(order.OrderType);
+                        if (kind == DecorKind.OTHER) continue;
+
+                        string key = ordPrice.ToString("G17") + kind.ToString();
+                        int aggQty = qtyByKey.AddOrUpdate(key, order.Quantity, (_, old) => old + order.Quantity);
+
+                        double priceDiff = (pos.MarketPosition == MarketPosition.Long) ? (ordPrice - entryPrice) : (entryPrice - ordPrice);
+                        int ticks = (int)Math.Round(priceDiff / TickSize);
+                        double points = priceDiff * aggQty;
+                        double currencyValue = priceDiff * Instrument.MasterInstrument.PointValue * aggQty;
+
+                        double accCash = 0.0;
+                        try { accCash = selectedAccount.GetAccountItem(AccountItem.CashValue, Currency.UsDollar).Value; } catch { }
+
+                        string text = $"{(kind == DecorKind.STOP ? "STOP" : "TARGET")} ({aggQty})";
+                        text += DisplayTicks ? $"  :  {((kind == DecorKind.STOP && ticks > 0) ? "+" : "")}{ticks} T" : "";
+                        text += DisplayPoints ? $"  :  {((kind == DecorKind.STOP && points > 0) ? "+" : "")}{points:F2} P" : "";
+                        text += DisplayCurrency ? $"  :  {Symbol} {currencyValue:N2}" : "";
+                        if (DisplayPercentOfAccount && accCash > 0)
+                            text += $"  :  {(currencyValue / accCash):P2}";
+
+                        var item = new DecorInfo { Kind = kind, Text = text };
+                        toRender.AddOrUpdate(ordPrice, item, (_, __) => item);
+                    }
+                }
+            }
+            ForceRefresh();
+        }
+
+        private DecorKind GetDecorKind(OrderType ot)
+        {
+            if (stopTypes.Contains(ot)) return DecorKind.STOP;
+            if (targetTypes.Contains(ot)) return DecorKind.TARGET;
+            return DecorKind.OTHER;
+        }
+
+        private double GetOrderPrice(Order o)
+        {
+            if (o == null) return 0;
+            if (stopTypes.Contains(o.OrderType)) return o.StopPrice;
+            if (targetTypes.Contains(o.OrderType)) return o.LimitPrice;
+            return 0;
+        }
+        #endregion
+
+        #region Render
+        protected override void OnRender(ChartControl chartControl, ChartScale chartScale)
+        {
+            if (State == State.Historical) return;
+            if (toRender.IsEmpty) return;
+            if (ChartPanel == null) return;
+
+            if (chartControl.Properties.LabelFont != chartFont)
+            {
+                chartFont = chartControl.Properties.LabelFont;
+                textFormat = chartFont.ToDirectWriteTextFormat();
+                sampleTextWidth = MeasureTextWidth(chartFont, sampleText);
+            }
+
+            using (var borderDx = OutlineBrush.ToDxBrush(RenderTarget))
+            using (var stopDx = StopFillBrush.ToDxBrush(RenderTarget))
+            using (var targetDx = TargetFillBrush.ToDxBrush(RenderTarget))
+            using (var textDx = TextBrush.ToDxBrush(RenderTarget))
+            {
+                double barPct = chartControl.OwnerChart?.ChartTrader?.Properties?.OrderDisplayBarLength ?? 0;
+                double barPx = ChartPanel.W * (barPct / 100.0);
+
+                foreach (var kvp in toRender)
+                {
+                    double price = kvp.Key;
+                    DecorInfo info = kvp.Value;
+
+                    var layout = new SharpDX.DirectWrite.TextLayout(
+                        NinjaTrader.Core.Globals.DirectWriteFactory,
+                        info.Text,
+                        textFormat,
+                        ChartPanel.X + ChartPanel.W,
+                        textFormat.FontSize);
+
+                    float tw = layout.Metrics.Width;
+                    float th = layout.Metrics.Height;
+
+                    float x = (float)(ChartPanel.W - (barPx + tw + sampleTextWidth + FlexGapWidth));
+                    int yPx = chartScale.GetYByValue(price);
+                    float y = yPx - ((th + 7) / 2);
+
+                    var start = new SharpDX.Vector2(x, y);
+                    var textPos = new SharpDX.Vector2(start.X + 4, start.Y + 3);
+                    var lineStart = new SharpDX.Vector2(start.X + tw + 9, yPx);
+                    var lineEnd = new SharpDX.Vector2(ChartPanel.W, yPx);
+
+                    var rect = new SharpDX.RectangleF(start.X, start.Y, tw + 8, th + 6);
+                    RenderTarget.FillRectangle(rect, info.Kind == DecorKind.STOP ? stopDx : targetDx);
+                    RenderTarget.DrawRectangle(rect, borderDx, 1f);
+                    RenderTarget.DrawLine(lineStart, lineEnd, borderDx);
+
+                    RenderTarget.DrawTextLayout(textPos, layout, textDx, SharpDX.Direct2D1.DrawTextOptions.NoSnap);
+                    layout.Dispose();
+                }
+            }
+        }
+
+        private float MeasureTextWidth(SimpleFont font, string text)
+        {
+            var tf = font.ToDirectWriteTextFormat();
+            using (var tl = new SharpDX.DirectWrite.TextLayout(
+                NinjaTrader.Core.Globals.DirectWriteFactory,
+                text,
+                tf,
+                ChartPanel.X + ChartPanel.W,
+                tf.FontSize))
+            {
+                return tl.Metrics.Width;
+            }
+        }
+
+        private void ForceRefresh()
+        {
+            try { ChartControl?.InvalidateVisual(); } catch { }
+        }
+        #endregion
+
+        #region Parameters
+        [NinjaScriptProperty]
+        [Display(Name = "Symbol", GroupName = "Display", Order = 1, Description = "Símbolo para o valor monetário")]
+        public string Symbol { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Ticks", GroupName = "Display", Order = 10)]
+        public bool DisplayTicks { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Points", GroupName = "Display", Order = 20)]
+        public bool DisplayPoints { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Currency", GroupName = "Display", Order = 30)]
+        public bool DisplayCurrency { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Percent (Account)", GroupName = "Display", Order = 40)]
+        public bool DisplayPercentOfAccount { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Decorator Gap (px)", Description = "Gap à esquerda do bloco padrão do ChartTrader", GroupName = "UI", Order = 100)]
+        public int FlexGapWidth { get; set; }
+
+        [NinjaScriptProperty, XmlIgnore]
+        [Display(Name = "Stop Fill Color", Order = 200, GroupName = "Colors")]
+        public Brush StopFillBrush { get; set; }
+        [Browsable(false)]
+        public string StopFillBrushSerializable { get => Serialize.BrushToString(StopFillBrush); set => StopFillBrush = Serialize.StringToBrush(value); }
+
+        [NinjaScriptProperty, XmlIgnore]
+        [Display(Name = "Target Fill Color", Order = 210, GroupName = "Colors")]
+        public Brush TargetFillBrush { get; set; }
+        [Browsable(false)]
+        public string TargetFillBrushSerializable { get => Serialize.BrushToString(TargetFillBrush); set => TargetFillBrush = Serialize.StringToBrush(value); }
+
+        [NinjaScriptProperty, XmlIgnore]
+        [Display(Name = "Outline Color", Order = 220, GroupName = "Colors")]
+        public Brush OutlineBrush { get; set; }
+        [Browsable(false)]
+        public string OutlineBrushSerializable { get => Serialize.BrushToString(OutlineBrush); set => OutlineBrush = Serialize.StringToBrush(value); }
+
+        [NinjaScriptProperty, XmlIgnore]
+        [Display(Name = "Text Color", Order = 230, GroupName = "Colors")]
+        public Brush TextBrush { get; set; }
+        [Browsable(false)]
+        public string TextBrushSerializable { get => Serialize.BrushToString(TextBrush); set => TextBrush = Serialize.StringToBrush(value); }
+        #endregion
+    }
+}
+
+#region NinjaScript generated code. Neither change nor remove.
+
+namespace NinjaTrader.NinjaScript.Indicators
+{
+	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
+	{
+		private OrderLineDecoratorBoleta[] cacheOrderLineDecoratorBoleta;
+		public OrderLineDecoratorBoleta OrderLineDecoratorBoleta(string symbol, bool displayTicks, bool displayPoints, bool displayCurrency, bool displayPercentOfAccount, int flexGapWidth, Brush stopFillBrush, Brush targetFillBrush, Brush outlineBrush, Brush textBrush)
+		{
+			return OrderLineDecoratorBoleta(Input, symbol, displayTicks, displayPoints, displayCurrency, displayPercentOfAccount, flexGapWidth, stopFillBrush, targetFillBrush, outlineBrush, textBrush);
+		}
+
+		public OrderLineDecoratorBoleta OrderLineDecoratorBoleta(ISeries<double> input, string symbol, bool displayTicks, bool displayPoints, bool displayCurrency, bool displayPercentOfAccount, int flexGapWidth, Brush stopFillBrush, Brush targetFillBrush, Brush outlineBrush, Brush textBrush)
+		{
+			if (cacheOrderLineDecoratorBoleta != null)
+				for (int idx = 0; idx < cacheOrderLineDecoratorBoleta.Length; idx++)
+					if (cacheOrderLineDecoratorBoleta[idx] != null && cacheOrderLineDecoratorBoleta[idx].Symbol == symbol && cacheOrderLineDecoratorBoleta[idx].DisplayTicks == displayTicks && cacheOrderLineDecoratorBoleta[idx].DisplayPoints == displayPoints && cacheOrderLineDecoratorBoleta[idx].DisplayCurrency == displayCurrency && cacheOrderLineDecoratorBoleta[idx].DisplayPercentOfAccount == displayPercentOfAccount && cacheOrderLineDecoratorBoleta[idx].FlexGapWidth == flexGapWidth && cacheOrderLineDecoratorBoleta[idx].StopFillBrush == stopFillBrush && cacheOrderLineDecoratorBoleta[idx].TargetFillBrush == targetFillBrush && cacheOrderLineDecoratorBoleta[idx].OutlineBrush == outlineBrush && cacheOrderLineDecoratorBoleta[idx].TextBrush == textBrush && cacheOrderLineDecoratorBoleta[idx].EqualsInput(input))
+						return cacheOrderLineDecoratorBoleta[idx];
+			return CacheIndicator<OrderLineDecoratorBoleta>(new OrderLineDecoratorBoleta(){ Symbol = symbol, DisplayTicks = displayTicks, DisplayPoints = displayPoints, DisplayCurrency = displayCurrency, DisplayPercentOfAccount = displayPercentOfAccount, FlexGapWidth = flexGapWidth, StopFillBrush = stopFillBrush, TargetFillBrush = targetFillBrush, OutlineBrush = outlineBrush, TextBrush = textBrush }, input, ref cacheOrderLineDecoratorBoleta);
+		}
+	}
+}
+
+namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
+{
+	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
+	{
+		public Indicators.OrderLineDecoratorBoleta OrderLineDecoratorBoleta(string symbol, bool displayTicks, bool displayPoints, bool displayCurrency, bool displayPercentOfAccount, int flexGapWidth, Brush stopFillBrush, Brush targetFillBrush, Brush outlineBrush, Brush textBrush)
+		{
+			return indicator.OrderLineDecoratorBoleta(Input, symbol, displayTicks, displayPoints, displayCurrency, displayPercentOfAccount, flexGapWidth, stopFillBrush, targetFillBrush, outlineBrush, textBrush);
+		}
+
+		public Indicators.OrderLineDecoratorBoleta OrderLineDecoratorBoleta(ISeries<double> input , string symbol, bool displayTicks, bool displayPoints, bool displayCurrency, bool displayPercentOfAccount, int flexGapWidth, Brush stopFillBrush, Brush targetFillBrush, Brush outlineBrush, Brush textBrush)
+		{
+			return indicator.OrderLineDecoratorBoleta(input, symbol, displayTicks, displayPoints, displayCurrency, displayPercentOfAccount, flexGapWidth, stopFillBrush, targetFillBrush, outlineBrush, textBrush);
+		}
+	}
+}
+
+namespace NinjaTrader.NinjaScript.Strategies
+{
+	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
+	{
+		public Indicators.OrderLineDecoratorBoleta OrderLineDecoratorBoleta(string symbol, bool displayTicks, bool displayPoints, bool displayCurrency, bool displayPercentOfAccount, int flexGapWidth, Brush stopFillBrush, Brush targetFillBrush, Brush outlineBrush, Brush textBrush)
+		{
+			return indicator.OrderLineDecoratorBoleta(Input, symbol, displayTicks, displayPoints, displayCurrency, displayPercentOfAccount, flexGapWidth, stopFillBrush, targetFillBrush, outlineBrush, textBrush);
+		}
+
+		public Indicators.OrderLineDecoratorBoleta OrderLineDecoratorBoleta(ISeries<double> input , string symbol, bool displayTicks, bool displayPoints, bool displayCurrency, bool displayPercentOfAccount, int flexGapWidth, Brush stopFillBrush, Brush targetFillBrush, Brush outlineBrush, Brush textBrush)
+		{
+			return indicator.OrderLineDecoratorBoleta(input, symbol, displayTicks, displayPoints, displayCurrency, displayPercentOfAccount, flexGapWidth, stopFillBrush, targetFillBrush, outlineBrush, textBrush);
+		}
+	}
+}
+
+#endregion
