@@ -18,9 +18,13 @@ using System.Windows.Threading;
 using NinjaTrader.Cbi;
 using NinjaTrader.Data; // SessionIterator
 using NinjaTrader.Gui.Chart;
+using NinjaTrader.Gui.Tools;
 using NinjaTrader.NinjaScript;
 using NinjaTrader.NinjaScript.DrawingTools;
 using NinjaTrader.NinjaScript.Indicators;
+using SharpDX;
+using SharpDX.Direct2D1;
+using SharpDX.DirectWrite;
 // Aliases para evitar conflitos WPF vs DrawingTools / IO
 using IOPath = System.IO.Path;
 using WpfEllipse = System.Windows.Shapes.Ellipse;
@@ -1845,6 +1849,41 @@ namespace NinjaTrader.NinjaScript.Strategies
         private DateTime lastRiskWarningDate = DateTime.MinValue;
         private DateTime lastRiskWarningResetDate = DateTime.MinValue;
 
+        #region Order Decoration (UI-only)
+        private enum DecorKind { STOP, TARGET }
+
+        private sealed class DecorInfo
+        {
+            public DecorKind Kind { get; set; }
+            public string Text { get; set; }
+        }
+
+        private readonly Dictionary<string, int> qtyByKey = new Dictionary<string, int>();
+        private readonly Dictionary<double, DecorInfo> toRender = new Dictionary<double, DecorInfo>();
+        private readonly object decorLock = new object();
+
+        private const float DecorFlexGapWidth = 90f;
+        private const string DecorSampleText = "XXXXXXXX XXX XXXX";
+
+        private SimpleFont decorChartFont;
+        private TextFormat decorTextFormat;
+        private float decorSampleTextWidth;
+
+        private static readonly LinearGradientBrush DecorStopFillBrush = new LinearGradientBrush
+        {
+            StartPoint = new Point(0, 0),
+            EndPoint = new Point(0, 1),
+            GradientStops = new GradientStopCollection
+            {
+                new GradientStop(Color.FromRgb(130, 130, 130), 0.0),
+                new GradientStop(Color.FromRgb(90, 90, 90), 1.0)
+            }
+        };
+        private static readonly Brush DecorTargetFillBrush = Brushes.DarkGoldenrod;
+        private static readonly Brush DecorOutlineBrush = Brushes.DimGray;
+        private static readonly Brush DecorTextBrush = Brushes.White;
+        #endregion
+
         // Streaks
         private int currentStreak = 0; // positivo p/ ganhos, negativo p/ perdas
         private int maxGainStreak = 0;
@@ -2100,6 +2139,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 terminatedHandled = true;
 
                 isStrategyActive = false;
+                ClearOrderDecorations();
+                DisposeDecorResources();
                 PublishPanelOffSnapshot("Terminated");
                 try { panelHelper?.Dispose(); panelHelper = null; } catch { }
                 riskOverlayHelper?.Remove();
@@ -3306,6 +3347,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             dayTargetDollars = "-";
             dayBreakevenDollars = "-";
 
+            ClearOrderDecorations();
             Audit("DayReset", $"td={tradingDay:yyyy-MM-dd}");
         }
 
@@ -3830,6 +3872,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (invertStopTriggered)
                     ClearInvertPlanSnapshot();
 
+                ComputeDecorations();
                 PublishPanelSnapshot("OnPositionUpdate_flat");
                 return;
             }
@@ -3892,6 +3935,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 SubmitBracketOrders(position, averagePrice, posQtyAbs, tradingDay, stopTicks, targetTicks, stopDollars, "PositionOpen", "OnPositionUpdate", false);
             }
 
+            ComputeDecorations();
             PublishPanelSnapshot("OnPositionUpdate_bracket");
         }
 
@@ -3964,6 +4008,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                     lastWatchdogContext = "";
                 }
             }
+
+            ComputeDecorations();
         }
 
         protected override void OnExecutionUpdate(Execution execution, string executionId, double price, int quantity,
@@ -4011,6 +4057,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                         $"td={tradingDay:yyyy-MM-dd} state={order.OrderState} execId={executionId}");
                     CancelInvertPlan("EOD", tradingDay);
                 }
+                ComputeDecorations();
                 return;
             }
 
@@ -4029,7 +4076,10 @@ namespace NinjaTrader.NinjaScript.Strategies
             bool isTp = orderName.Equals("TakeProfit", StringComparison.OrdinalIgnoreCase);
 
             if (!isStop && !isTp)
+            {
+                ComputeDecorations();
                 return;
+            }
 
             if (order.OrderState == OrderState.Rejected || order.OrderState == OrderState.Cancelled)
             {
@@ -4055,7 +4105,287 @@ namespace NinjaTrader.NinjaScript.Strategies
                 PublishPanelSnapshot("OnExecutionUpdate_dead");
                 EnsureBracketAlive("OnExecutionUpdate", "OrderDead");
             }
+
+            ComputeDecorations();
         }
+
+        #region Order Decoration (UI-only)
+        protected override void OnRender(ChartControl chartControl, ChartScale chartScale)
+        {
+            base.OnRender(chartControl, chartScale);
+
+            if (chartControl == null || chartScale == null)
+                return;
+
+            Dictionary<double, DecorInfo> snapshot;
+            lock (decorLock)
+            {
+                if (toRender.Count == 0)
+                    return;
+                snapshot = new Dictionary<double, DecorInfo>(toRender);
+            }
+
+            var renderTarget = RenderTarget;
+            if (renderTarget == null)
+                return;
+
+            if (ChartPanel == null)
+                return;
+
+            EnsureDecorTextFormat(chartControl);
+            if (decorTextFormat == null)
+                return;
+
+            double barPct = chartControl.OwnerChart?.ChartTrader?.Properties?.OrderDisplayBarLength ?? 0.0;
+            double barPx = ChartPanel.W * (barPct / 100.0);
+
+            using (var stopFill = DecorStopFillBrush.ToDxBrush(renderTarget))
+            using (var targetFill = DecorTargetFillBrush.ToDxBrush(renderTarget))
+            using (var outline = DecorOutlineBrush.ToDxBrush(renderTarget))
+            using (var textBrush = DecorTextBrush.ToDxBrush(renderTarget))
+            {
+                foreach (var entry in snapshot)
+                {
+                    DecorInfo info = entry.Value;
+                    if (info == null || string.IsNullOrEmpty(info.Text))
+                        continue;
+
+                    double yPx = chartScale.GetYByValue(entry.Key);
+                    if (double.IsNaN(yPx))
+                        continue;
+
+                    using (var layout = new TextLayout(Core.Globals.DirectWriteFactory, info.Text, decorTextFormat, float.MaxValue, float.MaxValue))
+                    {
+                        float tw = layout.Metrics.Width;
+                        float th = layout.Metrics.Height;
+                        float x = (float)(ChartPanel.W - (barPx + tw + decorSampleTextWidth + DecorFlexGapWidth));
+                        float y = (float)(yPx - ((th + 7f) / 2f));
+
+                        var rect = new RectangleF(x, y, tw + 8f, th + 6f);
+                        var textPos = new Vector2(x + 4f, y + 3f);
+                        var lineStart = new Vector2(x + tw + 9f, (float)yPx);
+                        var lineEnd = new Vector2((float)ChartPanel.W, (float)yPx);
+
+                        renderTarget.FillRectangle(rect, info.Kind == DecorKind.STOP ? stopFill : targetFill);
+                        renderTarget.DrawRectangle(rect, outline, 1f);
+                        renderTarget.DrawLine(lineStart, lineEnd, outline, 1f);
+                        renderTarget.DrawTextLayout(textPos, layout, textBrush);
+                    }
+                }
+            }
+        }
+
+        private void ClearOrderDecorations()
+        {
+            bool changed = false;
+            lock (decorLock)
+            {
+                if (qtyByKey.Count > 0 || toRender.Count > 0)
+                {
+                    qtyByKey.Clear();
+                    toRender.Clear();
+                    changed = true;
+                }
+            }
+
+            if (changed)
+                InvalidateDecorVisual();
+        }
+
+        private void ComputeDecorations()
+        {
+            lock (decorLock)
+            {
+                qtyByKey.Clear();
+                toRender.Clear();
+            }
+
+            if (State == State.Historical || ChartControl == null || Instrument == null || Position == null)
+            {
+                InvalidateDecorVisual();
+                return;
+            }
+
+            if (Position.MarketPosition == MarketPosition.Flat)
+            {
+                InvalidateDecorVisual();
+                return;
+            }
+
+            MarketPosition side = Position.MarketPosition;
+            double entryPrice = Position.AveragePrice;
+            if (entryPrice <= 0)
+            {
+                InvalidateDecorVisual();
+                return;
+            }
+
+            var orders = new[] { ordemStopLong, ordemStopShort, ordemTPLong, ordemTPShort };
+            var metaByKey = new Dictionary<string, (double Price, DecorKind Kind)>();
+
+            foreach (var order in orders)
+            {
+                if (order == null)
+                    continue;
+
+                if (!IsDecorOrderActive(order))
+                    continue;
+
+                if (!TryGetDecorKind(order, out var kind))
+                    continue;
+
+                double ordPrice = kind == DecorKind.STOP ? order.StopPrice : order.LimitPrice;
+                if (ordPrice <= 0)
+                    continue;
+
+                int qty = Math.Abs(order.Quantity);
+                if (qty <= 0)
+                    continue;
+
+                string key = ordPrice.ToString("G17", CultureInfo.InvariantCulture) + kind;
+                lock (decorLock)
+                {
+                    if (qtyByKey.TryGetValue(key, out var existing))
+                        qtyByKey[key] = existing + qty;
+                    else
+                        qtyByKey[key] = qty;
+                }
+                metaByKey[key] = (ordPrice, kind);
+            }
+
+            double tickSize = Instrument.MasterInstrument.TickSize;
+            double pointValue = Instrument.MasterInstrument.PointValue;
+            double accCash = GetDecorAccountValue();
+
+            lock (decorLock)
+            {
+                foreach (var kvp in metaByKey)
+                {
+                    if (!qtyByKey.TryGetValue(kvp.Key, out var qty))
+                        continue;
+
+                    double ordPrice = kvp.Value.Price;
+                    DecorKind kind = kvp.Value.Kind;
+                    double priceDiff = side == MarketPosition.Long ? ordPrice - entryPrice : entryPrice - ordPrice;
+                    int ticks = tickSize > 0 ? (int)Math.Round(priceDiff / tickSize, MidpointRounding.AwayFromZero) : 0;
+                    int aggQty = qty;
+                    double points = priceDiff * aggQty;
+                    double currencyValue = priceDiff * pointValue * qty;
+                    double percentValue = accCash > 0 ? currencyValue / accCash : 0.0;
+
+                    string text = BuildDecorLabel(kind, qty, ticks, points, currencyValue, percentValue);
+                    toRender[ordPrice] = new DecorInfo { Kind = kind, Text = text };
+                }
+            }
+
+            InvalidateDecorVisual();
+        }
+
+        private bool IsDecorOrderActive(Order order)
+        {
+            if (order == null)
+                return false;
+
+            return order.OrderState == OrderState.Accepted
+                || order.OrderState == OrderState.Working
+                || order.OrderState == OrderState.PartFilled;
+        }
+
+        private bool TryGetDecorKind(Order order, out DecorKind kind)
+        {
+            kind = DecorKind.STOP;
+
+            switch (order.OrderType)
+            {
+                case OrderType.StopMarket:
+                case OrderType.StopLimit:
+                case OrderType.MarketIfTouched:
+                    kind = DecorKind.STOP;
+                    return true;
+                case OrderType.Limit:
+                    kind = DecorKind.TARGET;
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private string BuildDecorLabel(DecorKind kind, int qty, int ticks, double points, double currencyValue, double percentValue)
+        {
+            string kindLabel = kind == DecorKind.STOP ? "STOP" : "TARGET";
+            string ticksText = FormatSigned(ticks, "0");
+            string pointsText = points.ToString("F2");
+            string currencyText = FormatSigned(currencyValue, "N2");
+            string percentText = percentValue.ToString("P2");
+
+            return $"{kindLabel} ({qty})  :  {ticksText} T  :  {pointsText} P  :  $ {currencyText}  :  {percentText}";
+        }
+
+        private double GetDecorAccountValue()
+        {
+            try
+            {
+                return Account?.Get(AccountItem.CashValue, Currency.UsDollar) ?? 0.0;
+            }
+            catch
+            {
+                return 0.0;
+            }
+        }
+
+        private string FormatSigned(double value, string format)
+        {
+            string formatted = value.ToString(format);
+            return value > 0 ? $"+{formatted}" : formatted;
+        }
+
+        private void EnsureDecorTextFormat(ChartControl chartControl)
+        {
+            if (chartControl == null)
+                return;
+
+            var labelFont = chartControl.Properties.LabelFont;
+            if (labelFont == null)
+                return;
+
+            if (decorChartFont != null && decorChartFont.Equals(labelFont) && decorTextFormat != null)
+                return;
+
+            DisposeDecorResources();
+            decorChartFont = labelFont;
+            decorTextFormat = labelFont.ToDirectWriteTextFormat();
+            decorTextFormat.TextAlignment = SharpDX.DirectWrite.TextAlignment.Leading;
+            decorTextFormat.ParagraphAlignment = ParagraphAlignment.Near;
+            decorTextFormat.WordWrapping = WordWrapping.NoWrap;
+
+            using (var layout = new TextLayout(Core.Globals.DirectWriteFactory, DecorSampleText, decorTextFormat, float.MaxValue, float.MaxValue))
+            {
+                decorSampleTextWidth = layout.Metrics.Width;
+            }
+        }
+
+        private void DisposeDecorResources()
+        {
+            if (decorTextFormat != null)
+            {
+                decorTextFormat.Dispose();
+                decorTextFormat = null;
+            }
+            decorChartFont = null;
+            decorSampleTextWidth = 0f;
+        }
+
+        private void InvalidateDecorVisual()
+        {
+            if (ChartControl == null)
+                return;
+
+            if (ChartControl.Dispatcher == null || ChartControl.Dispatcher.HasShutdownStarted)
+                return;
+
+            ChartControl.Dispatcher.BeginInvoke(new Action(() => ChartControl.InvalidateVisual()));
+        }
+        #endregion
 
         private void AplicarBreakEvenSeAtingiuRR()
         {
