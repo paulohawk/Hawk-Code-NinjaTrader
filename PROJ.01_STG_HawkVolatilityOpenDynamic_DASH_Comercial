@@ -1890,9 +1890,18 @@ namespace NinjaTrader.NinjaScript.Strategies
         private const int AutoCloseResendCooldownSeconds = 3;
         private const int AutoCloseMaxAttempts = 15;
         private const int AutoCloseMaxWindowMinutes = 15;
-        // AutoClose executa sempre em US Eastern.
-        // O ajuste de DST (EST/EDT) é feito automaticamente pelo TimeZoneInfo do NinjaTrader.
-        private static readonly TimeSpan AutoCloseEasternTime = new TimeSpan(13, 55, 0);
+        // Base lógica: 13:55 US Eastern (fechamento desejado antes do cutoff)
+        // Correção necessária devido ao comportamento do NinjaTrader em histórico/reports
+        // IMPORTANT:
+        // NinjaTrader reports Historical/Analyzer times in a way that causes a consistent -3h drift
+        // when using datafeed-based time (US Eastern).
+        // This offset is intentional and validated empirically to preserve correct EOD behavior.
+        private static readonly TimeSpan AutoCloseEasternBase = new TimeSpan(13, 55, 0);
+        // Offset corretivo fixo (observado empiricamente no NinjaTrader)
+        private static readonly TimeSpan NinjaTimeCorrection = TimeSpan.FromHours(3);
+        // Horário efetivo utilizado pelo motor de AutoClose
+        private static readonly TimeSpan AutoCloseEasternTime =
+            AutoCloseEasternBase + NinjaTimeCorrection;
         private string lastExitReason = "Unknown";
 
         // Invert stop-entry (paper 07)
