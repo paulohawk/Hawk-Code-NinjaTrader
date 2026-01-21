@@ -1860,6 +1860,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         // Dia operacional (session iterator)
         private SessionIterator sessionIterator;
         private TimeZoneInfo usEasternTimeZone;
+        private TimeZoneInfo brasiliaTimeZone;
 
         // Estado da estratégia (para MainEnabled)
         private bool isStrategyActive = false;
@@ -3279,6 +3280,67 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }
             }
             catch { return dt; }
+        }
+
+        private TimeZoneInfo GetBrasiliaTimeZone()
+        {
+            if (brasiliaTimeZone != null)
+                return brasiliaTimeZone;
+
+            // Windows: "E. South America Standard Time" (Brasília/São Paulo)
+            // IANA: "America/Sao_Paulo"
+            string[] ids = new string[] { "E. South America Standard Time", "America/Sao_Paulo", "SA Eastern Standard Time" };
+            foreach (var id in ids)
+            {
+                try
+                {
+                    brasiliaTimeZone = TimeZoneInfo.FindSystemTimeZoneById(id);
+                    if (brasiliaTimeZone != null)
+                        break;
+                }
+                catch { }
+            }
+
+            return brasiliaTimeZone;
+        }
+
+        private DateTime ConvertFromTimeZone(DateTime dt, TimeZoneInfo fromTz, TimeZoneInfo toTz)
+        {
+            try
+            {
+                if (fromTz == null || toTz == null) return dt;
+                // dt deve ser "Unspecified" para TimeZoneInfo aplicar regras corretamente
+                var unspecified = DateTime.SpecifyKind(dt, DateTimeKind.Unspecified);
+                return TimeZoneInfo.ConvertTime(unspecified, fromTz, toTz);
+            }
+            catch { return dt; }
+        }
+
+        /// <summary>
+        /// Converte um TimeSpan (horário de Brasília) para o TimeSpan equivalente em US Eastern,
+        /// respeitando a data do tradingDay (DST US e qualquer regra do Brasil pela TZ).
+        /// </summary>
+        private TimeSpan ConvertBrasiliaTodToEasternTod(DateTime tradingDay, TimeSpan brasiliaTod)
+        {
+            // AutoClose usa horário configurado em Brasília (parâmetro),
+            // mas executa sempre comparando contra o clock do data feed (US Eastern),
+            // garantindo consistência entre Replay, Realtime, VPS e Analyzer.
+            var brTz = GetBrasiliaTimeZone();
+            var eastTz = GetUsEasternTimeZone();
+            if (brTz == null || eastTz == null)
+            {
+                if (!ShouldThrottleAudit($"AUTOCLOSE_TZ_FALLBACK_{tradingDay:yyyyMMdd}", LogThrottleSeconds))
+                    Log("AutoCloseTZ", "Fallback usado: conversão BR->Eastern indisponível");
+                return brasiliaTod;
+            }
+
+            // A data usada deve ser do tradingDay (mesmo dia lógico de operação)
+            var brDt = new DateTime(tradingDay.Year, tradingDay.Month, tradingDay.Day,
+                brasiliaTod.Hours, brasiliaTod.Minutes, brasiliaTod.Seconds,
+                DateTimeKind.Unspecified);
+
+            var easternDt = ConvertFromTimeZone(brDt, brTz, eastTz);
+            return easternDt.TimeOfDay;
         }
 
         private TimeZoneInfo GetBarTimeZone()
