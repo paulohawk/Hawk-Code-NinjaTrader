@@ -1862,6 +1862,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         // Dia operacional (session iterator)
         private SessionIterator sessionIterator;
         private TimeZoneInfo usEasternTimeZone;
+        private TimeZoneInfo brasiliaTimeZone;
 
         // Estado da estratégia (para MainEnabled)
         private bool isStrategyActive = false;
@@ -2130,7 +2131,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 SuperTrendOnBarClose = true;
 
                 AutoCloseEnabled = true;
-                AutoCloseTimeHHmmss = "18:00:00";
+                AutoCloseTimeHHmmss = "17:00:00";
 
                 LineLengthBars = 30;
                 LabelTickOffset = 2;
@@ -2255,7 +2256,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             SuperTrendOnBarClose = false;
 
             AutoCloseEnabled = true;
-            AutoCloseTimeHHmmss = "18:00:00";
+            AutoCloseTimeHHmmss = "17:00:00";
 
             hedgeModelApplied = true;
         }
@@ -2291,7 +2292,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             SuperTrendOnBarClose = false;
 
             AutoCloseEnabled = true;
-            AutoCloseTimeHHmmss = "18:00:00";
+            AutoCloseTimeHHmmss = "17:00:00";
 
             defaultModelApplied = true;
         }
@@ -3274,6 +3275,67 @@ namespace NinjaTrader.NinjaScript.Strategies
             catch { return dt; }
         }
 
+        private TimeZoneInfo GetBrasiliaTimeZone()
+        {
+            if (brasiliaTimeZone != null)
+                return brasiliaTimeZone;
+
+            // Windows: "E. South America Standard Time" (Brasília/São Paulo)
+            // IANA: "America/Sao_Paulo"
+            string[] ids = new string[] { "E. South America Standard Time", "America/Sao_Paulo", "SA Eastern Standard Time" };
+            foreach (var id in ids)
+            {
+                try
+                {
+                    brasiliaTimeZone = TimeZoneInfo.FindSystemTimeZoneById(id);
+                    if (brasiliaTimeZone != null)
+                        break;
+                }
+                catch { }
+            }
+
+            return brasiliaTimeZone;
+        }
+
+        private DateTime ConvertFromTimeZone(DateTime dt, TimeZoneInfo fromTz, TimeZoneInfo toTz)
+        {
+            try
+            {
+                if (fromTz == null || toTz == null) return dt;
+                // dt deve ser "Unspecified" para TimeZoneInfo aplicar regras corretamente
+                var unspecified = DateTime.SpecifyKind(dt, DateTimeKind.Unspecified);
+                return TimeZoneInfo.ConvertTime(unspecified, fromTz, toTz);
+            }
+            catch { return dt; }
+        }
+
+        /// <summary>
+        /// Converte um TimeSpan (horário de Brasília) para o TimeSpan equivalente em US Eastern,
+        /// respeitando a data do tradingDay (DST US e qualquer regra do Brasil pela TZ).
+        /// </summary>
+        private TimeSpan ConvertBrasiliaTodToEasternTod(DateTime tradingDay, TimeSpan brasiliaTod)
+        {
+            // AutoClose usa horário configurado em Brasília (parâmetro),
+            // mas executa sempre comparando contra o clock do data feed (US Eastern),
+            // garantindo consistência entre Replay, Realtime, VPS e Analyzer.
+            var brTz = GetBrasiliaTimeZone();
+            var eastTz = GetUsEasternTimeZone();
+            if (brTz == null || eastTz == null)
+            {
+                if (!ShouldThrottleAudit($"AUTOCLOSE_TZ_FALLBACK_{tradingDay:yyyyMMdd}", LogThrottleSeconds))
+                    Log("AutoCloseTZ", "Fallback usado: conversão BR->Eastern indisponível");
+                return brasiliaTod;
+            }
+
+            // A data usada deve ser do tradingDay (mesmo dia lógico de operação)
+            var brDt = new DateTime(tradingDay.Year, tradingDay.Month, tradingDay.Day,
+                brasiliaTod.Hours, brasiliaTod.Minutes, brasiliaTod.Seconds,
+                DateTimeKind.Unspecified);
+
+            var easternDt = ConvertFromTimeZone(brDt, brTz, eastTz);
+            return easternDt.TimeOfDay;
+        }
+
         private TimeZoneInfo GetBarTimeZone()
         {
             try
@@ -3325,7 +3387,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             return $"name={order.Name} state={order.OrderState} qty={order.Quantity} lim={F0(order.LimitPrice)} stop={F0(order.StopPrice)} avgFill={F0(order.AverageFillPrice)} fromSignal={order.FromEntrySignal}";
         }
 
-        private void LogAutoCloseGate(string reason, DateTime barTime, DateTime easternNow, TimeSpan scheduled, DateTime tradingDay, string extra = "")
+        private void LogAutoCloseGate(string reason, DateTime barTime, DateTime easternNow, TimeSpan scheduledBr, TimeSpan scheduledEastern, DateTime tradingDay, string extra = "")
         {
             if (ShouldThrottleAudit($"AUTOCLOSE_GATE_{reason}_{tradingDay:yyyyMMdd}", LogThrottleSeconds))
                 return;
@@ -3343,7 +3405,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     autoCloseTime = Times[BIP_AUTOCLOSE][0].ToString("O");
             }
             catch { }
-            string msg = $"reason={reason} state={State} bip={BarsInProgress} barTimeBip={barTime:O} easternNow={easternNow:O} easternNowTod={easternNow:HH\\:mm\\:ss} brNow={brNow:O} scheduled={scheduled} lastAutoCloseTradingDay={lastAutoCloseTradingDay:yyyy-MM-dd} tradingDay={tradingDay:yyyy-MM-dd} pos={marketPosition} qty={quantity} autoCloseSent={autoCloseExitSentToday} autoCloseSentTime={autoCloseExitSentBrTime:O} attemptCount={autoCloseExitAttemptCountToday} mainTime={mainTime} autoCloseTime={autoCloseTime} sourceTZ={sourceTz} usaDst={IsUsaDst(easternNow)}";
+            string msg = $"reason={reason} state={State} bip={BarsInProgress} barTimeBip={barTime:O} easternNow={easternNow:O} easternNowTod={easternNow:HH\\:mm\\:ss} brNow={brNow:O} scheduledBr={scheduledBr} scheduledEastern={scheduledEastern} lastAutoCloseTradingDay={lastAutoCloseTradingDay:yyyy-MM-dd} tradingDay={tradingDay:yyyy-MM-dd} pos={marketPosition} qty={quantity} autoCloseSent={autoCloseExitSentToday} autoCloseSentTime={autoCloseExitSentBrTime:O} attemptCount={autoCloseExitAttemptCountToday} mainTime={mainTime} autoCloseTime={autoCloseTime} sourceTZ={sourceTz} usaDst={IsUsaDst(easternNow)}";
             if (!string.IsNullOrWhiteSpace(extra))
                 msg = $"{msg} {extra}";
 
@@ -3370,33 +3432,39 @@ namespace NinjaTrader.NinjaScript.Strategies
                 autoCloseExitSignalName = "";
             }
 
-            TimeSpan scheduled;
+            TimeSpan scheduledBr;
             try
             {
                 var parts = AutoCloseTimeHHmmss.Split(':');
-                scheduled = new TimeSpan(int.Parse(parts[0]), int.Parse(parts[1]), int.Parse(parts[2]));
+                scheduledBr = new TimeSpan(int.Parse(parts[0]), int.Parse(parts[1]), int.Parse(parts[2]));
             }
-            catch { scheduled = new TimeSpan(18, 0, 0); } // 18:00 lógico = 17:00 Brasília
+            catch
+            {
+                scheduledBr = new TimeSpan(17, 0, 0); // default BR
+            }
+
+            // Converte BR -> Eastern (determinístico por data)
+            TimeSpan scheduledEastern = ConvertBrasiliaTodToEasternTod(tradingDay, scheduledBr);
 
             if (EnableDebugLog)
             {
                 string sourceTz = GetBarTimeZone()?.Id ?? "Unknown";
-                DebugLog("AutoCloseDiag", $"sourceTZ={sourceTz} bip={BarsInProgress} mainTime={Times[0][0]:O} barTime={barTime:O} easternNow={easternNow:O} brNow={brNow:O} scheduled={scheduled} tradingDay={tradingDay:yyyy-MM-dd}");
+                DebugLog("AutoCloseDiag", $"sourceTZ={sourceTz} bip={BarsInProgress} mainTime={Times[0][0]:O} barTime={barTime:O} easternNow={easternNow:O} brNow={brNow:O} scheduledBr={scheduledBr} scheduledEastern={scheduledEastern} tradingDay={tradingDay:yyyy-MM-dd}");
             }
 
-            TimeSpan windowDelta = easternNow.TimeOfDay - scheduled;
+            TimeSpan windowDelta = easternNow.TimeOfDay - scheduledEastern;
             if (Math.Abs(windowDelta.TotalMinutes) <= 2)
             {
                 if (!ShouldThrottleAudit($"AUTOCLOSE_WINDOW_{tradingDay:yyyyMMdd}", LogThrottleSeconds))
                 {
                     var marketPosition = Position?.MarketPosition ?? MarketPosition.Flat;
                     var quantity = Position?.Quantity ?? 0;
-                    Log("AutoCloseWindow", $"barTime={barTime:O} easternNow={easternNow:O} brNow={brNow:O} scheduled={scheduled} bip={BarsInProgress} state={State} pos={marketPosition} qty={quantity}");
+                    Log("AutoCloseWindow", $"barTime={barTime:O} easternNow={easternNow:O} brNow={brNow:O} scheduledBr={scheduledBr} scheduledEastern={scheduledEastern} bip={BarsInProgress} state={State} pos={marketPosition} qty={quantity}");
                 }
             }
 
-            TimeSpan snapshotStart = scheduled.Subtract(TimeSpan.FromMinutes(2));
-            TimeSpan snapshotEnd = scheduled.Add(TimeSpan.FromMinutes(AutoCloseMaxWindowMinutes));
+            TimeSpan snapshotStart = scheduledEastern.Subtract(TimeSpan.FromMinutes(2));
+            TimeSpan snapshotEnd = scheduledEastern.Add(TimeSpan.FromMinutes(AutoCloseMaxWindowMinutes));
             if (easternNow.TimeOfDay >= snapshotStart && easternNow.TimeOfDay <= snapshotEnd)
             {
                 if (!ShouldThrottleAudit($"AUTOCLOSE_SNAPSHOT_{tradingDay:yyyyMMdd}", LogThrottleSeconds))
@@ -3418,22 +3486,22 @@ namespace NinjaTrader.NinjaScript.Strategies
                     catch { }
 
                     string snapshot =
-                        $"easternNow={easternNow:O} brNow={brNow:O} scheduled={scheduled} state={State} bip={BarsInProgress} pos={marketPosition} qty={quantity} last={F0(last)} pnl={(hasPnl ? F0(pnl) : "n/a")} " +
+                        $"easternNow={easternNow:O} brNow={brNow:O} scheduledBr={scheduledBr} scheduledEastern={scheduledEastern} state={State} bip={BarsInProgress} pos={marketPosition} qty={quantity} last={F0(last)} pnl={(hasPnl ? F0(pnl) : "n/a")} " +
                         $"tpLong={FormatOrderSnapshot(ordemTPLong)} tpShort={FormatOrderSnapshot(ordemTPShort)} stopLong={FormatOrderSnapshot(ordemStopLong)} stopShort={FormatOrderSnapshot(ordemStopShort)} " +
                         $"activeEntrySignal={activeEntrySignal} activeEntrySignalDay={activeEntrySignalDay:yyyy-MM-dd}";
                     Log("AutoCloseSnapshot", snapshot);
                 }
             }
 
-            if (easternNow.TimeOfDay < scheduled)
+            if (easternNow.TimeOfDay < scheduledEastern)
             {
-                LogAutoCloseGate("RETURN_BEFORE_SCHEDULED", barTime, easternNow, scheduled, tradingDay);
+                LogAutoCloseGate("RETURN_BEFORE_SCHEDULED", barTime, easternNow, scheduledBr, scheduledEastern, tradingDay);
                 return;
             }
 
             if (lastAutoCloseTradingDay.Date == tradingDay.Date && (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0))
             {
-                LogAutoCloseGate("RETURN_ALREADY_DONE_TRADINGDAY", barTime, easternNow, scheduled, tradingDay);
+                LogAutoCloseGate("RETURN_ALREADY_DONE_TRADINGDAY", barTime, easternNow, scheduledBr, scheduledEastern, tradingDay);
                 return;
             }
 
@@ -3443,25 +3511,25 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (invertPlanArmed)
                 {
                     CancelInvertPlan("EOD", tradingDay);
-                    Audit("AutoClose", $"scheduled={scheduled} easternNow={easternNow:HH\\:mm\\:ss} action=CancelInvertPlan");
+                    Audit("AutoClose", $"scheduledBr={scheduledBr} scheduledEastern={scheduledEastern} easternNow={easternNow:HH\\:mm\\:ss} action=CancelInvertPlan");
                 }
 
                 lastAutoCloseTradingDay = tradingDay;
                 autoCloseTriggeredToday = true;
-                LogAutoCloseGate("RETURN_FLAT_CANCEL_PLAN", barTime, easternNow, scheduled, tradingDay);
+                LogAutoCloseGate("RETURN_FLAT_CANCEL_PLAN", barTime, easternNow, scheduledBr, scheduledEastern, tradingDay);
                 PublishPanelSnapshot("AutoClose_flat");
                 return;
             }
 
-            if (easternNow.TimeOfDay > scheduled.Add(TimeSpan.FromMinutes(AutoCloseMaxWindowMinutes)))
+            if (easternNow.TimeOfDay > scheduledEastern.Add(TimeSpan.FromMinutes(AutoCloseMaxWindowMinutes)))
             {
-                LogAutoCloseGate("AFTER_CUTOFF_CONTINUE", barTime, easternNow, scheduled, tradingDay, $"cutoffMinutes={AutoCloseMaxWindowMinutes}");
+                LogAutoCloseGate("AFTER_CUTOFF_CONTINUE", barTime, easternNow, scheduledBr, scheduledEastern, tradingDay, $"cutoffMinutes={AutoCloseMaxWindowMinutes}");
             }
 
             if (autoCloseExitAttemptCountToday >= AutoCloseMaxAttempts)
             {
                 lastAutoCloseTradingDay = tradingDay;
-                LogAutoCloseGate("EXIT_SKIP_MAX_ATTEMPTS", barTime, easternNow, scheduled, tradingDay, $"maxAttempts={AutoCloseMaxAttempts}");
+                LogAutoCloseGate("EXIT_SKIP_MAX_ATTEMPTS", barTime, easternNow, scheduledBr, scheduledEastern, tradingDay, $"maxAttempts={AutoCloseMaxAttempts}");
                 return;
             }
 
@@ -3470,7 +3538,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 var nowUtc = DateTime.UtcNow;
                 if ((nowUtc - lastAutoCloseAttemptUtc).TotalSeconds < AutoCloseResendCooldownSeconds)
                 {
-                    LogAutoCloseGate("EXIT_RESENT_COOLDOWN", barTime, easternNow, scheduled, tradingDay, $"cooldownSeconds={AutoCloseResendCooldownSeconds}");
+                    LogAutoCloseGate("EXIT_RESENT_COOLDOWN", barTime, easternNow, scheduledBr, scheduledEastern, tradingDay, $"cooldownSeconds={AutoCloseResendCooldownSeconds}");
                     return;
                 }
             }
@@ -3481,7 +3549,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             exitReasonHintTradingDay = tradingDay;
             bool wasSentToday = autoCloseExitSentToday;
 
-            Audit("AutoClose", $"scheduled={scheduled} easternNow={easternNow:HH\\:mm\\:ss} side={Position.MarketPosition} qty={Position.Quantity} avg={F0(Position.AveragePrice)}");
+            Audit("AutoClose", $"scheduledBr={scheduledBr} scheduledEastern={scheduledEastern} easternNow={easternNow:HH\\:mm\\:ss} side={Position.MarketPosition} qty={Position.Quantity} avg={F0(Position.AveragePrice)}");
 
             try
             {
@@ -3517,14 +3585,14 @@ namespace NinjaTrader.NinjaScript.Strategies
                 lastAutoCloseAttemptUtc = DateTime.UtcNow;
                 string action = wasSentToday ? "ExitResent" : "ExitSent";
                 Audit("AutoClose", $"action={action} side={Position.MarketPosition} qty={Position.Quantity} avg={F0(Position.AveragePrice)} attempt={autoCloseExitAttemptCountToday} fromSignal={autoCloseExitSignalName}");
-                LogAutoCloseGate(wasSentToday ? "EXIT_RESENT" : "EXIT_SENT", barTime, easternNow, scheduled, tradingDay,
+                LogAutoCloseGate(wasSentToday ? "EXIT_RESENT" : "EXIT_SENT", barTime, easternNow, scheduledBr, scheduledEastern, tradingDay,
                     $"attempt={autoCloseExitAttemptCountToday} fromSignal={autoCloseExitSignalName}");
                 PublishPanelSnapshot("AutoClose_exit_sent");
                 PublishPanelSnapshot("AutoClose");
             }
             catch (Exception ex)
             {
-                LogAutoCloseGate("EXIT_EXCEPTION", barTime, easternNow, scheduled, tradingDay, $"error={ex.Message}");
+                LogAutoCloseGate("EXIT_EXCEPTION", barTime, easternNow, scheduledBr, scheduledEastern, tradingDay, $"error={ex.Message}");
                 Log("AutoClose", $"Exception while attempting auto-close: {ex.Message}");
             }
         }
@@ -3740,15 +3808,20 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (AutoCloseEnabled && lastInvertPlanCancelDate.Date != tradingDay.Date)
             {
                 DateTime easternNow = ConvertToUsEastern(closeTime);
-                TimeSpan scheduled;
+                TimeSpan scheduledBr;
                 try
                 {
                     var parts = AutoCloseTimeHHmmss.Split(':');
-                    scheduled = new TimeSpan(int.Parse(parts[0]), int.Parse(parts[1]), int.Parse(parts[2]));
+                    scheduledBr = new TimeSpan(int.Parse(parts[0]), int.Parse(parts[1]), int.Parse(parts[2]));
                 }
-                catch { scheduled = new TimeSpan(18, 0, 0); } // 18:00 lógico = 17:00 Brasília
+                catch
+                {
+                    scheduledBr = new TimeSpan(17, 0, 0); // default BR
+                }
 
-                if (easternNow.TimeOfDay >= scheduled)
+                TimeSpan scheduledEastern = ConvertBrasiliaTodToEasternTod(tradingDay, scheduledBr);
+
+                if (easternNow.TimeOfDay >= scheduledEastern)
                     CancelInvertPlan("EOD", tradingDay);
             }
         }
