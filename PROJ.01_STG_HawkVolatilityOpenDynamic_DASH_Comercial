@@ -3329,7 +3329,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             string mainTime = "n/a";
             try { mainTime = Times[0][0].ToString("O"); } catch { }
 
-            string msg = $"reason={reason} state={State} bip={BarsInProgress} barTime={now:O} nowTod={now:HH\\:mm\\:ss} scheduled={scheduled} lastAutoCloseDate={lastAutoCloseDate:yyyy-MM-dd} today={today:yyyy-MM-dd} tradingDay={tradingDay:yyyy-MM-dd} pos={marketPosition} qty={quantity} posSource={positionSource} autoCloseSent={autoCloseExitSentToday} autoCloseSentTime={autoCloseExitSentBrTime:O} attemptCount={autoCloseExitAttemptCountToday} mainTime={mainTime} sourceTZ={sourceTz} usaDst={IsUsaDst(now)}";
+            string msg = $"reason={reason} state={State} bip={BarsInProgress} barTime={now:O} nowTod={now:HH:mm:ss} scheduled={scheduled} lastAutoCloseDate={lastAutoCloseDate:yyyy-MM-dd} today={today:yyyy-MM-dd} tradingDay={tradingDay:yyyy-MM-dd} pos={marketPosition} qty={quantity} posSource={positionSource} autoCloseSent={autoCloseExitSentToday} autoCloseSentTime={autoCloseExitSentBrTime:O} attemptCount={autoCloseExitAttemptCountToday} mainTime={mainTime} sourceTZ={sourceTz} usaDst={IsUsaDst(now)}";
             if (!string.IsNullOrWhiteSpace(extra))
                 msg = $"{msg} {extra}";
 
@@ -3424,7 +3424,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (invertPlanArmed)
                 {
                     CancelInvertPlan("EOD", tradingDay);
-                    Audit("AutoClose", $"scheduled={scheduled} now={now:HH\\:mm\\:ss} action=CancelInvertPlan");
+                    Audit("AutoClose", $"scheduled={scheduled} now={now:HH:mm:ss} action=CancelInvertPlan");
                 }
 
                 lastAutoCloseDate = today;
@@ -3465,7 +3465,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             MarketPosition exitMarketPosition = accountMarketPosition != MarketPosition.Flat ? accountMarketPosition : Position.MarketPosition;
             int exitQuantity = accountQuantity != 0 ? accountQuantity : Position.Quantity;
             double exitAverage = Position?.AveragePrice ?? 0;
-            Audit("AutoClose", $"scheduled={scheduled} now={now:HH\\:mm\\:ss} side={exitMarketPosition} qty={exitQuantity} avg={F0(exitAverage)}");
+            Audit("AutoClose", $"scheduled={scheduled} now={now:HH:mm:ss} side={exitMarketPosition} qty={exitQuantity} avg={F0(exitAverage)}");
 
             try
             {
