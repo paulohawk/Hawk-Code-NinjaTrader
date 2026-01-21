@@ -2130,7 +2130,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 SuperTrendOnBarClose = true;
 
                 AutoCloseEnabled = true;
-                AutoCloseTimeHHmmss = "17:00:00";
+                AutoCloseTimeHHmmss = "18:00:00";
 
                 LineLengthBars = 30;
                 LabelTickOffset = 2;
@@ -2255,7 +2255,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             SuperTrendOnBarClose = false;
 
             AutoCloseEnabled = true;
-            AutoCloseTimeHHmmss = "17:00:00";
+            AutoCloseTimeHHmmss = "18:00:00";
 
             hedgeModelApplied = true;
         }
@@ -2291,7 +2291,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             SuperTrendOnBarClose = false;
 
             AutoCloseEnabled = true;
-            AutoCloseTimeHHmmss = "17:00:00";
+            AutoCloseTimeHHmmss = "18:00:00";
 
             defaultModelApplied = true;
         }
@@ -3376,7 +3376,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 var parts = AutoCloseTimeHHmmss.Split(':');
                 scheduled = new TimeSpan(int.Parse(parts[0]), int.Parse(parts[1]), int.Parse(parts[2]));
             }
-            catch { scheduled = new TimeSpan(14, 0, 0); } // 14:00 US Eastern = 17:00 Brasília
+            catch { scheduled = new TimeSpan(18, 0, 0); } // 18:00 lógico = 17:00 Brasília
 
             if (EnableDebugLog)
             {
@@ -3746,7 +3746,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     var parts = AutoCloseTimeHHmmss.Split(':');
                     scheduled = new TimeSpan(int.Parse(parts[0]), int.Parse(parts[1]), int.Parse(parts[2]));
                 }
-                catch { scheduled = new TimeSpan(14, 0, 0); } // 14:00 US Eastern = 17:00 Brasília
+                catch { scheduled = new TimeSpan(18, 0, 0); } // 18:00 lógico = 17:00 Brasília
 
                 if (easternNow.TimeOfDay >= scheduled)
                     CancelInvertPlan("EOD", tradingDay);
