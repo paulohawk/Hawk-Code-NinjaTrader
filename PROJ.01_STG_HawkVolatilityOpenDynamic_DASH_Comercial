@@ -3342,7 +3342,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     autoCloseTime = Times[BIP_AUTOCLOSE][0].ToString("O");
             }
             catch { }
-            string msg = $"reason={reason} state={State} bip={BarsInProgress} barTime={barTime:O} brNow={brasiliaNow:O} brNowTod={brasiliaNow:HH\\:mm\\:ss} scheduled={scheduled} lastAutoCloseTradingDay={lastAutoCloseTradingDay:yyyy-MM-dd} tradingDay={tradingDay:yyyy-MM-dd} pos={marketPosition} qty={quantity} autoCloseSent={autoCloseExitSentToday} autoCloseSentTime={autoCloseExitSentBrTime:O} attemptCount={autoCloseExitAttemptCountToday} mainTime={mainTime} autoCloseTime={autoCloseTime} sourceTZ={sourceTz} usaDst={IsUsaDst(brasiliaNow)}";
+            string msg = $"reason={reason} state={State} bip={BarsInProgress} barTimeBip={barTime:O} brNow={brasiliaNow:O} brNowTod={brasiliaNow:HH\\:mm\\:ss} scheduled={scheduled} lastAutoCloseTradingDay={lastAutoCloseTradingDay:yyyy-MM-dd} tradingDay={tradingDay:yyyy-MM-dd} pos={marketPosition} qty={quantity} autoCloseSent={autoCloseExitSentToday} autoCloseSentTime={autoCloseExitSentBrTime:O} attemptCount={autoCloseExitAttemptCountToday} mainTime={mainTime} autoCloseTime={autoCloseTime} sourceTZ={sourceTz} usaDst={IsUsaDst(brasiliaNow)}";
             if (!string.IsNullOrWhiteSpace(extra))
                 msg = $"{msg} {extra}";
 
@@ -3353,7 +3353,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             if (!AutoCloseEnabled) return;
 
-            DateTime brasiliaNow = ConvertToBrasilia(barTime);
+            DateTime brasiliaNow = ConvertToBrasilia(Times[0][0]);
             DateTime tradingDay = GetTradingDay(Times[0][0]); // usa trading day da série principal
 
             // já executou neste trading day?
