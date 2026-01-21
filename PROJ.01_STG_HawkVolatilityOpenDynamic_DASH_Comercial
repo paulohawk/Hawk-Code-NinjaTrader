@@ -1818,7 +1818,6 @@ namespace NinjaTrader.NinjaScript.Strategies
         private string lastWatchdogReason = "";
         private string lastWatchdogContext = "";
 
-        private const int BIP_AUTOCLOSE = 1;
         private int atrBip = -1;
         private int stBip = -1;
 
@@ -1891,6 +1890,11 @@ namespace NinjaTrader.NinjaScript.Strategies
         private const int AutoCloseMaxAttempts = 15;
         private const int AutoCloseMaxWindowMinutes = 15;
         private const string AutoCloseExitOrderName = "CloseByTime";
+        private bool isBeTransitionInProgress = false;
+        private MarketPosition pendingBeMarketPosition = MarketPosition.Flat;
+        private int pendingBeQty = 0;
+        private double pendingBeStopPrice = 0;
+        private string pendingBeFromSignal = "";
         private string lastExitReason = "Unknown";
         private string lastExitCause = "Unknown";
         private DateTime lastExitCauseBrTime = DateTime.MinValue;
@@ -2068,10 +2072,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 hedgeModelFrozen = true;
                 defaultModelFrozen = true;
 
-                // Timeframe auxiliar EXCLUSIVO para AutoClose
-                AddDataSeries(Data.BarsPeriodType.Minute, 1);
-
-                int nextBip = 2;
+                int nextBip = 1;
                 if (ATRTimeFrame > 0)
                 {
                     AddDataSeries(Data.BarsPeriodType.Minute, ATRTimeFrame);
@@ -3238,6 +3239,37 @@ namespace NinjaTrader.NinjaScript.Strategies
             return false;
         }
 
+        private Position GetAccountPosition()
+        {
+            if (Account == null || Instrument == null || Account.Positions == null)
+                return null;
+
+            foreach (var position in Account.Positions)
+            {
+                if (position != null && position.Instrument == Instrument)
+                    return position;
+            }
+
+            return null;
+        }
+
+        private bool TryGetPositionSnapshot(out MarketPosition marketPosition, out int quantity, out string source)
+        {
+            var accountPosition = GetAccountPosition();
+            if (accountPosition != null)
+            {
+                marketPosition = accountPosition.MarketPosition;
+                quantity = accountPosition.Quantity;
+                source = "Account";
+                return true;
+            }
+
+            marketPosition = Position?.MarketPosition ?? MarketPosition.Flat;
+            quantity = Position?.Quantity ?? 0;
+            source = "Strategy";
+            return false;
+        }
+
         private bool TryGetAutoCloseSchedule(out TimeSpan scheduled)
         {
             scheduled = default(TimeSpan);
@@ -3287,52 +3319,35 @@ namespace NinjaTrader.NinjaScript.Strategies
             return $"name={order.Name} state={order.OrderState} qty={order.Quantity} lim={F0(order.LimitPrice)} stop={F0(order.StopPrice)} avgFill={F0(order.AverageFillPrice)} fromSignal={order.FromEntrySignal}";
         }
 
-        private void LogAutoCloseGate(string reason, DateTime barTime, DateTime brasiliaNow, TimeSpan scheduled, DateTime tradingDay, DateTime brDate, string extra = "")
+        private void LogAutoCloseGate(string reason, DateTime now, TimeSpan scheduled, DateTime tradingDay, DateTime today, string extra = "")
         {
-            if (ShouldThrottleAudit($"AUTOCLOSE_GATE_{reason}_{brDate:yyyyMMdd}", LogThrottleSeconds))
+            if (ShouldThrottleAudit($"AUTOCLOSE_GATE_{reason}_{today:yyyyMMdd}", LogThrottleSeconds))
                 return;
 
             string sourceTz = GetBarTimeZone()?.Id ?? "Unknown";
-            var marketPosition = Position?.MarketPosition ?? MarketPosition.Flat;
-            var quantity = Position?.Quantity ?? 0;
+            TryGetPositionSnapshot(out var marketPosition, out var quantity, out var positionSource);
             string mainTime = "n/a";
-            string autoCloseTime = "n/a";
-            string sessionBegin = "n/a";
-            string sessionEnd = "n/a";
-            string sessionEndBr = "n/a";
             try { mainTime = Times[0][0].ToString("O"); } catch { }
-            try
-            {
-                if (Times != null && Times.Length > BIP_AUTOCLOSE && Times[BIP_AUTOCLOSE] != null && Times[BIP_AUTOCLOSE].Count > 0)
-                    autoCloseTime = Times[BIP_AUTOCLOSE][0].ToString("O");
-            }
-            catch { }
-            if (TryGetSessionBounds(barTime, out var sessionBeginTime, out var sessionEndTime))
-            {
-                sessionBegin = sessionBeginTime.ToString("O");
-                sessionEnd = sessionEndTime.ToString("O");
-                sessionEndBr = ConvertToBrasilia(sessionEndTime).ToString("O");
-            }
 
-            string msg = $"reason={reason} state={State} bip={BarsInProgress} barTime={barTime:O} brNow={brasiliaNow:O} brNowTod={brasiliaNow:HH\\:mm\\:ss} scheduled={scheduled} lastAutoCloseDate={lastAutoCloseDate:yyyy-MM-dd} brDate={brDate:yyyy-MM-dd} tradingDay={tradingDay:yyyy-MM-dd} pos={marketPosition} qty={quantity} autoCloseSent={autoCloseExitSentToday} autoCloseSentTime={autoCloseExitSentBrTime:O} attemptCount={autoCloseExitAttemptCountToday} mainTime={mainTime} autoCloseTime={autoCloseTime} sessionBegin={sessionBegin} sessionEnd={sessionEnd} sessionEndBr={sessionEndBr} sourceTZ={sourceTz} usaDst={IsUsaDst(brasiliaNow)}";
+            string msg = $"reason={reason} state={State} bip={BarsInProgress} barTime={now:O} nowTod={now:HH\\:mm\\:ss} scheduled={scheduled} lastAutoCloseDate={lastAutoCloseDate:yyyy-MM-dd} today={today:yyyy-MM-dd} tradingDay={tradingDay:yyyy-MM-dd} pos={marketPosition} qty={quantity} posSource={positionSource} autoCloseSent={autoCloseExitSentToday} autoCloseSentTime={autoCloseExitSentBrTime:O} attemptCount={autoCloseExitAttemptCountToday} mainTime={mainTime} sourceTZ={sourceTz} usaDst={IsUsaDst(now)}";
             if (!string.IsNullOrWhiteSpace(extra))
                 msg = $"{msg} {extra}";
 
             Log("AutoCloseDiag", msg);
         }
 
-        private void TryAutoCloseIfScheduled(DateTime barTime)
+        private void TryAutoCloseIfScheduled()
         {
             if (!AutoCloseEnabled) return;
 
-            DateTime brasiliaNow = ConvertToBrasilia(barTime);
-            DateTime tradingDay = GetTradingDay(Times[0][0]); // usa trading day da série principal
-            DateTime brDate = brasiliaNow.Date;
+            DateTime now = Times[0][0];
+            DateTime tradingDay = GetTradingDay(now); // usa trading day da série principal
+            DateTime today = now.Date;
 
             // já executou neste dia (Brasília)?
-            if (autoCloseAttemptDate.Date != brDate)
+            if (autoCloseAttemptDate.Date != today)
             {
-                autoCloseAttemptDate = brDate;
+                autoCloseAttemptDate = today;
                 autoCloseExitSentToday = false;
                 autoCloseExitSentBrTime = DateTime.MinValue;
                 autoCloseExitAttemptCountToday = 0;
@@ -3346,28 +3361,26 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (EnableDebugLog)
             {
                 string sourceTz = GetBarTimeZone()?.Id ?? "Unknown";
-                DebugLog("AutoCloseDiag", $"sourceTZ={sourceTz} bip={BarsInProgress} mainTime={Times[0][0]:O} barTime={barTime:O} brNow={brasiliaNow:O} scheduled={scheduled} tradingDay={tradingDay:yyyy-MM-dd}");
+                DebugLog("AutoCloseDiag", $"sourceTZ={sourceTz} bip={BarsInProgress} mainTime={Times[0][0]:O} now={now:O} scheduled={scheduled} tradingDay={tradingDay:yyyy-MM-dd}");
             }
 
-            TimeSpan windowDelta = brasiliaNow.TimeOfDay - scheduled;
+            TimeSpan windowDelta = now.TimeOfDay - scheduled;
             if (Math.Abs(windowDelta.TotalMinutes) <= 2)
             {
-                if (!ShouldThrottleAudit($"AUTOCLOSE_WINDOW_{tradingDay:yyyyMMdd}", LogThrottleSeconds))
+                if (!ShouldThrottleAudit($"AUTOCLOSE_WINDOW_{today:yyyyMMdd}", LogThrottleSeconds))
                 {
-                    var marketPosition = Position?.MarketPosition ?? MarketPosition.Flat;
-                    var quantity = Position?.Quantity ?? 0;
-                    Log("AutoCloseWindow", $"barTime={barTime:O} brNow={brasiliaNow:O} scheduled={scheduled} bip={BarsInProgress} state={State} pos={marketPosition} qty={quantity}");
+                    TryGetPositionSnapshot(out var marketPosition, out var quantity, out var positionSource);
+                    Log("AutoCloseWindow", $"now={now:O} scheduled={scheduled} bip={BarsInProgress} state={State} pos={marketPosition} qty={quantity} posSource={positionSource}");
                 }
             }
 
             TimeSpan snapshotStart = scheduled.Subtract(TimeSpan.FromMinutes(2));
             TimeSpan snapshotEnd = scheduled.Add(TimeSpan.FromMinutes(AutoCloseMaxWindowMinutes));
-            if (brasiliaNow.TimeOfDay >= snapshotStart && brasiliaNow.TimeOfDay <= snapshotEnd)
+            if (now.TimeOfDay >= snapshotStart && now.TimeOfDay <= snapshotEnd)
             {
-                if (!ShouldThrottleAudit($"AUTOCLOSE_SNAPSHOT_{brDate:yyyyMMdd}", LogThrottleSeconds))
+                if (!ShouldThrottleAudit($"AUTOCLOSE_SNAPSHOT_{today:yyyyMMdd}", LogThrottleSeconds))
                 {
-                    var marketPosition = Position?.MarketPosition ?? MarketPosition.Flat;
-                    var quantity = Position?.Quantity ?? 0;
+                    TryGetPositionSnapshot(out var marketPosition, out var quantity, out var positionSource);
                     double last = 0;
                     double pnl = 0;
                     bool hasPnl = false;
@@ -3382,61 +3395,54 @@ namespace NinjaTrader.NinjaScript.Strategies
                     }
                     catch { }
 
-                    string sessionBegin = "n/a";
-                    string sessionEnd = "n/a";
-                    string sessionEndBr = "n/a";
-                    if (TryGetSessionBounds(barTime, out var sessionBeginTime, out var sessionEndTime))
-                    {
-                        sessionBegin = sessionBeginTime.ToString("O");
-                        sessionEnd = sessionEndTime.ToString("O");
-                        sessionEndBr = ConvertToBrasilia(sessionEndTime).ToString("O");
-                    }
-
                     string snapshot =
-                        $"brNow={brasiliaNow:O} scheduled={scheduled} state={State} bip={BarsInProgress} pos={marketPosition} qty={quantity} last={F0(last)} pnl={(hasPnl ? F0(pnl) : "n/a")} " +
+                        $"now={now:O} scheduled={scheduled} state={State} bip={BarsInProgress} pos={marketPosition} qty={quantity} posSource={positionSource} last={F0(last)} pnl={(hasPnl ? F0(pnl) : \"n/a\")} " +
                         $"tpLong={FormatOrderSnapshot(ordemTPLong)} tpShort={FormatOrderSnapshot(ordemTPShort)} stopLong={FormatOrderSnapshot(ordemStopLong)} stopShort={FormatOrderSnapshot(ordemStopShort)} " +
-                        $"activeEntrySignal={activeEntrySignal} activeEntrySignalDay={activeEntrySignalDay:yyyy-MM-dd} sessionBegin={sessionBegin} sessionEnd={sessionEnd} sessionEndBr={sessionEndBr}";
+                        $"activeEntrySignal={activeEntrySignal} activeEntrySignalDay={activeEntrySignalDay:yyyy-MM-dd}";
                     Log("AutoCloseSnapshot", snapshot);
                 }
             }
 
-            if (brasiliaNow.TimeOfDay < scheduled)
+            if (now.TimeOfDay < scheduled)
             {
-                LogAutoCloseGate("RETURN_BEFORE_SCHEDULED", barTime, brasiliaNow, scheduled, tradingDay, brDate);
+                LogAutoCloseGate("RETURN_BEFORE_SCHEDULED", now, scheduled, tradingDay, today);
                 return;
             }
 
-            if (lastAutoCloseDate.Date == brDate && (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0))
+            TryGetPositionSnapshot(out var accountMarketPosition, out var accountQuantity, out _);
+            bool hasOpenPosition = accountMarketPosition != MarketPosition.Flat && accountQuantity != 0;
+
+            if (lastAutoCloseDate.Date == today && !hasOpenPosition)
             {
-                LogAutoCloseGate("RETURN_ALREADY_DONE_TODAY", barTime, brasiliaNow, scheduled, tradingDay, brDate);
+                LogAutoCloseGate("RETURN_ALREADY_DONE_TODAY", now, scheduled, tradingDay, today);
                 return;
             }
 
             // Se não há posição, cancela plano pendente e sai
-            if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
+            if (!hasOpenPosition)
             {
                 if (invertPlanArmed)
                 {
                     CancelInvertPlan("EOD", tradingDay);
-                    Audit("AutoClose", $"scheduled={scheduled} brNow={brasiliaNow:HH\\:mm\\:ss} action=CancelInvertPlan");
+                    Audit("AutoClose", $"scheduled={scheduled} now={now:HH\\:mm\\:ss} action=CancelInvertPlan");
                 }
 
-                lastAutoCloseDate = brDate;
+                lastAutoCloseDate = today;
                 autoCloseTriggeredToday = true;
-                LogAutoCloseGate("RETURN_FLAT_CANCEL_PLAN", barTime, brasiliaNow, scheduled, tradingDay, brDate);
+                LogAutoCloseGate("RETURN_FLAT_CANCEL_PLAN", now, scheduled, tradingDay, today);
                 PublishPanelSnapshot("AutoClose_flat");
                 return;
             }
 
-            if (brasiliaNow.TimeOfDay > scheduled.Add(TimeSpan.FromMinutes(AutoCloseMaxWindowMinutes)))
+            if (now.TimeOfDay > scheduled.Add(TimeSpan.FromMinutes(AutoCloseMaxWindowMinutes)))
             {
-                LogAutoCloseGate("AFTER_CUTOFF_CONTINUE", barTime, brasiliaNow, scheduled, tradingDay, brDate, $"cutoffMinutes={AutoCloseMaxWindowMinutes}");
+                LogAutoCloseGate("AFTER_CUTOFF_CONTINUE", now, scheduled, tradingDay, today, $"cutoffMinutes={AutoCloseMaxWindowMinutes}");
             }
 
             if (autoCloseExitAttemptCountToday >= AutoCloseMaxAttempts)
             {
-                lastAutoCloseDate = brDate;
-                LogAutoCloseGate("EXIT_SKIP_MAX_ATTEMPTS", barTime, brasiliaNow, scheduled, tradingDay, brDate, $"maxAttempts={AutoCloseMaxAttempts}");
+                lastAutoCloseDate = today;
+                LogAutoCloseGate("EXIT_SKIP_MAX_ATTEMPTS", now, scheduled, tradingDay, today, $"maxAttempts={AutoCloseMaxAttempts}");
                 return;
             }
 
@@ -3445,7 +3451,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 var nowUtc = DateTime.UtcNow;
                 if ((nowUtc - lastAutoCloseAttemptUtc).TotalSeconds < AutoCloseResendCooldownSeconds)
                 {
-                    LogAutoCloseGate("EXIT_RESENT_COOLDOWN", barTime, brasiliaNow, scheduled, tradingDay, brDate, $"cooldownSeconds={AutoCloseResendCooldownSeconds}");
+                    LogAutoCloseGate("EXIT_RESENT_COOLDOWN", now, scheduled, tradingDay, today, $"cooldownSeconds={AutoCloseResendCooldownSeconds}");
                     return;
                 }
             }
@@ -3456,28 +3462,31 @@ namespace NinjaTrader.NinjaScript.Strategies
             exitReasonHintTradingDay = tradingDay;
             bool wasSentToday = autoCloseExitSentToday;
 
-            Audit("AutoClose", $"scheduled={scheduled} brNow={brasiliaNow:HH\\:mm\\:ss} side={Position.MarketPosition} qty={Position.Quantity} avg={F0(Position.AveragePrice)}");
+            MarketPosition exitMarketPosition = accountMarketPosition != MarketPosition.Flat ? accountMarketPosition : Position.MarketPosition;
+            int exitQuantity = accountQuantity != 0 ? accountQuantity : Position.Quantity;
+            double exitAverage = Position?.AveragePrice ?? 0;
+            Audit("AutoClose", $"scheduled={scheduled} now={now:HH\\:mm\\:ss} side={exitMarketPosition} qty={exitQuantity} avg={F0(exitAverage)}");
 
             try
             {
-                Log("AutoCloseSnapshot", $"stage=PreCancel brNow={brasiliaNow:O} tpLong={FormatOrderSnapshot(ordemTPLong)} tpShort={FormatOrderSnapshot(ordemTPShort)} stopLong={FormatOrderSnapshot(ordemStopLong)} stopShort={FormatOrderSnapshot(ordemStopShort)}");
+                Log("AutoCloseSnapshot", $"stage=PreCancel now={now:O} tpLong={FormatOrderSnapshot(ordemTPLong)} tpShort={FormatOrderSnapshot(ordemTPShort)} stopLong={FormatOrderSnapshot(ordemStopLong)} stopShort={FormatOrderSnapshot(ordemStopShort)}");
                 try { if (ordemTPLong != null) CancelOrder(ordemTPLong); } catch { }
                 try { if (ordemTPShort != null) CancelOrder(ordemTPShort); } catch { }
                 try { if (ordemStopLong != null) CancelOrder(ordemStopLong); } catch { }
                 try { if (ordemStopShort != null) CancelOrder(ordemStopShort); } catch { }
-                Log("AutoCloseSnapshot", $"stage=PostCancel brNow={brasiliaNow:O} tpLong={FormatOrderSnapshot(ordemTPLong)} tpShort={FormatOrderSnapshot(ordemTPShort)} stopLong={FormatOrderSnapshot(ordemStopLong)} stopShort={FormatOrderSnapshot(ordemStopShort)}");
+                Log("AutoCloseSnapshot", $"stage=PostCancel now={now:O} tpLong={FormatOrderSnapshot(ordemTPLong)} tpShort={FormatOrderSnapshot(ordemTPShort)} stopLong={FormatOrderSnapshot(ordemStopLong)} stopShort={FormatOrderSnapshot(ordemStopShort)}");
 
                 string fromSignal = GetActiveEntrySignal(tradingDay);
                 autoCloseExitSignalName = fromSignal;
 
-                if (Position.MarketPosition == MarketPosition.Long && Position.Quantity > 0)
+                if (exitMarketPosition == MarketPosition.Long && exitQuantity > 0)
                 {
                     if (!string.IsNullOrEmpty(fromSignal))
                         ExitLong(AutoCloseExitOrderName, fromSignal);
                     else
                         ExitLong(AutoCloseExitOrderName);
                 }
-                else if (Position.MarketPosition == MarketPosition.Short && Position.Quantity > 0)
+                else if (exitMarketPosition == MarketPosition.Short && exitQuantity > 0)
                 {
                     if (!string.IsNullOrEmpty(fromSignal))
                         ExitShort(AutoCloseExitOrderName, fromSignal);
@@ -3486,20 +3495,20 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }
 
                 autoCloseExitSentToday = true;
-                autoCloseExitSentBrTime = brasiliaNow;
+                autoCloseExitSentBrTime = now;
                 autoCloseExitAttemptCountToday++;
                 lastAutoCloseAttemptUtc = DateTime.UtcNow;
-                lastAutoCloseDate = brDate;
+                lastAutoCloseDate = today;
                 string action = wasSentToday ? "ExitResent" : "ExitSent";
-                Audit("AutoClose", $"action={action} side={Position.MarketPosition} qty={Position.Quantity} avg={F0(Position.AveragePrice)} attempt={autoCloseExitAttemptCountToday} fromSignal={autoCloseExitSignalName}");
-                LogAutoCloseGate(wasSentToday ? "EXIT_RESENT" : "EXIT_SENT", barTime, brasiliaNow, scheduled, tradingDay, brDate,
+                Audit("AutoClose", $"action={action} side={exitMarketPosition} qty={exitQuantity} avg={F0(exitAverage)} attempt={autoCloseExitAttemptCountToday} fromSignal={autoCloseExitSignalName}");
+                LogAutoCloseGate(wasSentToday ? "EXIT_RESENT" : "EXIT_SENT", now, scheduled, tradingDay, today,
                     $"attempt={autoCloseExitAttemptCountToday} fromSignal={autoCloseExitSignalName}");
                 PublishPanelSnapshot("AutoClose_exit_sent");
                 PublishPanelSnapshot("AutoClose");
             }
             catch (Exception ex)
             {
-                LogAutoCloseGate("EXIT_EXCEPTION", barTime, brasiliaNow, scheduled, tradingDay, brDate, $"error={ex.Message}");
+                LogAutoCloseGate("EXIT_EXCEPTION", now, scheduled, tradingDay, today, $"error={ex.Message}");
                 Log("AutoClose", $"Exception while attempting auto-close: {ex.Message}");
             }
         }
@@ -3536,6 +3545,11 @@ namespace NinjaTrader.NinjaScript.Strategies
             lastExitCauseBrTime = DateTime.MinValue;
             lastExitOrderName = "";
             lastExitFromSignal = "";
+            isBeTransitionInProgress = false;
+            pendingBeMarketPosition = MarketPosition.Flat;
+            pendingBeQty = 0;
+            pendingBeStopPrice = 0;
+            pendingBeFromSignal = "";
             exitReasonHint = null;
             exitReasonHintTradingDay = DateTime.MinValue;
             lastWatchdogAttemptUtc = Core.Globals.MinDate;
@@ -3717,11 +3731,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             if (AutoCloseEnabled && lastInvertPlanCancelDate.Date != tradingDay.Date)
             {
-                DateTime brasiliaNow = ConvertToBrasilia(closeTime);
+                DateTime now = closeTime;
                 TimeSpan scheduled;
                 TryGetAutoCloseSchedule(out scheduled);
 
-                if (brasiliaNow.TimeOfDay >= scheduled)
+                if (now.TimeOfDay >= scheduled)
                     CancelInvertPlan("EOD", tradingDay);
             }
         }
@@ -3738,13 +3752,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             // ============================
             // MOTOR DE AUTOCLOSE
             // ============================
-            if (BarsInProgress == BIP_AUTOCLOSE)
-            {
-                // Scheduler 1m do AutoClose (Historical + Realtime).
-                TryAutoCloseIfScheduled(Times[BarsInProgress][0]);
-                return;
-            }
-
             // Processa BIP do SuperTrend para memo
             if (stBip >= 0 && BarsInProgress == stBip)
             {
@@ -3793,16 +3800,22 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (BarsInProgress != 0) return;
             if (CurrentBars[0] < 2) return;
 
-            // AutoClose no BIP 0 somente no Historical/Analyzer.
-            if (State == State.Historical)
-                TryAutoCloseIfScheduled(Times[0][0]);
+            TryAutoCloseIfScheduled();
 
             DateTime closeTime = Times[0][0];
             DateTime tradingDay = GetTradingDay(closeTime);
 
             if (lastTradeDate != tradingDay)
             {
-                ResetDayCaches(tradingDay);
+                TryGetPositionSnapshot(out var marketPosition, out var quantity, out var positionSource);
+                if (marketPosition != MarketPosition.Flat && quantity != 0)
+                {
+                    Audit("DayReset", $"td={tradingDay:yyyy-MM-dd} action=SkipResetOpenPosition pos={marketPosition} qty={quantity} posSource={positionSource}");
+                }
+                else
+                {
+                    ResetDayCaches(tradingDay);
+                }
             }
 
             EvaluateInvertPlanLifecycle(closeTime, tradingDay);
@@ -4002,25 +4015,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         protected override void OnMarketData(MarketDataEventArgs e)
         {
-            if (!AutoCloseEnabled)
-                return;
-            if (State != State.Realtime)
-                return;
-            if (Position == null || Position.MarketPosition == MarketPosition.Flat)
-                return;
-
-            DateTime brasiliaNow = ConvertToBrasilia(e.Time);
-            if (lastAutoCloseDate.Date == brasiliaNow.Date
-                && (Position == null || Position.MarketPosition == MarketPosition.Flat))
-                return;
-            TimeSpan scheduled;
-            TryGetAutoCloseSchedule(out scheduled);
-            if (brasiliaNow.TimeOfDay < scheduled)
-                return;
-            if (autoCloseExitAttemptCountToday >= AutoCloseMaxAttempts)
-                return;
-
-            TryAutoCloseIfScheduled(e.Time);
+            return;
         }
 
         protected override void OnPositionUpdate(Position position, double averagePrice, int quantity, MarketPosition marketPosition)
@@ -4032,6 +4027,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             if (marketPosition == MarketPosition.Flat)
             {
+                isBeTransitionInProgress = false;
+                pendingBeMarketPosition = MarketPosition.Flat;
+                pendingBeQty = 0;
+                pendingBeStopPrice = 0;
+                pendingBeFromSignal = "";
+
                 bool drawn = false;
                 string exitReason = "Unknown";
                 string exitOrderName = "";
@@ -4229,6 +4230,60 @@ namespace NinjaTrader.NinjaScript.Strategies
                     $"name={orderName} state={orderState} action={order.OrderAction} type={order.OrderType} qty={quantity} filled={filled} lim={F0(limitPrice)} stop={F0(stopPrice)} avgFill={F0(averageFillPrice)} fromSignal={order.FromEntrySignal} error={error} nativeError={nativeError}");
             }
 
+            if (isBeTransitionInProgress && (order == ordemStopLong || order == ordemStopShort))
+            {
+                if (orderState == OrderState.Cancelled)
+                {
+                    if (pendingBeMarketPosition == MarketPosition.Long)
+                    {
+                        ordemStopLong = ExitLongStopMarket(0, true, pendingBeQty, pendingBeStopPrice, "BreakEven", pendingBeFromSignal);
+                        breakevenAtivado = true;
+
+                        double locked = ComputeRiskDollars(precoEntradaAtual, pendingBeStopPrice, Math.Abs(pendingBeQty));
+                        dayBreakevenDollars = locked.ToString("0.00");
+
+                        exitReasonHint = "BE";
+                        exitReasonHintTradingDay = GetTradingDay(Times[0][0]);
+
+                        Audit("BreakEvenTriggered", $"side=Long entry={F0(precoEntradaAtual)} riskPx={F(riscoPrecoAtual)} newStop={F0(pendingBeStopPrice)} lockedDollars={F0(locked)}");
+
+                        PublishPanelSnapshot("BreakEven_Long");
+                    }
+                    else if (pendingBeMarketPosition == MarketPosition.Short)
+                    {
+                        ordemStopShort = ExitShortStopMarket(0, true, pendingBeQty, pendingBeStopPrice, "BreakEven", pendingBeFromSignal);
+                        breakevenAtivado = true;
+
+                        double locked = ComputeRiskDollars(precoEntradaAtual, pendingBeStopPrice, Math.Abs(pendingBeQty));
+                        dayBreakevenDollars = locked.ToString("0.00");
+
+                        exitReasonHint = "BE";
+                        exitReasonHintTradingDay = GetTradingDay(Times[0][0]);
+
+                        Audit("BreakEvenTriggered", $"side=Short entry={F0(precoEntradaAtual)} riskPx={F(riscoPrecoAtual)} newStop={F0(pendingBeStopPrice)} lockedDollars={F0(locked)}");
+
+                        PublishPanelSnapshot("BreakEven_Short");
+                    }
+
+                    isBeTransitionInProgress = false;
+                    pendingBeMarketPosition = MarketPosition.Flat;
+                    pendingBeQty = 0;
+                    pendingBeStopPrice = 0;
+                    pendingBeFromSignal = "";
+                    return;
+                }
+
+                if (orderState == OrderState.Rejected)
+                {
+                    Audit("BreakEvenTransitionFailed", $"side={pendingBeMarketPosition} error={error} nativeError={nativeError}");
+                    isBeTransitionInProgress = false;
+                    pendingBeMarketPosition = MarketPosition.Flat;
+                    pendingBeQty = 0;
+                    pendingBeStopPrice = 0;
+                    pendingBeFromSignal = "";
+                }
+            }
+
             bool isBracket = order == ordemStopLong || order == ordemStopShort || order == ordemTPLong || order == ordemTPShort;
             if ((orderState == OrderState.Rejected || orderState == OrderState.Cancelled) && isBracket)
             {
@@ -4413,7 +4468,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                     int qty = Math.Abs(Position.Quantity) > 0 ? Math.Abs(Position.Quantity) : Math.Abs(ordemStopLong.Quantity);
                     double tickSize = Instrument.MasterInstrument.TickSize;
 
-                    try { CancelOrder(ordemStopLong); } catch { }
+                    if (isBeTransitionInProgress)
+                        return;
 
                     double bid = 0;
                     double ask = 0;
@@ -4444,18 +4500,16 @@ namespace NinjaTrader.NinjaScript.Strategies
                         }
                     }
 
-                    ordemStopLong = ExitLongStopMarket(0, true, qty, novoStop, "BreakEven", fromSignal);
-                    breakevenAtivado = true;
+                    pendingBeMarketPosition = MarketPosition.Long;
+                    pendingBeQty = qty;
+                    pendingBeStopPrice = novoStop;
+                    pendingBeFromSignal = fromSignal;
+                    isBeTransitionInProgress = true;
 
-                    double locked = ComputeRiskDollars(precoEntradaAtual, novoStop, Math.Abs(qty));
-                    dayBreakevenDollars = locked.ToString("0.00");
+                    Audit("BreakEvenTransitionRequested", $"side=Long trigger={F0(trigger)} newStop={F0(novoStop)} qty={qty}");
+                    try { CancelOrder(ordemStopLong); } catch { }
+                    return;
 
-                    exitReasonHint = "BE";
-                    exitReasonHintTradingDay = GetTradingDay(Times[0][0]);
-
-                    Audit("BreakEvenTriggered", $"side=Long trigger={F0(trigger)} entry={F0(precoEntradaAtual)} riskPx={F(riscoPrecoAtual)} newStop={F0(novoStop)} lockedDollars={F0(locked)} rrTrigger={F(effectiveAtRR)} rrLock={F(effectiveLockRR)}");
-
-                    PublishPanelSnapshot("BreakEven_Long");
                 }
             }
             else if (Position.MarketPosition == MarketPosition.Short && ordemStopShort != null && !breakevenAtivado && effectiveAtRR > 0 && effectiveLockRR > 0)
@@ -4471,7 +4525,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                     int qty = Math.Abs(Position.Quantity) > 0 ? Math.Abs(Position.Quantity) : Math.Abs(ordemStopShort.Quantity);
                     double tickSize = Instrument.MasterInstrument.TickSize;
 
-                    try { CancelOrder(ordemStopShort); } catch { }
+                    if (isBeTransitionInProgress)
+                        return;
 
                     double bid = 0;
                     double ask = 0;
@@ -4502,18 +4557,15 @@ namespace NinjaTrader.NinjaScript.Strategies
                         }
                     }
 
-                    ordemStopShort = ExitShortStopMarket(0, true, qty, novoStop, "BreakEven", fromSignal);
-                    breakevenAtivado = true;
+                    pendingBeMarketPosition = MarketPosition.Short;
+                    pendingBeQty = qty;
+                    pendingBeStopPrice = novoStop;
+                    pendingBeFromSignal = fromSignal;
+                    isBeTransitionInProgress = true;
 
-                    double locked = ComputeRiskDollars(precoEntradaAtual, novoStop, Math.Abs(qty));
-                    dayBreakevenDollars = locked.ToString("0.00");
-
-                    exitReasonHint = "BE";
-                    exitReasonHintTradingDay = GetTradingDay(Times[0][0]);
-
-                    Audit("BreakEvenTriggered", $"side=Short trigger={F0(trigger)} entry={F0(precoEntradaAtual)} riskPx={F(riscoPrecoAtual)} newStop={F0(novoStop)} lockedDollars={F0(locked)} rrTrigger={F(effectiveAtRR)} rrLock={F(effectiveLockRR)}");
-
-                    PublishPanelSnapshot("BreakEven_Short");
+                    Audit("BreakEvenTransitionRequested", $"side=Short trigger={F0(trigger)} newStop={F0(novoStop)} qty={qty}");
+                    try { CancelOrder(ordemStopShort); } catch { }
+                    return;
                 }
             }
         }
