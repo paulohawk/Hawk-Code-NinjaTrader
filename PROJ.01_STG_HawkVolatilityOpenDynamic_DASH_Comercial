@@ -4159,7 +4159,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 string autoCloseLatency = "n/a";
                 if (autoCloseIntentForDay && autoCloseExitSentTimeEastern != DateTime.MinValue)
+                {
+                    DateTime easternNow = ConvertToUsEastern(Time[0]);
                     autoCloseLatency = $"{(easternNow - autoCloseExitSentTimeEastern).TotalSeconds:0.##}s";
+                }
                 Audit("PositionClosed",
                     $"side={lastOpenSide} qty={lastOpenQty} avgEntry={F0(lastOpenAvg)} exitReason={exitReason} dayStatus={dayStatus} " +
                     $"autoCloseSent={autoCloseExitSentToday} autoCloseSentEastern={autoCloseExitSentTimeEastern:O} autoCloseAttempts={autoCloseExitAttemptCountToday} autoCloseLatency={autoCloseLatency}");
