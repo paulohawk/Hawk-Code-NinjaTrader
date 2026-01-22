@@ -170,6 +170,7 @@ namespace NinjaTrader.NinjaScript
         private TextBlock _txtMaxLoss;
         private WpfEllipse _bulletHedge;
         private TextBlock _hedgeStateText;
+        private WpfEllipse _riskWarningBullet;
         private TextBlock _riskWarningText;
         private bool _hedgeEnabled = false;
 
@@ -425,17 +426,19 @@ namespace NinjaTrader.NinjaScript
 
             _hedgeStateText = new TextBlock { Text = "Off", Foreground = Brushes.Gray, FontSize = CompactFontSize, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, RowSpacing, 0, 0) };
 
+            _riskWarningBullet = CreateBullet();
+            _riskWarningBullet.Fill = BronzeBrush;
             _riskWarningText = new TextBlock
             {
                 Text = "",
                 Foreground = StopLossBrush,
                 FontSize = 10.0,
-                Margin = new Thickness(0, 4, 0, 6),
                 TextWrapping = TextWrapping.Wrap,
                 TextTrimming = TextTrimming.None,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                TextAlignment = TextAlignment.Center,
-                Visibility = Visibility.Collapsed
+                HorizontalAlignment = HorizontalAlignment.Left,
+                TextAlignment = TextAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Center,
+                FontWeight = FontWeights.SemiBold
             };
 
             streakStack.Children.Add(hedgeRow);
@@ -444,14 +447,23 @@ namespace NinjaTrader.NinjaScript
 
             main.Children.Add(streakRow);
 
-            // Risk warning row (mesclado em 3 colunas, abaixo do EndDay)
-            var riskRow = new Grid { Margin = new Thickness(0, 2, 0, 4) };
-            riskRow.ColumnDefinitions.Add(new ColumnDefinition());
-            riskRow.ColumnDefinitions.Add(new ColumnDefinition());
-            riskRow.ColumnDefinitions.Add(new ColumnDefinition());
-            riskRow.Children.Add(_riskWarningText);
-            Grid.SetColumn(_riskWarningText, 0);
-            Grid.SetColumnSpan(_riskWarningText, 3);
+            // Risk warning row (fixo, abaixo do EndDay)
+            var riskRow = new Grid { Margin = new Thickness(0, 0, 0, RowSpacing) };
+            riskRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            riskRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            var riskLeft = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            riskLeft.Children.Add(_riskWarningBullet);
+            riskLeft.Children.Add(_riskWarningText);
+
+            riskRow.Children.Add(riskLeft);
+            Grid.SetColumn(riskLeft, 0);
+            Grid.SetColumnSpan(riskLeft, 2);
             main.Children.Add(riskRow);
 
             // DayResum
@@ -481,7 +493,7 @@ namespace NinjaTrader.NinjaScript
 
             main.Children.Add(new Border
             {
-                Height = 11,
+                Height = 6,
                 Background = Brushes.Transparent
             });
 
@@ -630,6 +642,7 @@ namespace NinjaTrader.NinjaScript
             setBullet(_bulletPnlTotal);
             setBullet(_bulletEndDay);
             setBullet(_bulletDayResum);
+            setBullet(_riskWarningBullet);
 
             void setFont(TextBlock tb, double? f = null) { if (tb != null) tb.FontSize = f ?? font; }
             setFont(_txtEntry);
@@ -647,9 +660,10 @@ namespace NinjaTrader.NinjaScript
             setFont(_txtMaxGain);
             setFont(_txtMaxLoss);
             setFont(_drSentence, Math.Max(8.5, font - 1.0));
+            setFont(_riskWarningText, font);
             if (_lblDayResum != null) _lblDayResum.FontSize = font;
             if (_riskWarningText != null)
-                _riskWarningText.MaxWidth = width * 0.78;
+                _riskWarningText.MaxWidth = width * 0.72;
         }
 
         private void SetDayResumBulletAndTitleColor(bool hasTradeOrOpen)
@@ -721,7 +735,7 @@ namespace NinjaTrader.NinjaScript
                 _hedgeEnabled = false;
                 if (_bulletHedge != null) _bulletHedge.Fill = InactiveBulletBrush;
                 if (_hedgeStateText != null) { _hedgeStateText.Text = "Off"; _hedgeStateText.Foreground = Brushes.Gray; }
-                if (_riskWarningText != null) { _riskWarningText.Text = ""; _riskWarningText.Visibility = Visibility.Collapsed; }
+                SetRiskWarningText(null);
 
                 SetDayResum(null, null, null, null, null, null, null);
             }
@@ -895,12 +909,17 @@ namespace NinjaTrader.NinjaScript
         {
             try
             {
-                if (_riskWarningText == null) return;
-                _riskWarningText.Text = text ?? "";
-                _riskWarningText.Visibility =
-                    string.IsNullOrWhiteSpace(text)
-                        ? Visibility.Collapsed
-                        : Visibility.Visible;
+                if (_riskWarningText == null || _riskWarningBullet == null) return;
+
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    _riskWarningText.Text = "";
+                    _riskWarningBullet.Fill = BronzeBrush;
+                    return;
+                }
+
+                _riskWarningText.Text = text.Replace("\r", "");
+                _riskWarningBullet.Fill = StopLossBrush;
             }
             catch { }
         }
@@ -1902,6 +1921,12 @@ namespace NinjaTrader.NinjaScript.Strategies
         // Horário efetivo utilizado pelo motor de AutoClose
         private static readonly TimeSpan AutoCloseEasternTime =
             AutoCloseEasternBase + NinjaTimeCorrection;
+        // ============================
+        // OVERLAY TIME (DataFeed Based)
+        // ============================
+        // Cutoff do overlay baseado no horário do datafeed (US Eastern).
+        // Valor calibrado para equivaler ao cutoff desejado em horário de Brasília no ambiente atual.
+        private static readonly TimeSpan OverlayEasternTime = new TimeSpan(8, 0, 0);
         private string lastExitReason = "Unknown";
 
         // Invert stop-entry (paper 07)
@@ -2330,15 +2355,15 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (owner.ChartControl == null)
                     return;
 
-                DateTime now = owner.GetBrasiliaTime();
-                ResetDailyState(now);
+                DateTime easternNow = owner.ConvertToUsEastern(owner.Times[0][0]);
+                ResetDailyState(easternNow);
                 // Overlay exibido no máximo uma vez por dia operacional.
-                if (now.Date == riskOverlayLastDate.Date)
+                if (easternNow.Date == riskOverlayLastDate.Date)
                     return;
-                if (now.TimeOfDay <= new TimeSpan(11, 0, 0))
+                if (easternNow.TimeOfDay < OverlayEasternTime)
                     return;
 
-                riskOverlayLastDate = now.Date;
+                riskOverlayLastDate = easternNow.Date;
                 owner.ChartControl.Dispatcher.BeginInvoke(new Action(() => CreateAndShow(owner.ChartControl)));
             }
 
@@ -2402,7 +2427,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 var bodyText = new TextBlock
                 {
                     Text = "Você ativou esta automação fora do horário operacional recomendado.\n\n" +
-                           "Para máxima estabilidade, recomenda-se manter a estratégia ativa antes das 11:00 ou utilizar VPS dedicada.\n\n" +
+                           "Para máxima estabilidade, recomenda-se manter a estratégia ativa antes das 11:00 (Brasília) ou utilizar VPS dedicada.\n\n" +
                            "Ao prosseguir, você assume os riscos operacionais desta decisão.",
                     FontSize = 16,
                     Foreground = Brushes.White,
@@ -3050,13 +3075,13 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 if (!offSnapshot)
                 {
-                    DateTime now = GetBrasiliaTime();
-                    ResetDailyRiskWarningState(now);
-                    if (now.TimeOfDay > new TimeSpan(11, 0, 0) && lastRiskWarningDate.Date != now.Date)
-                        lastRiskWarningDate = now.Date;
+                    DateTime easternNow = ConvertToUsEastern(Times[0][0]);
+                    ResetDailyRiskWarningState(easternNow);
+                    if (easternNow.TimeOfDay >= OverlayEasternTime && lastRiskWarningDate.Date != easternNow.Date)
+                        lastRiskWarningDate = easternNow.Date;
 
-                    snap.RiskWarningText = (lastRiskWarningDate.Date == now.Date)
-                        ? "Atenção: automação ligada fora do horário.\nMonitore possíveis falhas de stop e alvo."
+                    snap.RiskWarningText = (lastRiskWarningDate.Date == easternNow.Date)
+                        ? "Atenção: automação ligada fora do horário operacional.\nMonitore possíveis falhas de stop e alvo."
                         : null;
                 }
                 else
