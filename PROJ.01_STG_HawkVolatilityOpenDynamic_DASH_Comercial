@@ -2308,7 +2308,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 isStrategyActive = true;
                 lastTradesCount = SystemPerformance.AllTrades.Count;
                 PublishPanelSnapshot("StateRealtime");
-                riskOverlayHelper?.TryShow(this);
+                riskOverlayHelper?.TryShow(this, OverlayEasternTime);
             }
             else if (State == State.Terminated)
             {
@@ -2410,7 +2410,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             private DateTime riskOverlayResetDate = DateTime.MinValue;
             private ChartControl chartControl;
 
-            public void TryShow(HawkVolatilityOpen owner)
+            public void TryShow(HawkVolatilityOpen owner, TimeSpan overlayCutoff)
             {
                 if (owner == null)
                     return;
@@ -2424,7 +2424,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 // Overlay exibido no máximo uma vez por dia operacional.
                 if (easternNow.Date == riskOverlayLastDate.Date)
                     return;
-                if (easternNow.TimeOfDay < OverlayEasternTime)
+                if (easternNow.TimeOfDay < overlayCutoff)
                     return;
 
                 riskOverlayLastDate = easternNow.Date;
