@@ -470,6 +470,46 @@ namespace NinjaTrader.NinjaScript
                 Orientation = Orientation.Vertical,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 Visibility = Visibility.Collapsed,
+                Margin = new Thickness(0, RowSpacing, 0, 0)
+            };
+            var riskLabelRow = new Grid
+            {
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            riskLabelRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            riskLabelRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            riskLabelRow.Children.Add(_riskWarningBullet);
+            riskLabelRow.Children.Add(_riskWarningLabel);
+            Grid.SetColumn(_riskWarningBullet, 0);
+            Grid.SetColumn(_riskWarningLabel, 1);
+            var riskLine1Row = new Grid { HorizontalAlignment = HorizontalAlignment.Left };
+            riskLine1Row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            riskLine1Row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            riskLine1Row.Children.Add(_riskWarningLine1Spacer);
+            riskLine1Row.Children.Add(_riskWarningLine1);
+            Grid.SetColumn(_riskWarningLine1Spacer, 0);
+            Grid.SetColumn(_riskWarningLine1, 1);
+
+            var riskLine2Row = new Grid { HorizontalAlignment = HorizontalAlignment.Left };
+            riskLine2Row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            riskLine2Row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            riskLine2Row.Children.Add(_riskWarningLine2Spacer);
+            riskLine2Row.Children.Add(_riskWarningLine2);
+            Grid.SetColumn(_riskWarningLine2Spacer, 0);
+            Grid.SetColumn(_riskWarningLine2, 1);
+
+            _riskWarningContainer.Children.Add(riskLabelRow);
+            _riskWarningContainer.Children.Add(riskLine1Row);
+            _riskWarningContainer.Children.Add(riskLine2Row);
+
+            endDayLeft.Children.Add(_riskWarningContainer);
+
+            _riskWarningContainer = new StackPanel
+            {
+                Orientation = Orientation.Vertical,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Visibility = Visibility.Collapsed,
                 Margin = new Thickness(0, 6, 0, 0)
             };
             var riskLabelRow = new Grid
@@ -968,9 +1008,6 @@ namespace NinjaTrader.NinjaScript
                 {
                     _riskWarningContainer.Visibility = Visibility.Collapsed;
                     _riskWarningBullet.Fill = StopLossBrush;
-                    _hedgeStateText.Visibility = Visibility.Visible;
-                    if (_hedgeRow != null)
-                        _hedgeRow.Visibility = Visibility.Visible;
                     return;
                 }
 
@@ -981,9 +1018,6 @@ namespace NinjaTrader.NinjaScript
                 _riskWarningLine2.Text = parts.Length > lineStart + 1 ? parts[lineStart + 1] : "- monitore possíveis falhas de stop e alvo.";
                 _riskWarningBullet.Fill = StopLossBrush;
                 _riskWarningContainer.Visibility = Visibility.Visible;
-                _hedgeStateText.Visibility = Visibility.Collapsed;
-                if (_hedgeRow != null)
-                    _hedgeRow.Visibility = Visibility.Collapsed;
             }
             catch { }
         }
