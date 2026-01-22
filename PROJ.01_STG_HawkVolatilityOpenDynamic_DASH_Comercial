@@ -1902,6 +1902,11 @@ namespace NinjaTrader.NinjaScript.Strategies
         // Horário efetivo utilizado pelo motor de AutoClose
         private static readonly TimeSpan AutoCloseEasternTime =
             AutoCloseEasternBase + NinjaTimeCorrection;
+        // ============================
+        // OVERLAY TIME (DataFeed Based)
+        // ============================
+        // 11:00 Brasília == 08:00 US Eastern
+        private static readonly TimeSpan OverlayEasternTime = new TimeSpan(8, 0, 0);
         private string lastExitReason = "Unknown";
 
         // Invert stop-entry (paper 07)
@@ -2330,15 +2335,15 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (owner.ChartControl == null)
                     return;
 
-                DateTime now = owner.GetBrasiliaTime();
-                ResetDailyState(now);
+                DateTime easternNow = owner.ConvertToUsEastern(owner.Times[0][0]);
+                ResetDailyState(easternNow);
                 // Overlay exibido no máximo uma vez por dia operacional.
-                if (now.Date == riskOverlayLastDate.Date)
+                if (easternNow.Date == riskOverlayLastDate.Date)
                     return;
-                if (now.TimeOfDay <= new TimeSpan(11, 0, 0))
+                if (easternNow.TimeOfDay < OverlayEasternTime)
                     return;
 
-                riskOverlayLastDate = now.Date;
+                riskOverlayLastDate = easternNow.Date;
                 owner.ChartControl.Dispatcher.BeginInvoke(new Action(() => CreateAndShow(owner.ChartControl)));
             }
 
@@ -2402,7 +2407,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 var bodyText = new TextBlock
                 {
                     Text = "Você ativou esta automação fora do horário operacional recomendado.\n\n" +
-                           "Para máxima estabilidade, recomenda-se manter a estratégia ativa antes das 11:00 ou utilizar VPS dedicada.\n\n" +
+                           "Para máxima estabilidade, recomenda-se manter a estratégia ativa antes das 11:00 (Brasília) ou utilizar VPS dedicada.\n\n" +
                            "Ao prosseguir, você assume os riscos operacionais desta decisão.",
                     FontSize = 16,
                     Foreground = Brushes.White,
