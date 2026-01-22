@@ -173,7 +173,9 @@ namespace NinjaTrader.NinjaScript
         private WpfEllipse _bulletHedge;
         private TextBlock _hedgeStateText;
         private TextBlock _riskWarningLabel;
-        private TextBlock _riskWarningBody;
+        private StackPanel _riskWarningBody;
+        private TextBlock _riskWarningLinePrimary;
+        private TextBlock _riskWarningLineSecondary;
         private WpfEllipse _riskWarningBullet;
         private bool _hedgeEnabled = false;
 
@@ -434,26 +436,45 @@ namespace NinjaTrader.NinjaScript
             {
                 Text = "",
                 Foreground = StopLossBrush,
-                FontSize = 10.0,
+                FontSize = CompactFontSize + 2,
                 Margin = new Thickness(0, 4, 0, 0),
                 TextWrapping = TextWrapping.NoWrap,
                 TextTrimming = TextTrimming.None,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                TextAlignment = TextAlignment.Left,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                TextAlignment = TextAlignment.Center,
                 Visibility = Visibility.Visible
             };
-            _riskWarningBody = new TextBlock
+            _riskWarningLinePrimary = new TextBlock
             {
                 Text = "",
                 Foreground = StopLossBrush,
-                FontSize = 10.0,
-                Margin = new Thickness(RiskWarningBulletSize + 6, 0, 0, 6),
+                FontSize = CompactFontSize,
+                Margin = new Thickness(0, 2, 0, 0),
                 TextWrapping = TextWrapping.Wrap,
                 TextTrimming = TextTrimming.None,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                TextAlignment = TextAlignment.Left,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                TextAlignment = TextAlignment.Center,
                 Visibility = Visibility.Visible
             };
+            _riskWarningLineSecondary = new TextBlock
+            {
+                Text = "",
+                Foreground = StopLossBrush,
+                FontSize = CompactFontSize,
+                Margin = new Thickness(0, 0, 0, 6),
+                TextWrapping = TextWrapping.Wrap,
+                TextTrimming = TextTrimming.None,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                TextAlignment = TextAlignment.Center,
+                Visibility = Visibility.Visible
+            };
+            _riskWarningBody = new StackPanel
+            {
+                Orientation = Orientation.Vertical,
+                HorizontalAlignment = HorizontalAlignment.Center
+            };
+            _riskWarningBody.Children.Add(_riskWarningLinePrimary);
+            _riskWarningBody.Children.Add(_riskWarningLineSecondary);
 
             streakStack.Children.Add(hedgeRow);
             streakStack.Children.Add(_hedgeStateText);
@@ -469,7 +490,7 @@ namespace NinjaTrader.NinjaScript
             var riskHeader = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
-                HorizontalAlignment = HorizontalAlignment.Left,
+                HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
             };
             riskHeader.Children.Add(_riskWarningBullet);
@@ -681,9 +702,17 @@ namespace NinjaTrader.NinjaScript
             setFont(_drSentence, Math.Max(8.5, font - 1.0));
             if (_lblDayResum != null) _lblDayResum.FontSize = font;
             if (_riskWarningLabel != null)
+                _riskWarningLabel.FontSize = font + 2;
+            if (_riskWarningLinePrimary != null)
+                _riskWarningLinePrimary.FontSize = font;
+            if (_riskWarningLineSecondary != null)
+                _riskWarningLineSecondary.FontSize = font;
+            if (_riskWarningLabel != null)
                 _riskWarningLabel.MaxWidth = width * 0.78;
-            if (_riskWarningBody != null)
-                _riskWarningBody.MaxWidth = width * 0.78;
+            if (_riskWarningLinePrimary != null)
+                _riskWarningLinePrimary.MaxWidth = width * 0.78;
+            if (_riskWarningLineSecondary != null)
+                _riskWarningLineSecondary.MaxWidth = width * 0.78;
         }
 
         private void SetDayResumBulletAndTitleColor(bool hasTradeOrOpen)
@@ -930,17 +959,20 @@ namespace NinjaTrader.NinjaScript
         {
             try
             {
-                if (_riskWarningLabel == null || _riskWarningBody == null) return;
-                string safeText = text ?? "";
-                int separatorIndex = safeText.IndexOf(": ", StringComparison.Ordinal);
-                string label = separatorIndex > -1 ? safeText.Substring(0, separatorIndex + 1) : safeText;
-                string body = separatorIndex > -1 ? safeText.Substring(separatorIndex + 2) : "";
-                _riskWarningLabel.Text = label;
-                _riskWarningBody.Text = body;
+                if (_riskWarningLabel == null || _riskWarningLinePrimary == null || _riskWarningLineSecondary == null) return;
+                _riskWarningLabel.Text = isAttention ? "Atenção" : "Status";
+                _riskWarningLinePrimary.Text = isAttention
+                    ? "- automação ligada fora do horário operacional."
+                    : "- sistema ativo e monitorando condições de mercado.";
+                _riskWarningLineSecondary.Text = isAttention
+                    ? "- monitore possíveis falhas de stop e alvo."
+                    : "";
                 _riskWarningLabel.Visibility = Visibility.Visible;
-                _riskWarningBody.Visibility = Visibility.Visible;
+                _riskWarningLinePrimary.Visibility = Visibility.Visible;
+                _riskWarningLineSecondary.Visibility = isAttention ? Visibility.Visible : Visibility.Collapsed;
                 _riskWarningLabel.Foreground = isAttention ? StopLossBrush : Brushes.LightGreen;
-                _riskWarningBody.Foreground = isAttention ? StopLossBrush : Brushes.LightGreen;
+                _riskWarningLinePrimary.Foreground = isAttention ? StopLossBrush : Brushes.LightGreen;
+                _riskWarningLineSecondary.Foreground = isAttention ? StopLossBrush : Brushes.LightGreen;
                 if (_riskWarningBullet != null)
                     _riskWarningBullet.Fill = isAttention ? StopLossBrush : Brushes.LightGreen;
             }
@@ -3101,7 +3133,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 bool isAttention = now.TimeOfDay > new TimeSpan(11, 0, 0);
                 snap.RiskWarningIsAttention = isAttention;
                 snap.RiskWarningText = isAttention
-                    ? "Atenção: automação ligada fora do horário.\nMonitore possíveis falhas de stop e alvo."
+                    ? "Atenção: automação ligada fora do horário operacional.\nMonitore possíveis falhas de stop e alvo."
                     : "Status: sistema ativo e monitorando condições de mercado.";
             }
             catch
