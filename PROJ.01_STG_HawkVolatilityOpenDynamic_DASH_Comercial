@@ -169,6 +169,7 @@ namespace NinjaTrader.NinjaScript
         private TextBlock _txtMaxGain;
         private TextBlock _txtMaxLoss;
         private WpfEllipse _bulletHedge;
+        private StackPanel _hedgeRow;
         private TextBlock _hedgeStateText;
         private WpfEllipse _riskWarningBullet;
         private TextBlock _riskWarningLabel;
@@ -417,15 +418,15 @@ namespace NinjaTrader.NinjaScript
             streakStack.Children.Add(_txtMaxGain);
             streakStack.Children.Add(_txtMaxLoss);
 
-            var hedgeRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 6, 0, 0) };
+            _hedgeRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 6, 0, 0) };
             var hedgeBulletHost = new Grid { Width = 12, Height = 12, Margin = new Thickness(0, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center };
             _bulletHedge = new WpfEllipse { Width = 10, Height = 10, Fill = InactiveBulletBrush, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             var hedgeBulletText = new TextBlock { Text = "H", FontSize = 7, Foreground = Brushes.Black, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             hedgeBulletHost.Children.Add(_bulletHedge);
             hedgeBulletHost.Children.Add(hedgeBulletText);
             var hedgeLabel = new TextBlock { Text = "Hedge", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center };
-            hedgeRow.Children.Add(hedgeBulletHost);
-            hedgeRow.Children.Add(hedgeLabel);
+            _hedgeRow.Children.Add(hedgeBulletHost);
+            _hedgeRow.Children.Add(hedgeLabel);
 
             _hedgeStateText = new TextBlock { Text = "Off", Foreground = Brushes.Gray, FontSize = CompactFontSize, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, RowSpacing, 0, 0) };
 
@@ -459,6 +460,17 @@ namespace NinjaTrader.NinjaScript
                 TextTrimming = TextTrimming.None,
                 HorizontalAlignment = HorizontalAlignment.Left
             };
+            _riskWarningLine2 = new TextBlock
+            {
+                Text = "- monitore possíveis falhas de stop e alvo.",
+                Foreground = StopLossBrush,
+                FontSize = CompactFontSize,
+                TextWrapping = TextWrapping.Wrap,
+                TextTrimming = TextTrimming.None,
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+            _riskWarningLine1Spacer = new Border { Width = _riskWarningBullet.Width + 4, Background = Brushes.Transparent };
+            _riskWarningLine2Spacer = new Border { Width = _riskWarningBullet.Width + 4, Background = Brushes.Transparent };
 
             _riskWarningContainer = new StackPanel
             {
@@ -483,6 +495,7 @@ namespace NinjaTrader.NinjaScript
 
             streakStack.Children.Add(hedgeRow);
             streakStack.Children.Add(_hedgeStateText);
+            streakStack.Children.Add(_riskWarningContainer);
             streakRow.Children.Add(streakStack); Grid.SetColumn(streakStack, 2);
 
             main.Children.Add(streakRow);
