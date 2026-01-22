@@ -172,7 +172,8 @@ namespace NinjaTrader.NinjaScript
         private TextBlock _txtMaxLoss;
         private WpfEllipse _bulletHedge;
         private TextBlock _hedgeStateText;
-        private TextBlock _riskWarningText;
+        private TextBlock _riskWarningLabel;
+        private TextBlock _riskWarningBody;
         private WpfEllipse _riskWarningBullet;
         private bool _hedgeEnabled = false;
 
@@ -429,16 +430,28 @@ namespace NinjaTrader.NinjaScript
             _hedgeStateText = new TextBlock { Text = "Off", Foreground = Brushes.Gray, FontSize = CompactFontSize, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, RowSpacing, 0, 0) };
 
             _riskWarningBullet = CreateBullet(RiskWarningBulletSize);
-            _riskWarningText = new TextBlock
+            _riskWarningLabel = new TextBlock
             {
                 Text = "",
                 Foreground = StopLossBrush,
                 FontSize = 10.0,
-                Margin = new Thickness(0, 4, 0, 6),
+                Margin = new Thickness(0, 4, 0, 0),
+                TextWrapping = TextWrapping.NoWrap,
+                TextTrimming = TextTrimming.None,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                TextAlignment = TextAlignment.Left,
+                Visibility = Visibility.Visible
+            };
+            _riskWarningBody = new TextBlock
+            {
+                Text = "",
+                Foreground = StopLossBrush,
+                FontSize = 10.0,
+                Margin = new Thickness(RiskWarningBulletSize + 6, 0, 0, 6),
                 TextWrapping = TextWrapping.Wrap,
                 TextTrimming = TextTrimming.None,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                TextAlignment = TextAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                TextAlignment = TextAlignment.Left,
                 Visibility = Visibility.Visible
             };
 
@@ -453,17 +466,24 @@ namespace NinjaTrader.NinjaScript
             riskRow.ColumnDefinitions.Add(new ColumnDefinition());
             riskRow.ColumnDefinitions.Add(new ColumnDefinition());
             riskRow.ColumnDefinitions.Add(new ColumnDefinition());
-            var riskWarningStack = new StackPanel
+            var riskHeader = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
-                HorizontalAlignment = HorizontalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Center
             };
-            riskWarningStack.Children.Add(_riskWarningBullet);
-            riskWarningStack.Children.Add(_riskWarningText);
-            riskRow.Children.Add(riskWarningStack);
-            Grid.SetColumn(riskWarningStack, 0);
-            Grid.SetColumnSpan(riskWarningStack, 3);
+            riskHeader.Children.Add(_riskWarningBullet);
+            riskHeader.Children.Add(_riskWarningLabel);
+            var riskContainer = new StackPanel
+            {
+                Orientation = Orientation.Vertical,
+                HorizontalAlignment = HorizontalAlignment.Center
+            };
+            riskContainer.Children.Add(riskHeader);
+            riskContainer.Children.Add(_riskWarningBody);
+            riskRow.Children.Add(riskContainer);
+            Grid.SetColumn(riskContainer, 0);
+            Grid.SetColumnSpan(riskContainer, 3);
             main.Children.Add(riskRow);
 
             // DayResum
@@ -660,8 +680,10 @@ namespace NinjaTrader.NinjaScript
             setFont(_txtMaxLoss);
             setFont(_drSentence, Math.Max(8.5, font - 1.0));
             if (_lblDayResum != null) _lblDayResum.FontSize = font;
-            if (_riskWarningText != null)
-                _riskWarningText.MaxWidth = width * 0.78;
+            if (_riskWarningLabel != null)
+                _riskWarningLabel.MaxWidth = width * 0.78;
+            if (_riskWarningBody != null)
+                _riskWarningBody.MaxWidth = width * 0.78;
         }
 
         private void SetDayResumBulletAndTitleColor(bool hasTradeOrOpen)
@@ -733,7 +755,7 @@ namespace NinjaTrader.NinjaScript
                 _hedgeEnabled = false;
                 if (_bulletHedge != null) _bulletHedge.Fill = InactiveBulletBrush;
                 if (_hedgeStateText != null) { _hedgeStateText.Text = "Off"; _hedgeStateText.Foreground = Brushes.Gray; }
-                if (_riskWarningText != null)
+                if (_riskWarningLabel != null && _riskWarningBody != null)
                     SetRiskWarningText("Status: sistema ativo e monitorando condições de mercado.", false);
 
                 SetDayResum(null, null, null, null, null, null, null);
@@ -908,10 +930,17 @@ namespace NinjaTrader.NinjaScript
         {
             try
             {
-                if (_riskWarningText == null) return;
-                _riskWarningText.Text = text ?? "";
-                _riskWarningText.Visibility = Visibility.Visible;
-                _riskWarningText.Foreground = isAttention ? StopLossBrush : Brushes.LightGreen;
+                if (_riskWarningLabel == null || _riskWarningBody == null) return;
+                string safeText = text ?? "";
+                int separatorIndex = safeText.IndexOf(": ", StringComparison.Ordinal);
+                string label = separatorIndex > -1 ? safeText.Substring(0, separatorIndex + 1) : safeText;
+                string body = separatorIndex > -1 ? safeText.Substring(separatorIndex + 2) : "";
+                _riskWarningLabel.Text = label;
+                _riskWarningBody.Text = body;
+                _riskWarningLabel.Visibility = Visibility.Visible;
+                _riskWarningBody.Visibility = Visibility.Visible;
+                _riskWarningLabel.Foreground = isAttention ? StopLossBrush : Brushes.LightGreen;
+                _riskWarningBody.Foreground = isAttention ? StopLossBrush : Brushes.LightGreen;
                 if (_riskWarningBullet != null)
                     _riskWarningBullet.Fill = isAttention ? StopLossBrush : Brushes.LightGreen;
             }
