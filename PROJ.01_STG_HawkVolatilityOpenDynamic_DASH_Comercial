@@ -3045,7 +3045,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             snap.StrategyName = BuildPanelTitle();
             snap.StrategyKey = cacheKey;
 
-            snap.EndDayText = AutoCloseEnabled ? $"{AutoCloseEasternTime:hh\\:mm\\:ss} ET" : "-";
+            snap.EndDayText = AutoCloseEnabled ? $"{AutoCloseEasternTime:hh\\:mm\\:ss} BR" : "-";
             snap.ATREnabled = UseStopATR;
             if (UseStopATR && lastAtrVal > 0)
             {
