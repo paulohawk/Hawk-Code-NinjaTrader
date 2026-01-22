@@ -169,6 +169,7 @@ namespace NinjaTrader.NinjaScript
         private TextBlock _txtMaxGain;
         private TextBlock _txtMaxLoss;
         private WpfEllipse _bulletHedge;
+        private StackPanel _hedgeRow;
         private TextBlock _hedgeStateText;
         private WpfEllipse _riskWarningBullet;
         private TextBlock _riskWarningLabel;
@@ -419,15 +420,15 @@ namespace NinjaTrader.NinjaScript
             streakStack.Children.Add(_txtMaxGain);
             streakStack.Children.Add(_txtMaxLoss);
 
-            var hedgeRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 6, 0, 0) };
+            _hedgeRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 6, 0, 0) };
             var hedgeBulletHost = new Grid { Width = 12, Height = 12, Margin = new Thickness(0, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center };
             _bulletHedge = new WpfEllipse { Width = 10, Height = 10, Fill = InactiveBulletBrush, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             var hedgeBulletText = new TextBlock { Text = "H", FontSize = 7, Foreground = Brushes.Black, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             hedgeBulletHost.Children.Add(_bulletHedge);
             hedgeBulletHost.Children.Add(hedgeBulletText);
             var hedgeLabel = new TextBlock { Text = "Hedge", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center };
-            hedgeRow.Children.Add(hedgeBulletHost);
-            hedgeRow.Children.Add(hedgeLabel);
+            _hedgeRow.Children.Add(hedgeBulletHost);
+            _hedgeRow.Children.Add(hedgeLabel);
 
             _hedgeStateText = new TextBlock { Text = "Off", Foreground = Brushes.Gray, FontSize = CompactFontSize, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, RowSpacing, 0, 0) };
 
@@ -504,8 +505,47 @@ namespace NinjaTrader.NinjaScript
 
             endDayLeft.Children.Add(_riskWarningContainer);
 
-            streakStack.Children.Add(hedgeRow);
+            _riskWarningContainer = new StackPanel
+            {
+                Orientation = Orientation.Vertical,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Visibility = Visibility.Collapsed,
+                Margin = new Thickness(0, 6, 0, 0)
+            };
+            var riskLabelRow = new Grid
+            {
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            riskLabelRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            riskLabelRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            riskLabelRow.Children.Add(_riskWarningBullet);
+            riskLabelRow.Children.Add(_riskWarningLabel);
+            Grid.SetColumn(_riskWarningBullet, 0);
+            Grid.SetColumn(_riskWarningLabel, 1);
+            var riskLine1Row = new Grid { HorizontalAlignment = HorizontalAlignment.Left };
+            riskLine1Row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            riskLine1Row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            riskLine1Row.Children.Add(_riskWarningLine1Spacer);
+            riskLine1Row.Children.Add(_riskWarningLine1);
+            Grid.SetColumn(_riskWarningLine1Spacer, 0);
+            Grid.SetColumn(_riskWarningLine1, 1);
+
+            var riskLine2Row = new Grid { HorizontalAlignment = HorizontalAlignment.Left };
+            riskLine2Row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            riskLine2Row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            riskLine2Row.Children.Add(_riskWarningLine2Spacer);
+            riskLine2Row.Children.Add(_riskWarningLine2);
+            Grid.SetColumn(_riskWarningLine2Spacer, 0);
+            Grid.SetColumn(_riskWarningLine2, 1);
+
+            _riskWarningContainer.Children.Add(riskLabelRow);
+            _riskWarningContainer.Children.Add(riskLine1Row);
+            _riskWarningContainer.Children.Add(riskLine2Row);
+
+            streakStack.Children.Add(_hedgeRow);
             streakStack.Children.Add(_hedgeStateText);
+            streakStack.Children.Add(_riskWarningContainer);
             streakRow.Children.Add(streakStack); Grid.SetColumn(streakStack, 2);
 
             main.Children.Add(streakRow);
