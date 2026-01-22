@@ -1970,10 +1970,11 @@ namespace NinjaTrader.NinjaScript.Strategies
         // This offset is intentional and validated empirically to preserve correct EOD behavior.
         private static readonly TimeSpan AutoCloseEasternBase = new TimeSpan(13, 55, 0);
         // Offset corretivo fixo (observado empiricamente no NinjaTrader)
-        private static readonly TimeSpan NinjaTimeCorrection = TimeSpan.FromHours(3);
+        private static readonly TimeSpan NinjaTimeCorrectionDefault = TimeSpan.FromHours(3);
+        private static readonly TimeSpan NinjaTimeCorrectionHedge = TimeSpan.FromHours(4);
         // Horário efetivo utilizado pelo motor de AutoClose
-        private static readonly TimeSpan AutoCloseEasternTime =
-            AutoCloseEasternBase + NinjaTimeCorrection;
+        private TimeSpan AutoCloseEasternTime =>
+            AutoCloseEasternBase + GetNinjaTimeCorrectionEffective();
         // ============================
         // OVERLAY TIME (DataFeed Based)
         // ============================
@@ -1981,9 +1982,16 @@ namespace NinjaTrader.NinjaScript.Strategies
         // com correção de offset empírico do NinjaTrader.
         private static readonly TimeSpan OverlayEasternBase = new TimeSpan(8, 0, 0); // 11:00 Brasília teórico
         // Horário efetivo utilizado pelo motor de Overlay
-        private static readonly TimeSpan OverlayEasternTime =
-            OverlayEasternBase + NinjaTimeCorrection;
+        private TimeSpan OverlayEasternTime =>
+            OverlayEasternBase + GetNinjaTimeCorrectionEffective();
         private string lastExitReason = "Unknown";
+
+        private bool IsHedgeActive() => GetEffectiveInvertMode() != InvertModeType.Disabled;
+
+        // NinjaTrader pode apresentar drifts distintos entre modos (Default/Hedge) ao usar horários do datafeed.
+        // O offset é aplicado de forma intencional e condicionada ao Hedge para manter a consistência operacional.
+        private TimeSpan GetNinjaTimeCorrectionEffective() =>
+            IsHedgeActive() ? NinjaTimeCorrectionHedge : NinjaTimeCorrectionDefault;
 
         // Invert stop-entry (paper 07)
         private bool invertPlanArmed = false;
