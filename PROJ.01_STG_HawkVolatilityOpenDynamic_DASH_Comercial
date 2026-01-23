@@ -1961,6 +1961,9 @@ namespace NinjaTrader.NinjaScript.Strategies
         private string autoCloseExitSignalName = "";
         private DateTime autoCloseEntryTimeLocal = Core.Globals.MinDate;
         private DateTime autoCloseEntryTradingDay = Core.Globals.MinDate;
+        private DateTime hedgeSessionAnchorLocal = Core.Globals.MinDate;
+        private DateTime hedgeSessionTradingDay = Core.Globals.MinDate;
+        private DateTime hedgeCutoffLocal = Core.Globals.MinDate;
         private const int AutoCloseResendCooldownSeconds = 3;
         private const int AutoCloseMaxAttempts = 15;
         private const int AutoCloseMaxWindowMinutes = 15;
@@ -3100,7 +3103,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             if (AutoCloseEnabled)
             {
-                if (autoCloseEntryTimeLocal != Core.Globals.MinDate)
+                if (GetEffectiveInvertMode() == InvertModeType.InvertedStopEntry)
+                {
+                    DateTime cutoff = hedgeCutoffLocal;
+                    if (cutoff == Core.Globals.MinDate)
+                    {
+                        DateTime td = GetTradingDay(GetSafeTime());
+                        cutoff = BuildHedgeCutoffLocal(td);
+                    }
+                    snap.EndDayText = $"{cutoff:HH\\:mm\\:ss} BR";
+                }
+                else if (autoCloseEntryTimeLocal != Core.Globals.MinDate)
                 {
                     DateTime scheduledClose = autoCloseEntryTimeLocal.Add(AutoCloseMaxDuration);
                     snap.EndDayText = $"{scheduledClose:HH\\:mm\\:ss} BR";
@@ -3530,6 +3543,153 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (!AutoCloseEnabled) return;
 
             DateTime ninjaNow = barTime;
+            if (GetEffectiveInvertMode() == InvertModeType.InvertedStopEntry)
+            {
+                DateTime hedgeTradingDay;
+                DateTime hedgeAnchorLocal;
+                DateTime hedgeCutoff;
+                DateTime anchorCandidateTradingDay = GetTradingDay(ninjaNow);
+                if (hedgeSessionTradingDay.Date != anchorCandidateTradingDay.Date)
+                {
+                    DateTime anchorCandidate = BuildHedgeAnchorLocal(ninjaNow, anchorCandidateTradingDay);
+                    if (ninjaNow >= anchorCandidate)
+                        SetHedgeSessionAnchor(anchorCandidate, anchorCandidateTradingDay);
+                }
+
+                bool hasCutoff = TryGetHedgeCutoff(ninjaNow, out hedgeTradingDay, out hedgeAnchorLocal, out hedgeCutoff);
+                if (!hasCutoff)
+                {
+                    if (EnableDebugLog)
+                        DebugLog("AutoCloseDiag", $"mode=Hedge schedule=missing bip={BarsInProgress} barTime={barTime:O} ninjaNow={ninjaNow:O}");
+                    return;
+                }
+
+                if (EnableDebugLog)
+                {
+                    string sourceTz = GetBarTimeZone()?.Id ?? "Unknown";
+                    DebugLog("AutoCloseDiag", $"mode=Hedge anchor={hedgeAnchorLocal:O} cutoff={hedgeCutoff:O} sourceTZ={sourceTz} bip={BarsInProgress} mainTime={Times[0][0]:O} barTime={barTime:O} ninjaNow={ninjaNow:O} tradingDay={hedgeTradingDay:yyyy-MM-dd} invertPlanArmed={invertPlanArmed} entryOrderPending={(invertStopEntryOrder != null)}");
+                }
+
+                if (ninjaNow < hedgeCutoff)
+                {
+                    LogAutoCloseGate("HEDGE_BEFORE_CUTOFF", barTime, ninjaNow, hedgeAnchorLocal, hedgeCutoff, hedgeTradingDay, autoCloseTriggeredToday);
+                    return;
+                }
+
+                if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
+                {
+                    if (invertPlanArmed || invertStopEntryOrder != null)
+                    {
+                        CancelInvertPlan("EOD", hedgeTradingDay);
+                        Audit("HedgeEODCancelPendingEntry", "action=CancelInvertPlan+CancelEntryOrder");
+                        lastAutoCloseTradingDay = hedgeTradingDay;
+                        autoCloseTriggeredToday = true;
+                        LogAutoCloseGate("HEDGE_FLAT_CANCEL_PLAN", barTime, ninjaNow, hedgeAnchorLocal, hedgeCutoff, hedgeTradingDay, autoCloseTriggeredToday);
+                    }
+                    else
+                    {
+                        LogAutoCloseGate("HEDGE_FLAT_NO_PLAN", barTime, ninjaNow, hedgeAnchorLocal, hedgeCutoff, hedgeTradingDay, autoCloseTriggeredToday);
+                    }
+
+                    return;
+                }
+
+                DateTime tradingDay;
+                DateTime entryTimeLocal;
+                DateTime scheduledCloseLocal;
+                tradingDay = hedgeTradingDay;
+                entryTimeLocal = hedgeAnchorLocal;
+                scheduledCloseLocal = hedgeCutoff;
+
+                if (autoCloseAttemptTradingDay.Date != tradingDay.Date)
+                {
+                    autoCloseAttemptTradingDay = tradingDay;
+                    autoCloseExitSentToday = false;
+                    autoCloseExitSentTimeFeed = DateTime.MinValue;
+                    autoCloseExitSentTradingDay = Core.Globals.MinDate;
+                    autoCloseExitAttemptCountToday = 0;
+                    lastAutoCloseAttemptUtc = Core.Globals.MinDate;
+                    autoCloseExitSignalName = "";
+                }
+
+                if (lastAutoCloseTradingDay.Date == tradingDay.Date && (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0))
+                {
+                    LogAutoCloseGate("HEDGE_ALREADY_DONE_TRADINGDAY", barTime, ninjaNow, entryTimeLocal, scheduledCloseLocal, tradingDay, autoCloseTriggeredToday);
+                    return;
+                }
+
+                if (autoCloseExitAttemptCountToday >= AutoCloseMaxAttempts)
+                {
+                    lastAutoCloseTradingDay = tradingDay;
+                    LogAutoCloseGate("HEDGE_EXIT_SKIP_MAX_ATTEMPTS", barTime, ninjaNow, entryTimeLocal, scheduledCloseLocal, tradingDay, autoCloseTriggeredToday, $"maxAttempts={AutoCloseMaxAttempts}");
+                    return;
+                }
+
+                if (AutoCloseResendCooldownSeconds > 0 && lastAutoCloseAttemptUtc != Core.Globals.MinDate)
+                {
+                    var nowUtc = DateTime.UtcNow;
+                    if ((nowUtc - lastAutoCloseAttemptUtc).TotalSeconds < AutoCloseResendCooldownSeconds)
+                    {
+                        LogAutoCloseGate("HEDGE_EXIT_RESENT_COOLDOWN", barTime, ninjaNow, entryTimeLocal, scheduledCloseLocal, tradingDay, autoCloseTriggeredToday, $"cooldownSeconds={AutoCloseResendCooldownSeconds}");
+                        return;
+                    }
+                }
+
+                autoCloseTriggeredToday = true;
+                exitReasonHint = "AutoClose";
+                exitReasonHintTradingDay = tradingDay;
+                bool wasSentToday = autoCloseExitSentToday;
+
+                Audit("AutoClose", $"entryTime={entryTimeLocal:HH\\:mm\\:ss} scheduledClose={scheduledCloseLocal:HH\\:mm\\:ss} ninjaNow={ninjaNow:HH\\:mm\\:ss} side={Position.MarketPosition} qty={Position.Quantity} avg={F0(Position.AveragePrice)}");
+
+                try
+                {
+                    Log("AutoCloseSnapshot", $"stage=PreCancel ninjaNow={ninjaNow:O} tpLong={FormatOrderSnapshot(ordemTPLong)} tpShort={FormatOrderSnapshot(ordemTPShort)} stopLong={FormatOrderSnapshot(ordemStopLong)} stopShort={FormatOrderSnapshot(ordemStopShort)}");
+                    TryCancelBracketOrder(ordemTPLong, "AutoClose", "AutoClose", true);
+                    TryCancelBracketOrder(ordemTPShort, "AutoClose", "AutoClose", true);
+                    TryCancelBracketOrder(ordemStopLong, "AutoClose", "AutoClose", true);
+                    TryCancelBracketOrder(ordemStopShort, "AutoClose", "AutoClose", true);
+                    Log("AutoCloseSnapshot", $"stage=PostCancel ninjaNow={ninjaNow:O} tpLong={FormatOrderSnapshot(ordemTPLong)} tpShort={FormatOrderSnapshot(ordemTPShort)} stopLong={FormatOrderSnapshot(ordemStopLong)} stopShort={FormatOrderSnapshot(ordemStopShort)}");
+
+                    string fromSignal = GetActiveEntrySignal(tradingDay);
+                    autoCloseExitSignalName = fromSignal;
+
+                    if (Position.MarketPosition == MarketPosition.Long && Position.Quantity > 0)
+                    {
+                        if (!string.IsNullOrEmpty(fromSignal))
+                            ExitLong("AutoClose", fromSignal);
+                        else
+                            ExitLong("AutoClose");
+                    }
+                    else if (Position.MarketPosition == MarketPosition.Short && Position.Quantity > 0)
+                    {
+                        if (!string.IsNullOrEmpty(fromSignal))
+                            ExitShort("AutoClose", fromSignal);
+                        else
+                            ExitShort("AutoClose");
+                    }
+
+                    autoCloseExitSentToday = true;
+                    autoCloseExitSentTimeFeed = ninjaNow;
+                    autoCloseExitSentTradingDay = tradingDay;
+                    autoCloseExitAttemptCountToday++;
+                    lastAutoCloseAttemptUtc = DateTime.UtcNow;
+                    string action = wasSentToday ? "ExitResent" : "ExitSent";
+                    Audit("AutoClose", $"action={action} side={Position.MarketPosition} qty={Position.Quantity} avg={F0(Position.AveragePrice)} attempt={autoCloseExitAttemptCountToday} fromSignal={autoCloseExitSignalName}");
+                    LogAutoCloseGate(wasSentToday ? "HEDGE_EXIT_RESENT" : "HEDGE_EXIT_SENT", barTime, ninjaNow, entryTimeLocal, scheduledCloseLocal, tradingDay, autoCloseTriggeredToday,
+                        $"attempt={autoCloseExitAttemptCountToday} fromSignal={autoCloseExitSignalName}");
+                    PublishPanelSnapshot("AutoClose_exit_sent");
+                    PublishPanelSnapshot("AutoClose");
+                }
+                catch (Exception ex)
+                {
+                    LogAutoCloseGate("HEDGE_EXIT_EXCEPTION", barTime, ninjaNow, entryTimeLocal, scheduledCloseLocal, tradingDay, autoCloseTriggeredToday, $"error={ex.Message}");
+                    Log("AutoClose", $"Exception while attempting auto-close: {ex.Message}");
+                }
+
+                return;
+            }
+
             DateTime tradingDay;
             DateTime entryTimeLocal;
             DateTime scheduledCloseLocal;
@@ -3742,6 +3902,9 @@ namespace NinjaTrader.NinjaScript.Strategies
             autoCloseAttemptTradingDay = Core.Globals.MinDate;
             lastAutoCloseAttemptUtc = Core.Globals.MinDate;
             autoCloseExitSignalName = "";
+            hedgeSessionAnchorLocal = Core.Globals.MinDate;
+            hedgeSessionTradingDay = Core.Globals.MinDate;
+            hedgeCutoffLocal = Core.Globals.MinDate;
             lastExitReason = "Unknown";
             exitReasonHint = null;
             exitReasonHintTradingDay = DateTime.MinValue;
@@ -3800,6 +3963,57 @@ namespace NinjaTrader.NinjaScript.Strategies
             plannedStopPrice = 0;
             plannedTargetPrice = 0;
             plannedTradeDate = DateTime.MinValue;
+        }
+
+        private void SetHedgeSessionAnchor(DateTime anchorTime, DateTime tradingDay)
+        {
+            hedgeSessionAnchorLocal = anchorTime;
+            hedgeSessionTradingDay = tradingDay.Date;
+            hedgeCutoffLocal = BuildHedgeCutoffLocal(tradingDay);
+
+            Audit("HedgeAnchorSet",
+                $"td={tradingDay:yyyy-MM-dd} anchor={hedgeSessionAnchorLocal:O} cutoff={hedgeCutoffLocal:O}");
+        }
+
+        private DateTime BuildHedgeAnchorLocal(DateTime referenceTime, DateTime tradingDay)
+        {
+            string entryHms = IsUsaDst(referenceTime) ? EntryTimeDstUsaHHmmss : EntryTimeNormalHHmmss;
+            try
+            {
+                var hms = entryHms.Split(':');
+                return new DateTime(tradingDay.Year, tradingDay.Month, tradingDay.Day,
+                    int.Parse(hms[0]), int.Parse(hms[1]), int.Parse(hms[2]));
+            }
+            catch
+            {
+                return new DateTime(tradingDay.Year, tradingDay.Month, tradingDay.Day, 11, 29, 30);
+            }
+        }
+
+        private DateTime BuildHedgeCutoffLocal(DateTime tradingDay)
+        {
+            bool usaDst = IsUsaDstForTradingDay(tradingDay);
+            TimeSpan cutoff = usaDst ? new TimeSpan(15, 55, 0) : new TimeSpan(16, 55, 0);
+            return new DateTime(tradingDay.Year, tradingDay.Month, tradingDay.Day,
+                cutoff.Hours, cutoff.Minutes, cutoff.Seconds);
+        }
+
+        private bool TryGetHedgeCutoff(DateTime referenceTime, out DateTime tradingDay, out DateTime anchorLocal, out DateTime cutoffLocal)
+        {
+            anchorLocal = hedgeSessionAnchorLocal;
+            if (anchorLocal == Core.Globals.MinDate)
+            {
+                tradingDay = GetTradingDay(referenceTime);
+                anchorLocal = BuildHedgeAnchorLocal(referenceTime, tradingDay);
+                cutoffLocal = BuildHedgeCutoffLocal(tradingDay);
+                return true;
+            }
+
+            tradingDay = hedgeSessionTradingDay != Core.Globals.MinDate
+                ? hedgeSessionTradingDay.Date
+                : anchorLocal.Date;
+            cutoffLocal = hedgeCutoffLocal != Core.Globals.MinDate ? hedgeCutoffLocal : BuildHedgeCutoffLocal(tradingDay);
+            return true;
         }
 
         private void CancelInvertPlan(string reason, DateTime tradingDay)
@@ -3927,13 +4141,17 @@ namespace NinjaTrader.NinjaScript.Strategies
                 DateTime autoCloseTradingDay;
                 DateTime entryTimeLocal;
                 DateTime scheduledCloseLocal;
-                if (TryGetAutoCloseSchedule(closeTime, out autoCloseTradingDay, out entryTimeLocal, out scheduledCloseLocal))
+                bool hasSchedule = false;
+
+                if (GetEffectiveInvertMode() == InvertModeType.InvertedStopEntry)
+                    hasSchedule = TryGetHedgeCutoff(closeTime, out autoCloseTradingDay, out entryTimeLocal, out scheduledCloseLocal);
+                else
+                    hasSchedule = TryGetAutoCloseSchedule(closeTime, out autoCloseTradingDay, out entryTimeLocal, out scheduledCloseLocal);
+
+                if (hasSchedule && lastInvertPlanCancelDate.Date != autoCloseTradingDay.Date)
                 {
-                    if (lastInvertPlanCancelDate.Date != autoCloseTradingDay.Date)
-                    {
-                        if (closeTime >= scheduledCloseLocal)
-                            CancelInvertPlan("EOD", autoCloseTradingDay);
-                    }
+                    if (closeTime >= scheduledCloseLocal)
+                        CancelInvertPlan("EOD", autoCloseTradingDay);
                 }
             }
         }
@@ -4127,7 +4345,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     double stopTicks = Math.Round(stopDollarsPerContract / tickValue, 0);
                     double targetTicks = stopTicks * TargetFactor;
 
-                    InvertModeType invertMode = GetEffectiveInvertMode();
+                    invertMode = GetEffectiveInvertMode();
                     bool entrarLong = false;
                     bool entrarShort = false;
 
@@ -4285,8 +4503,11 @@ namespace NinjaTrader.NinjaScript.Strategies
                 breakevenAtivado = false;
                 activeEntrySignal = "";
                 activeEntrySignalDay = DateTime.MinValue;
-                autoCloseEntryTimeLocal = Core.Globals.MinDate;
-                autoCloseEntryTradingDay = Core.Globals.MinDate;
+                if (GetEffectiveInvertMode() != InvertModeType.InvertedStopEntry)
+                {
+                    autoCloseEntryTimeLocal = Core.Globals.MinDate;
+                    autoCloseEntryTradingDay = Core.Globals.MinDate;
+                }
                 pendingWatchdogRebuild = false;
                 lastWatchdogReason = "";
                 lastWatchdogContext = "";
@@ -4328,11 +4549,14 @@ namespace NinjaTrader.NinjaScript.Strategies
             int posQtyAbs = Math.Abs(position.Quantity);
             if (posQtyAbs <= 0) return;
 
-            bool isNewPosition = lastOpenQty == 0 || string.Equals(lastOpenSide, "Flat", StringComparison.OrdinalIgnoreCase);
-            if (isNewPosition || autoCloseEntryTimeLocal == Core.Globals.MinDate)
+            if (GetEffectiveInvertMode() != InvertModeType.InvertedStopEntry)
             {
-                autoCloseEntryTimeLocal = Times[0][0];
-                autoCloseEntryTradingDay = tradingDay.Date;
+                bool isNewPosition = lastOpenQty == 0 || string.Equals(lastOpenSide, "Flat", StringComparison.OrdinalIgnoreCase);
+                if (isNewPosition || autoCloseEntryTimeLocal == Core.Globals.MinDate)
+                {
+                    autoCloseEntryTimeLocal = Times[0][0];
+                    autoCloseEntryTradingDay = tradingDay.Date;
+                }
             }
 
             if (string.IsNullOrEmpty(activeEntrySignal))
