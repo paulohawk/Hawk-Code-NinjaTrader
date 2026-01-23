@@ -4346,30 +4346,29 @@ namespace NinjaTrader.NinjaScript.Strategies
                     double stopTicks = Math.Round(stopDollarsPerContract / tickValue, 0);
                     double targetTicks = stopTicks * TargetFactor;
 
-                    invertMode = GetEffectiveInvertMode();
                     bool entrarLong = false;
                     bool entrarShort = false;
 
-                    if (invertMode == InvertModeType.Disabled)
+                    if (GetEffectiveInvertMode() == InvertModeType.Disabled)
                     {
                         entrarLong = sinalCompra;
                         entrarShort = sinalVenda;
                     }
-                    else if (invertMode == InvertModeType.InvertedImmediate)
+                    else if (GetEffectiveInvertMode() == InvertModeType.InvertedImmediate)
                     {
                         entrarLong = sinalVenda;
                         entrarShort = sinalCompra;
                     }
 
                     string chosen = entrarLong ? "Long" : (entrarShort ? "Short" : "None");
-                    if (invertMode == InvertModeType.InvertedStopEntry && (sinalCompra || sinalVenda))
+                    if (GetEffectiveInvertMode() == InvertModeType.InvertedStopEntry && (sinalCompra || sinalVenda))
                         chosen = sinalCompra ? "InvertStopEntryLong" : "InvertStopEntryShort";
 
                     // Garantia de decisão antes do submit
                     Audit("EntryDecision",
-                        $"scheduled={entryHms} invertMode={invertMode} enterInverted={EnterInverted} useST={UseSuperTrend} stOnClose={SuperTrendOnBarClose} stReady={memoSuperTrendReady} stBull={memoSuperTrendUpTrend} stBear={memoSuperTrendDownTrend} liberarLong={liberarLong} liberarShort={liberarShort} chosen={chosen} qtyPlanned={actualContractsForDay} stopPerCt={F(stopDollarsPerContract)} atr={F(lastAtrVal, "0.000")} atrFactor={F(ATRFactor)}");
+                        $"scheduled={entryHms} invertMode={GetEffectiveInvertMode()} enterInverted={EnterInverted} useST={UseSuperTrend} stOnClose={SuperTrendOnBarClose} stReady={memoSuperTrendReady} stBull={memoSuperTrendUpTrend} stBear={memoSuperTrendDownTrend} liberarLong={liberarLong} liberarShort={liberarShort} chosen={chosen} qtyPlanned={actualContractsForDay} stopPerCt={F(stopDollarsPerContract)} atr={F(lastAtrVal, "0.000")} atrFactor={F(ATRFactor)}");
 
-                    if (invertMode == InvertModeType.InvertedStopEntry && (sinalCompra || sinalVenda))
+                    if (GetEffectiveInvertMode() == InvertModeType.InvertedStopEntry && (sinalCompra || sinalVenda))
                     {
                         if (!invertPlanArmed && !invertStopTriggered)
                         {
