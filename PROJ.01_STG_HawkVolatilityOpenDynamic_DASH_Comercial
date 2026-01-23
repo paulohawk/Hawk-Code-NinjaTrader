@@ -4346,7 +4346,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     double stopTicks = Math.Round(stopDollarsPerContract / tickValue, 0);
                     double targetTicks = stopTicks * TargetFactor;
 
-                    InvertModeType invertMode = GetEffectiveInvertMode();
+                    invertMode = GetEffectiveInvertMode();
                     bool entrarLong = false;
                     bool entrarShort = false;
 
