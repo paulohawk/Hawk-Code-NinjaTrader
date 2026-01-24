@@ -2298,6 +2298,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 DateTime overlayStart;
                 DateTime overlayEnd;
                 GetOverlayWindow(Times[0][0], out overlayTradingDay, out overlayStart, out overlayEnd);
+                Log("OverlayDiag",
+                    $"td={overlayTradingDay:yyyy-MM-dd} overlayStart={overlayStart:O} overlayEnd={overlayEnd:O} ninjaNow={Times[0][0]:O} state={State} sourceTZ={GetBarTimeZone()?.Id}");
                 riskOverlayHelper?.TryShow(this, overlayTradingDay, Times[0][0], overlayStart, overlayEnd);
             }
             else if (State == State.Terminated)
@@ -2414,9 +2416,15 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (tradingDay.Date == riskOverlayLastDate.Date)
                     return;
                 if (ninjaNow < overlayStart || ninjaNow >= overlayEnd)
+                {
+                    owner.Log("OverlayDiag",
+                        $"BLOCKED reason=OUTSIDE_WINDOW ninjaNow={ninjaNow:O} start={overlayStart:O} end={overlayEnd:O}");
                     return;
+                }
 
                 riskOverlayLastDate = tradingDay.Date;
+                owner.Log("OverlayDiag",
+                    $"SHOWN ninjaNow={ninjaNow:O} start={overlayStart:O} end={overlayEnd:O}");
                 owner.ChartControl.Dispatcher.BeginInvoke(new Action(() => CreateAndShow(owner.ChartControl)));
             }
 
@@ -3503,17 +3511,22 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             tradingDay = GetTradingDay(referenceTime);
             string entryHms = IsUsaDst(referenceTime) ? EntryTimeDstUsaHHmmss : EntryTimeNormalHHmmss;
+            TimeSpan entryBrTime;
             try
             {
                 var hms = entryHms.Split(':');
-                DateTime entryTime = new DateTime(tradingDay.Year, tradingDay.Month, tradingDay.Day,
-                    int.Parse(hms[0]), int.Parse(hms[1]), int.Parse(hms[2]));
-                overlayStart = entryTime.Subtract(OverlayAnchorOffset);
+                entryBrTime = new TimeSpan(int.Parse(hms[0]), int.Parse(hms[1]), int.Parse(hms[2]));
             }
             catch
             {
-                overlayStart = BuildHedgeAnchorLocal(referenceTime, tradingDay).Subtract(OverlayAnchorOffset);
+                entryBrTime = BuildHedgeAnchorLocal(referenceTime, tradingDay).TimeOfDay;
             }
+            DateTime entryTimeBrasilia = new DateTime(tradingDay.Year, tradingDay.Month, tradingDay.Day,
+                entryBrTime.Hours, entryBrTime.Minutes, entryBrTime.Seconds, DateTimeKind.Unspecified);
+            var brTz = GetBrasiliaTimeZone();
+            var feedTz = GetBarTimeZone();
+            DateTime entryTimeFeed = ConvertFromTimeZone(entryTimeBrasilia, brTz, feedTz);
+            overlayStart = entryTimeFeed.Subtract(OverlayAnchorOffset);
             overlayEnd = overlayStart.Add(OverlayDuration);
         }
 
