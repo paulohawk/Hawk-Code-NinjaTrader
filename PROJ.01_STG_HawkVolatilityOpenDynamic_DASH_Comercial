@@ -3634,7 +3634,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (!penaltyActiveNow && penaltyActiveLast)
             {
                 penaltyActiveLast = false;
-                string timeAudit = BuildOverlayTimeAudit(now, overlayStartCached, overlayEndCached, overlayCutoffCached);
                 Log("PanelRiskMessage",
                     $"reason=PenaltyEnd message=Status overlayPenaltyOnEnable={overlayPenaltyOnEnable} isInsideOperationalWindow={isInsideOperationalWindow} td={tradingDay:yyyy-MM-dd} state={State} {timeAudit}");
             }
