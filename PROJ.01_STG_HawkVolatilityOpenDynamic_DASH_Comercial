@@ -1975,6 +1975,8 @@ namespace NinjaTrader.NinjaScript.Strategies
         // Overlay baseado no cronômetro ancorado no horário de entrada planejada.
         private static readonly TimeSpan OverlayAnchorOffset = new TimeSpan(0, 29, 30);
         private static readonly TimeSpan OverlayDuration = new TimeSpan(9, 0, 0);
+        private bool overlayWasActiveOnEnable = false;
+        private bool overlayWasActiveCaptured = false;
         private string lastExitReason = "Unknown";
 
         private bool IsHedgeActive() => GetEffectiveInvertMode() != InvertModeType.Disabled;
@@ -2297,9 +2299,16 @@ namespace NinjaTrader.NinjaScript.Strategies
                 DateTime overlayTradingDay;
                 DateTime overlayStart;
                 DateTime overlayEnd;
-                GetOverlayWindow(Times[0][0], out overlayTradingDay, out overlayStart, out overlayEnd);
+                DateTime now = GetSafeTime();
+                GetOverlayWindow(now, out overlayTradingDay, out overlayStart, out overlayEnd);
+                bool overlayActiveNow = now >= overlayStart && now < overlayEnd;
+                if (!overlayWasActiveCaptured)
+                {
+                    overlayWasActiveOnEnable = overlayActiveNow;
+                    overlayWasActiveCaptured = true;
+                }
                 Log("OverlayDiag",
-                    $"td={overlayTradingDay:yyyy-MM-dd} overlayStart={overlayStart:O} overlayEnd={overlayEnd:O} ninjaNow={Times[0][0]:O} state={State} sourceTZ={GetBarTimeZone()?.Id}");
+                    $"td={overlayTradingDay:yyyy-MM-dd} overlayStart={overlayStart:O} overlayEnd={overlayEnd:O} ninjaNow={now:O} overlayActiveNow={overlayActiveNow} overlayWasActiveOnEnable={overlayWasActiveOnEnable} state={State} sourceTZ={GetBarTimeZone()?.Id}");
                 riskOverlayHelper?.TryShow(this, overlayTradingDay, Times[0][0], overlayStart, overlayEnd);
             }
             else if (State == State.Terminated)
@@ -2309,6 +2318,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 terminatedHandled = true;
 
                 isStrategyActive = false;
+                overlayWasActiveOnEnable = false;
+                overlayWasActiveCaptured = false;
                 PublishPanelOffSnapshot("Terminated");
                 try { panelHelper?.Dispose(); panelHelper = null; } catch { }
                 riskOverlayHelper?.Remove();
@@ -2576,11 +2587,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
             catch { }
             return DateTime.Now;
-        }
-
-        private DateTime GetBrasiliaTime()
-        {
-            return TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, BrasiliaTimeZone);
         }
 
         private bool IsSameAsPrimaryTimeframe(BarsPeriodType periodType, int periodValue)
@@ -3157,20 +3163,11 @@ namespace NinjaTrader.NinjaScript.Strategies
             snap.HedgeEnabled = GetEffectiveInvertMode() != InvertModeType.Disabled;
 
             // Bloco unificado de status/atenção no painel (estrutura sempre presente)
-            try
-            {
-                DateTime now = GetBrasiliaTime();
-                bool isAttention = now.TimeOfDay > new TimeSpan(11, 0, 0);
-                snap.RiskWarningIsAttention = isAttention;
-                snap.RiskWarningText = isAttention
-                    ? "Atenção: automação ligada fora do horário operacional.\nMonitore possíveis falhas de stop e alvo."
-                    : "Status: sistema ativo e monitorando condições de mercado.";
-            }
-            catch
-            {
-                snap.RiskWarningIsAttention = false;
-                snap.RiskWarningText = "Status: sistema ativo e monitorando condições de mercado.";
-            }
+            bool overlayAttention = !offSnapshot && overlayWasActiveOnEnable;
+            snap.RiskWarningIsAttention = overlayAttention;
+            snap.RiskWarningText = overlayAttention
+                ? "Atenção: automação ligada fora do horário operacional.\nMonitore possíveis falhas de stop e alvo."
+                : "Status: sistema ativo e monitorando condições de mercado.";
 
             RecalcPnLIfNeeded();
             snap.PnLDiaText = cachedPnlDay;
@@ -3949,6 +3946,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             dayStopDollars = "-";
             dayTargetDollars = "-";
             dayBreakevenDollars = "-";
+            overlayWasActiveOnEnable = false;
+            overlayWasActiveCaptured = false;
 
             Audit("DayReset", $"td={tradingDay:yyyy-MM-dd}");
         }
