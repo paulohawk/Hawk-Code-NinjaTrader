@@ -1975,6 +1975,20 @@ namespace NinjaTrader.NinjaScript.Strategies
         // Overlay baseado no cronômetro ancorado no horário de entrada planejada.
         private static readonly TimeSpan OverlayAnchorOffset = new TimeSpan(0, 29, 30);
         private static readonly TimeSpan OverlayDuration = new TimeSpan(9, 0, 0);
+        private bool overlayPenaltyOnEnable = false;
+        private bool overlayPenaltyCaptured = false;
+        private DateTime overlayPenaltyTradingDay = Core.Globals.MinDate;
+        private DateTime overlayPenaltyTradingDayBr = Core.Globals.MinDate;
+        private DateTime overlayStartCached = Core.Globals.MinDate;
+        private DateTime overlayEndCached = Core.Globals.MinDate;
+        private DateTime overlayCutoffCached = Core.Globals.MinDate;
+        private DateTime overlayStartBrCached = Core.Globals.MinDate;
+        private DateTime overlayEndBrCached = Core.Globals.MinDate;
+        private DateTime overlayCutoffBrCached = Core.Globals.MinDate;
+        private bool overlayVisibleLast = false;
+        private bool overlayVisibleCaptured = false;
+        private bool penaltyActiveLast = false;
+        private bool penaltyActiveCaptured = false;
         private string lastExitReason = "Unknown";
 
         private bool IsHedgeActive() => GetEffectiveInvertMode() != InvertModeType.Disabled;
@@ -2297,10 +2311,41 @@ namespace NinjaTrader.NinjaScript.Strategies
                 DateTime overlayTradingDay;
                 DateTime overlayStart;
                 DateTime overlayEnd;
-                GetOverlayWindow(Times[0][0], out overlayTradingDay, out overlayStart, out overlayEnd);
+                DateTime now = GetSafeTime();
+                GetOverlayWindow(now, out overlayTradingDay, out overlayStart, out overlayEnd);
+                DateTime cutoffTime = overlayStart.Add(OverlayAnchorOffset);
+                DateTime nowBr = ConvertFeedToBrasilia(now);
+                DateTime overlayStartBr = ConvertFeedToBrasilia(overlayStart);
+                DateTime overlayEndBr = ConvertFeedToBrasilia(overlayEnd);
+                DateTime cutoffBr = ConvertFeedToBrasilia(cutoffTime);
+                bool isInsideOperationalWindow = nowBr >= overlayStartBr && nowBr < overlayEndBr;
+                bool penaltyNow = isInsideOperationalWindow && nowBr >= cutoffBr;
+                overlayPenaltyTradingDay = overlayTradingDay.Date;
+                overlayPenaltyTradingDayBr = overlayStartBr.Date;
+                overlayStartCached = overlayStart;
+                overlayEndCached = overlayEnd;
+                overlayCutoffCached = cutoffTime;
+                overlayStartBrCached = overlayStartBr;
+                overlayEndBrCached = overlayEndBr;
+                overlayCutoffBrCached = cutoffBr;
+                overlayPenaltyOnEnable = penaltyNow;
+                overlayPenaltyCaptured = true;
+                bool overlayVisibleNow = overlayPenaltyOnEnable && isInsideOperationalWindow;
+                overlayVisibleLast = overlayVisibleNow;
+                overlayVisibleCaptured = true;
+                penaltyActiveLast = overlayPenaltyOnEnable && isInsideOperationalWindow;
+                penaltyActiveCaptured = true;
+                Log("TimeTruth", BuildTimeTruthAudit("Enable", now));
+                string timeAudit = BuildOverlayTimeAudit(now, overlayStartCached, overlayEndCached, overlayCutoffCached);
+                string enableMessage = overlayPenaltyOnEnable ? "Attention" : "Status";
+                Log("PanelRiskMessage",
+                    $"reason=Enable message={enableMessage} overlayPenaltyOnEnable={overlayPenaltyOnEnable} isInsideOperationalWindow={isInsideOperationalWindow} offSnapshot=false state={State} td={overlayTradingDay:yyyy-MM-dd} {timeAudit}");
                 Log("OverlayDiag",
-                    $"td={overlayTradingDay:yyyy-MM-dd} overlayStart={overlayStart:O} overlayEnd={overlayEnd:O} ninjaNow={Times[0][0]:O} state={State} sourceTZ={GetBarTimeZone()?.Id}");
-                riskOverlayHelper?.TryShow(this, overlayTradingDay, Times[0][0], overlayStart, overlayEnd);
+                    $"td={overlayTradingDay:yyyy-MM-dd} overlayPenaltyOnEnable={overlayPenaltyOnEnable} isInsideOperationalWindow={isInsideOperationalWindow} state={State} {timeAudit}");
+                if (overlayVisibleNow)
+                    riskOverlayHelper?.TryShow(this, overlayTradingDay, now, overlayStartCached, overlayEndCached);
+                else
+                    riskOverlayHelper?.Remove();
             }
             else if (State == State.Terminated)
             {
@@ -2309,6 +2354,20 @@ namespace NinjaTrader.NinjaScript.Strategies
                 terminatedHandled = true;
 
                 isStrategyActive = false;
+                overlayPenaltyOnEnable = false;
+                overlayPenaltyCaptured = false;
+                overlayPenaltyTradingDay = Core.Globals.MinDate;
+                overlayPenaltyTradingDayBr = Core.Globals.MinDate;
+                overlayStartCached = Core.Globals.MinDate;
+                overlayEndCached = Core.Globals.MinDate;
+                overlayCutoffCached = Core.Globals.MinDate;
+                overlayStartBrCached = Core.Globals.MinDate;
+                overlayEndBrCached = Core.Globals.MinDate;
+                overlayCutoffBrCached = Core.Globals.MinDate;
+                overlayVisibleLast = false;
+                overlayVisibleCaptured = false;
+                penaltyActiveLast = false;
+                penaltyActiveCaptured = false;
                 PublishPanelOffSnapshot("Terminated");
                 try { panelHelper?.Dispose(); panelHelper = null; } catch { }
                 riskOverlayHelper?.Remove();
@@ -2576,11 +2635,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
             catch { }
             return DateTime.Now;
-        }
-
-        private DateTime GetBrasiliaTime()
-        {
-            return TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, BrasiliaTimeZone);
         }
 
         private bool IsSameAsPrimaryTimeframe(BarsPeriodType periodType, int periodValue)
@@ -3130,7 +3184,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }
                 else
                 {
-                    snap.EndDayText = $"Entry+{AutoCloseMaxDuration:hh\\:mm}";
+                    snap.EndDayText = GetDefaultAutoCloseDisplayTimeBR();
                 }
             }
             else
@@ -3157,20 +3211,19 @@ namespace NinjaTrader.NinjaScript.Strategies
             snap.HedgeEnabled = GetEffectiveInvertMode() != InvertModeType.Disabled;
 
             // Bloco unificado de status/atenção no painel (estrutura sempre presente)
-            try
+            bool overlayAttention = false;
+            if (!offSnapshot && State == State.Realtime)
             {
-                DateTime now = GetBrasiliaTime();
-                bool isAttention = now.TimeOfDay > new TimeSpan(11, 0, 0);
-                snap.RiskWarningIsAttention = isAttention;
-                snap.RiskWarningText = isAttention
-                    ? "Atenção: automação ligada fora do horário operacional.\nMonitore possíveis falhas de stop e alvo."
-                    : "Status: sistema ativo e monitorando condições de mercado.";
+                DateTime now = GetSafeTime();
+                DateTime nowBr = ConvertFeedToBrasilia(now);
+                bool sameDay = overlayPenaltyCaptured && overlayPenaltyTradingDayBr.Date == nowBr.Date;
+                bool isInsideOperationalWindow = sameDay && nowBr >= overlayStartBrCached && nowBr < overlayEndBrCached;
+                overlayAttention = overlayPenaltyOnEnable && isInsideOperationalWindow;
             }
-            catch
-            {
-                snap.RiskWarningIsAttention = false;
-                snap.RiskWarningText = "Status: sistema ativo e monitorando condições de mercado.";
-            }
+            snap.RiskWarningIsAttention = overlayAttention;
+            snap.RiskWarningText = overlayAttention
+                ? "Atenção: automação ligada fora do horário operacional.\nMonitore possíveis falhas de stop e alvo."
+                : "Status: sistema ativo e monitorando condições de mercado.";
 
             RecalcPnLIfNeeded();
             snap.PnLDiaText = cachedPnlDay;
@@ -3505,6 +3558,167 @@ namespace NinjaTrader.NinjaScript.Strategies
                 : entryTimeLocal.Date;
             scheduledCloseLocal = entryTimeLocal.Add(AutoCloseMaxDuration);
             return true;
+        }
+
+        private string GetDefaultAutoCloseDisplayTimeBR()
+        {
+            DateTime now = GetSafeTime();
+            int month = now.Month;
+            bool isNovToMar = month == 11 || month == 12 || month == 1 || month == 2 || month == 3;
+            return isNovToMar ? "17:00 BR" : "16:00 BR";
+        }
+
+        private DateTime NormalizeFeedTime(DateTime feedTimeRaw)
+        {
+            return DateTime.SpecifyKind(feedTimeRaw, DateTimeKind.Unspecified);
+        }
+
+        private DateTime ConvertFeedToUtc(DateTime feedTimeRaw)
+        {
+            var feedTz = GetBarTimeZone();
+            if (feedTz == null)
+                return feedTimeRaw;
+            DateTime feedTime = NormalizeFeedTime(feedTimeRaw);
+            return ConvertFromTimeZone(feedTime, feedTz, TimeZoneInfo.Utc);
+        }
+
+        private DateTime ConvertFeedToBrasilia(DateTime feedTimeRaw)
+        {
+            var brTz = GetBrasiliaTimeZone();
+            if (brTz == null)
+                return feedTimeRaw;
+            DateTime utc = ConvertFeedToUtc(feedTimeRaw);
+            DateTime utcUnspecified = DateTime.SpecifyKind(utc, DateTimeKind.Unspecified);
+            return ConvertFromTimeZone(utcUnspecified, TimeZoneInfo.Utc, brTz);
+        }
+
+        private string BuildTimeTruthAudit(string tag, DateTime tFeedRaw)
+        {
+            var feedTz = GetBarTimeZone();
+            var brTz = GetBrasiliaTimeZone();
+            DateTime tFeed = NormalizeFeedTime(tFeedRaw);
+            DateTime tUtc = feedTz != null ? ConvertFromTimeZone(tFeed, feedTz, TimeZoneInfo.Utc) : tFeedRaw;
+            DateTime tUtcUnspecified = DateTime.SpecifyKind(tUtc, DateTimeKind.Unspecified);
+            DateTime tBr = brTz != null ? ConvertFromTimeZone(tUtcUnspecified, TimeZoneInfo.Utc, brTz) : tFeedRaw;
+            double deltaHours = (tBr - tFeed).TotalHours;
+            return
+                $"tag={tag} tFeedRaw={tFeedRaw:O} kind={tFeedRaw.Kind} feedTZ={feedTz?.Id ?? "Unknown"} " +
+                $"tFeed={tFeed:O} tUtc={tUtc:O} tBr={tBr:O} brTZ={brTz?.Id ?? "Unknown"} deltaBrMinusFeedHours={deltaHours:0.##}";
+        }
+
+        private string BuildOverlayWindowAudit(DateTime nowFeedRaw, DateTime overlayStartFeedRaw, DateTime overlayEndFeedRaw, DateTime cutoffFeedRaw)
+        {
+            DateTime nowFeed = NormalizeFeedTime(nowFeedRaw);
+            DateTime startFeed = NormalizeFeedTime(overlayStartFeedRaw);
+            DateTime endFeed = NormalizeFeedTime(overlayEndFeedRaw);
+            DateTime cutoffFeed = NormalizeFeedTime(cutoffFeedRaw);
+
+            DateTime nowUtc = ConvertFeedToUtc(nowFeed);
+            DateTime startUtc = ConvertFeedToUtc(startFeed);
+            DateTime endUtc = ConvertFeedToUtc(endFeed);
+            DateTime cutoffUtc = ConvertFeedToUtc(cutoffFeed);
+
+            DateTime nowBr = ConvertFeedToBrasilia(nowFeed);
+            DateTime startBr = ConvertFeedToBrasilia(startFeed);
+            DateTime endBr = ConvertFeedToBrasilia(endFeed);
+            DateTime cutoffBr = ConvertFeedToBrasilia(cutoffFeed);
+
+            string feedTz = GetBarTimeZone()?.Id ?? "Unknown";
+            string brTz = GetBrasiliaTimeZone()?.Id ?? "Unknown";
+            double deltaHours = (nowBr - nowFeed).TotalHours;
+            return
+                $"nowFeed={nowFeed:O} feedTZ={feedTz} nowUtc={nowUtc:O} nowBR={nowBr:O} brTZ={brTz} " +
+                $"windowFeed={startFeed:HH\\:mm}-{endFeed:HH\\:mm} windowUtc={startUtc:HH\\:mm}-{endUtc:HH\\:mm} windowBR={startBr:HH\\:mm}-{endBr:HH\\:mm} " +
+                $"cutoffFeed={cutoffFeed:HH\\:mm} cutoffUtc={cutoffUtc:HH\\:mm} cutoffBR={cutoffBr:HH\\:mm} deltaBrMinusFeedHours={deltaHours:0.##}";
+        }
+
+        private string BuildOverlayTimeAudit(DateTime nowFeed, DateTime overlayStartFeed, DateTime overlayEndFeed, DateTime cutoffFeed)
+        {
+            return $"{BuildTimeTruthAudit(\"Overlay\", nowFeed)} {BuildOverlayWindowAudit(nowFeed, overlayStartFeed, overlayEndFeed, cutoffFeed)}";
+        }
+
+        private void UpdateOverlayWindowState(DateTime now, DateTime tradingDay)
+        {
+            DateTime td;
+            DateTime overlayStart;
+            DateTime overlayEnd;
+            GetOverlayWindow(now, out td, out overlayStart, out overlayEnd);
+            if (!overlayPenaltyCaptured)
+                return;
+
+            DateTime nowBr = ConvertFeedToBrasilia(now);
+            if (nowBr.Date != overlayPenaltyTradingDayBr.Date)
+            {
+                overlayPenaltyOnEnable = false;
+                overlayPenaltyCaptured = false;
+                overlayPenaltyTradingDay = Core.Globals.MinDate;
+                overlayPenaltyTradingDayBr = Core.Globals.MinDate;
+                overlayStartCached = Core.Globals.MinDate;
+                overlayEndCached = Core.Globals.MinDate;
+                overlayCutoffCached = Core.Globals.MinDate;
+                overlayStartBrCached = Core.Globals.MinDate;
+                overlayEndBrCached = Core.Globals.MinDate;
+                overlayCutoffBrCached = Core.Globals.MinDate;
+                overlayVisibleLast = false;
+                overlayVisibleCaptured = false;
+                penaltyActiveLast = false;
+                penaltyActiveCaptured = false;
+                riskOverlayHelper?.Remove();
+                return;
+            }
+
+            bool isInsideOperationalWindow = nowBr >= overlayStartBrCached && nowBr < overlayEndBrCached;
+            bool penaltyActiveNow = overlayPenaltyOnEnable && isInsideOperationalWindow;
+            if (!penaltyActiveCaptured)
+            {
+                penaltyActiveLast = penaltyActiveNow;
+                penaltyActiveCaptured = true;
+            }
+
+            if (!overlayPenaltyOnEnable)
+            {
+                if (overlayVisibleCaptured && overlayVisibleLast)
+                {
+                    overlayVisibleLast = false;
+                    riskOverlayHelper?.Remove();
+                }
+                return;
+            }
+
+            bool overlayVisibleNow = penaltyActiveNow;
+            if (!overlayVisibleCaptured)
+            {
+                overlayVisibleLast = overlayVisibleNow;
+                overlayVisibleCaptured = true;
+                return;
+            }
+
+            if (overlayVisibleNow == overlayVisibleLast)
+                return;
+
+            overlayVisibleLast = overlayVisibleNow;
+            string transition = overlayVisibleNow ? "Start" : "End";
+            string timeAudit = BuildOverlayTimeAudit(now, overlayStartCached, overlayEndCached, overlayCutoffCached);
+            Log("OverlayWindowTransition",
+                $"transition={transition} td={tradingDay:yyyy-MM-dd} state={State} {timeAudit}");
+            string message = overlayVisibleNow ? "Attention" : "Status";
+            Log("PanelRiskMessage",
+                $"reason=OverlayWindow{transition} message={message} overlayPenaltyOnEnable={overlayPenaltyOnEnable} overlayVisibleNow={overlayVisibleNow} td={tradingDay:yyyy-MM-dd} state={State} {timeAudit}");
+            if (overlayVisibleNow)
+                riskOverlayHelper?.TryShow(this, overlayPenaltyTradingDay, now, overlayStartCached, overlayEndCached);
+            else
+                riskOverlayHelper?.Remove();
+
+            if (!penaltyActiveNow && penaltyActiveLast)
+            {
+                penaltyActiveLast = false;
+                Log("PanelRiskMessage",
+                    $"reason=PenaltyEnd message=Status overlayPenaltyOnEnable={overlayPenaltyOnEnable} isInsideOperationalWindow={isInsideOperationalWindow} td={tradingDay:yyyy-MM-dd} state={State} {timeAudit}");
+            }
+            else
+            {
+                penaltyActiveLast = penaltyActiveNow;
+            }
         }
 
         private void GetOverlayWindow(DateTime referenceTime, out DateTime tradingDay, out DateTime overlayStart, out DateTime overlayEnd)
@@ -3949,6 +4163,28 @@ namespace NinjaTrader.NinjaScript.Strategies
             dayStopDollars = "-";
             dayTargetDollars = "-";
             dayBreakevenDollars = "-";
+            overlayPenaltyOnEnable = false;
+            overlayPenaltyCaptured = false;
+            overlayPenaltyTradingDay = Core.Globals.MinDate;
+            overlayPenaltyTradingDayBr = Core.Globals.MinDate;
+            overlayStartCached = Core.Globals.MinDate;
+            overlayEndCached = Core.Globals.MinDate;
+            overlayCutoffCached = Core.Globals.MinDate;
+            overlayStartBrCached = Core.Globals.MinDate;
+            overlayEndBrCached = Core.Globals.MinDate;
+            overlayCutoffBrCached = Core.Globals.MinDate;
+            overlayVisibleLast = false;
+            overlayVisibleCaptured = false;
+            penaltyActiveLast = false;
+            penaltyActiveCaptured = false;
+            DateTime now = GetSafeTime();
+            if (State == State.Realtime)
+            {
+                string timeAudit = BuildOverlayTimeAudit(now, overlayStartCached, overlayEndCached, overlayCutoffCached);
+                Log("PanelRiskMessage",
+                    $"reason=DayReset offSnapshot=false state={State} td={tradingDay:yyyy-MM-dd} {timeAudit}");
+            }
+            riskOverlayHelper?.Remove();
 
             Audit("DayReset", $"td={tradingDay:yyyy-MM-dd}");
         }
@@ -4256,6 +4492,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                 ResetDayCaches(tradingDay);
             }
 
+            if (State == State.Realtime)
+                UpdateOverlayWindowState(closeTime, tradingDay);
+
             EvaluateInvertPlanLifecycle(closeTime, tradingDay);
 
             string entryHms = IsUsaDst(closeTime) ? EntryTimeDstUsaHHmmss : EntryTimeNormalHHmmss;
@@ -4391,6 +4630,18 @@ namespace NinjaTrader.NinjaScript.Strategies
                     // Garantia de decisão antes do submit
                     Audit("EntryDecision",
                         $"scheduled={entryHms} invertMode={GetEffectiveInvertMode()} enterInverted={EnterInverted} useST={UseSuperTrend} stOnClose={SuperTrendOnBarClose} stReady={memoSuperTrendReady} stBull={memoSuperTrendUpTrend} stBear={memoSuperTrendDownTrend} liberarLong={liberarLong} liberarShort={liberarShort} chosen={chosen} qtyPlanned={actualContractsForDay} stopPerCt={F(stopDollarsPerContract)} atr={F(lastAtrVal, "0.000")} atrFactor={F(ATRFactor)}");
+                    DateTime auditNow = GetSafeTime();
+                    if (overlayPenaltyCaptured)
+                    {
+                        string timeTruth = BuildTimeTruthAudit("EntryDecision", auditNow);
+                        string overlayAudit = BuildOverlayWindowAudit(auditNow, overlayStartCached, overlayEndCached, overlayCutoffCached);
+                        Audit("EntryDecisionTimeTruth",
+                            $"{timeTruth} {overlayAudit}");
+                    }
+                    else
+                    {
+                        Audit("EntryDecisionTimeTruth", BuildTimeTruthAudit("EntryDecision", auditNow));
+                    }
 
                     if (GetEffectiveInvertMode() == InvertModeType.InvertedStopEntry && (sinalCompra || sinalVenda))
                     {
@@ -4415,6 +4666,17 @@ namespace NinjaTrader.NinjaScript.Strategies
                     else if (entrarLong)
                     {
                         Audit("EntrySubmit", $"side=Long qty={actualContractsForDay} signal=AutoLong");
+                        DateTime submitNow = GetSafeTime();
+                        if (overlayPenaltyCaptured)
+                        {
+                            string timeTruth = BuildTimeTruthAudit("EntrySubmit", submitNow);
+                            string overlayAudit = BuildOverlayWindowAudit(submitNow, overlayStartCached, overlayEndCached, overlayCutoffCached);
+                            Audit("EntrySubmitTimeTruth", $"{timeTruth} {overlayAudit}");
+                        }
+                        else
+                        {
+                            Audit("EntrySubmitTimeTruth", BuildTimeTruthAudit("EntrySubmit", submitNow));
+                        }
                         EnterLong(actualContractsForDay, "AutoLong");
                         contextoHojeIsLong = true;
                         tradedToday = true;
@@ -4423,6 +4685,17 @@ namespace NinjaTrader.NinjaScript.Strategies
                     else if (entrarShort)
                     {
                         Audit("EntrySubmit", $"side=Short qty={actualContractsForDay} signal=AutoShort");
+                        DateTime submitNow = GetSafeTime();
+                        if (overlayPenaltyCaptured)
+                        {
+                            string timeTruth = BuildTimeTruthAudit("EntrySubmit", submitNow);
+                            string overlayAudit = BuildOverlayWindowAudit(submitNow, overlayStartCached, overlayEndCached, overlayCutoffCached);
+                            Audit("EntrySubmitTimeTruth", $"{timeTruth} {overlayAudit}");
+                        }
+                        else
+                        {
+                            Audit("EntrySubmitTimeTruth", BuildTimeTruthAudit("EntrySubmit", submitNow));
+                        }
                         EnterShort(actualContractsForDay, "AutoShort");
                         contextoHojeIsShort = true;
                         tradedToday = true;
