@@ -1890,6 +1890,24 @@ namespace NinjaTrader.NinjaScript.Strategies
         private string lastWatchdogReason = "";
         private string lastWatchdogContext = "";
 
+        // Safe Mode / Recovery / Heartbeats (Paper Codex)
+        private bool safeModeEnabled = false;
+        private string safeModeReason = "";
+        private DateTime safeModeSince = Core.Globals.MinDate;
+        private bool recoveryInProgress = false;
+        private DateTime recoveryWindowUntil = Core.Globals.MinDate;
+        private DateTime lastOnBarUpdateTime = Core.Globals.MinDate;
+        private DateTime lastOrderUpdateTime = Core.Globals.MinDate;
+        private DateTime lastExecutionUpdateTime = Core.Globals.MinDate;
+        private DateTime lastPositionUpdateTime = Core.Globals.MinDate;
+        private DateTime lastMarketDataTime = Core.Globals.MinDate;
+        private DateTime lastReconcileUtc = Core.Globals.MinDate;
+        private readonly Dictionary<string, DateTime> lastActionTime = new Dictionary<string, DateTime>();
+        private const int HeartbeatStaleSeconds = 20;
+        private const int RecoveryWindowSeconds = 20;
+        private const int ReconcileIntervalSeconds = 5;
+        private const int ActionCooldownSeconds = 3;
+
         private const int BIP_AUTOCLOSE = 1;
         private int atrBip = -1;
         private int stBip = -1;
@@ -2298,6 +2316,13 @@ namespace NinjaTrader.NinjaScript.Strategies
             else if (State == State.Realtime)
             {
                 isStrategyActive = true;
+                DateTime nowUtc = DateTime.UtcNow;
+                lastOnBarUpdateTime = nowUtc;
+                lastOrderUpdateTime = nowUtc;
+                lastExecutionUpdateTime = nowUtc;
+                lastPositionUpdateTime = nowUtc;
+                lastMarketDataTime = nowUtc;
+                StartRecoveryWindow("StateRealtime", "OnStateChange");
                 lastTradesCount = SystemPerformance.AllTrades.Count;
                 PublishPanelSnapshot("StateRealtime");
                 DateTime overlayTradingDay;
@@ -2683,6 +2708,222 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (BracketWatchdogCooldownSeconds <= 0) return true;
             var nowUtc = DateTime.UtcNow;
             return (nowUtc - lastWatchdogAttemptUtc).TotalSeconds >= BracketWatchdogCooldownSeconds;
+        }
+
+        private void UpdateHeartbeat(string source)
+        {
+            var now = DateTime.UtcNow;
+            if (source == "OnBarUpdate") lastOnBarUpdateTime = now;
+            else if (source == "OnOrderUpdate") lastOrderUpdateTime = now;
+            else if (source == "OnExecutionUpdate") lastExecutionUpdateTime = now;
+            else if (source == "OnPositionUpdate") lastPositionUpdateTime = now;
+            else if (source == "OnMarketData") lastMarketDataTime = now;
+        }
+
+        private bool IsHeartbeatStale()
+        {
+            if (State != State.Realtime) return false;
+            DateTime now = DateTime.UtcNow;
+            DateTime last = lastOnBarUpdateTime;
+            if (lastOrderUpdateTime > last) last = lastOrderUpdateTime;
+            if (lastExecutionUpdateTime > last) last = lastExecutionUpdateTime;
+            if (lastPositionUpdateTime > last) last = lastPositionUpdateTime;
+            if (lastMarketDataTime > last) last = lastMarketDataTime;
+
+            if (last == Core.Globals.MinDate) return false;
+            return (now - last).TotalSeconds > HeartbeatStaleSeconds;
+        }
+
+        private void StartRecoveryWindow(string reason, string source)
+        {
+            recoveryInProgress = true;
+            recoveryWindowUntil = DateTime.UtcNow.AddSeconds(RecoveryWindowSeconds);
+            Log("RECOVERY", $"RECOVERY_WINDOW_START reason={reason} source={source} until={recoveryWindowUntil:O}");
+            EnterSafeMode(reason, source);
+        }
+
+        private void EnterSafeMode(string reason, string source)
+        {
+            if (safeModeEnabled && safeModeReason == reason)
+                return;
+
+            safeModeEnabled = true;
+            safeModeReason = reason ?? "";
+            safeModeSince = DateTime.UtcNow;
+            Log("SAFE_MODE", $"SAFE_MODE_ENTER reason={safeModeReason} source={source}");
+        }
+
+        private void ExitSafeMode(string reason, string source)
+        {
+            if (!safeModeEnabled)
+                return;
+
+            safeModeEnabled = false;
+            safeModeReason = "";
+            safeModeSince = Core.Globals.MinDate;
+            Log("SAFE_MODE", $"SAFE_MODE_EXIT reason={reason} source={source}");
+        }
+
+        private bool IsEntryBlocked(out string reason)
+        {
+            if (safeModeEnabled)
+            {
+                reason = $"SAFE_MODE ({safeModeReason})";
+                return true;
+            }
+            if (recoveryInProgress)
+            {
+                reason = "RECOVERY_WINDOW";
+                return true;
+            }
+            if (IsHeartbeatStale())
+            {
+                reason = "STALE_HEARTBEAT";
+                return true;
+            }
+
+            reason = "";
+            return false;
+        }
+
+        private bool ActionCooldownOk(string actionKey, int seconds)
+        {
+            if (seconds <= 0) return true;
+            var now = DateTime.UtcNow;
+            if (lastActionTime.TryGetValue(actionKey, out var last) && (now - last).TotalSeconds < seconds)
+                return false;
+
+            lastActionTime[actionKey] = now;
+            return true;
+        }
+
+        private bool HasOrphanBracketOrders()
+        {
+            if (Position != null && Position.MarketPosition != MarketPosition.Flat)
+                return false;
+
+            return IsOrderActive(ordemStopLong) || IsOrderActive(ordemStopShort)
+                || IsOrderActive(ordemTPLong) || IsOrderActive(ordemTPShort);
+        }
+
+        private void ReconcileNow(string reason, string source)
+        {
+            if (State != State.Realtime)
+                return;
+
+            Log("RECONCILE", $"RECONCILE_START reason={reason} source={source}");
+
+            MarketPosition mktPos = Position?.MarketPosition ?? MarketPosition.Flat;
+            int posQtyAbs = Position != null ? Math.Abs(Position.Quantity) : 0;
+
+            if (mktPos != MarketPosition.Flat && posQtyAbs > 0)
+            {
+                if (ActionCooldownOk("REBUILD_BRACKET", ActionCooldownSeconds))
+                {
+                    EnsureBracketAlive(source, "ReconcileMissingOrDead");
+                    Log("RECONCILE", "RECONCILE_ACTION key=REBUILD_BRACKET result=CHECKED");
+                }
+
+                if (invertStopEntryOrder != null && IsOrderActive(invertStopEntryOrder))
+                {
+                    if (ActionCooldownOk("CANCEL_HEDGE_FLOATERS", ActionCooldownSeconds))
+                    {
+                        try { CancelOrder(invertStopEntryOrder); } catch { }
+                        Log("HEDGE", "RECONCILE_ACTION key=CANCEL_HEDGE_FLOATERS result=SUBMITTED");
+                    }
+                }
+
+            }
+            else
+            {
+                if (HasOrphanBracketOrders() && ActionCooldownOk("CANCEL_ORPHANS", ActionCooldownSeconds))
+                {
+                    TryCancelBracketOrder(ordemStopLong, "ReconcileOrphans", source, true);
+                    TryCancelBracketOrder(ordemStopShort, "ReconcileOrphans", source, true);
+                    TryCancelBracketOrder(ordemTPLong, "ReconcileOrphans", source, true);
+                    TryCancelBracketOrder(ordemTPShort, "ReconcileOrphans", source, true);
+                    Log("ORPHAN", "RECONCILE_ACTION key=CANCEL_ORPHANS result=SUBMITTED");
+                }
+            }
+
+            if (invertPlanArmed && !invertStopTriggered && (invertStopEntryOrder == null || !IsOrderActive(invertStopEntryOrder)))
+            {
+                Log("HEDGE", "ORDER_MISSING detected");
+                StartRecoveryWindow("HEDGE_ORDER_MISSING", source);
+
+                if (ActionCooldownOk("RECREATE_HEDGE_ORDER", ActionCooldownSeconds))
+                {
+                    DateTime now = GetSafeTime();
+                    DateTime tradingDay = GetTradingDay(now);
+                    bool hedgeWindowOk = false;
+                    DateTime hedgeTradingDay;
+                    DateTime hedgeAnchorLocal;
+                    DateTime hedgeCutoffLocal;
+
+                    if (GetEffectiveInvertMode() == InvertModeType.InvertedStopEntry
+                        && plannedTradeDate.Date == tradingDay.Date
+                        && TryGetHedgeCutoff(now, out hedgeTradingDay, out hedgeAnchorLocal, out hedgeCutoffLocal)
+                        && now <= hedgeCutoffLocal)
+                    {
+                        hedgeWindowOk = true;
+                    }
+
+                    double stopEntryPrice = plannedStopPrice;
+                    if (!hedgeWindowOk)
+                    {
+                        Log("HEDGE", $"RECREATE_ORDER_SKIPPED reason=OUTSIDE_WINDOW td={tradingDay:yyyy-MM-dd} planDay={plannedTradeDate:yyyy-MM-dd}");
+                    }
+                    else if (plannedDirection == MarketPosition.Long && plannedQty > 0 && stopEntryPrice > 0)
+                    {
+                        invertStopEntryOrder = EnterShortStopMarket(0, true, plannedQty, stopEntryPrice, "InvertStopEntry");
+                        Log("HEDGE", $"RECREATE_ORDER_ATTEMPT price={F0(stopEntryPrice)} qty={plannedQty} side={plannedDirection}");
+                    }
+                    else if (plannedDirection == MarketPosition.Short && plannedQty > 0 && stopEntryPrice > 0)
+                    {
+                        invertStopEntryOrder = EnterLongStopMarket(0, true, plannedQty, stopEntryPrice, "InvertStopEntry");
+                        Log("HEDGE", $"RECREATE_ORDER_ATTEMPT price={F0(stopEntryPrice)} qty={plannedQty} side={plannedDirection}");
+                    }
+                    else
+                        Log("HEDGE", $"RECREATE_ORDER_SKIPPED reason=INVALID_PLAN side={plannedDirection} qty={plannedQty} price={F0(stopEntryPrice)}");
+                }
+            }
+        }
+
+        private void MaybeRunReconcile(string reason, string source)
+        {
+            var now = DateTime.UtcNow;
+            if ((now - lastReconcileUtc).TotalSeconds < ReconcileIntervalSeconds)
+                return;
+
+            lastReconcileUtc = now;
+            ReconcileNow(reason, source);
+        }
+
+        private void EvaluateRecoveryWindow()
+        {
+            if (!recoveryInProgress)
+                return;
+
+            if (DateTime.UtcNow >= recoveryWindowUntil)
+            {
+                recoveryInProgress = false;
+                Log("RECOVERY", "RECOVERY_WINDOW_END");
+            }
+        }
+
+        private void EvaluateSafeModeExit()
+        {
+            if (!safeModeEnabled)
+                return;
+            if (recoveryInProgress)
+                return;
+            if (IsHeartbeatStale())
+                return;
+
+            bool bracketMissing = IsBracketMissingOrDead();
+            bool orphanOrders = HasOrphanBracketOrders();
+            if (!bracketMissing && !orphanOrders)
+                ExitSafeMode("coherent_again", "Watchdog");
         }
 
         private bool IsBracketMissingOrDead()
@@ -4342,6 +4583,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (CurrentBars[BarsInProgress] < 1)
                 return;
 
+            UpdateHeartbeat("OnBarUpdate");
+
             // ============================
             // MOTOR DE AUTOCLOSE
             // ============================
@@ -4407,6 +4650,10 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 ResetDayCaches(tradingDay);
             }
+
+            EvaluateRecoveryWindow();
+            if (IsHeartbeatStale())
+                EnterSafeMode("STALE_HEARTBEAT", "OnBarUpdate");
 
             EvaluateInvertPlanLifecycle(closeTime, tradingDay);
 
@@ -4485,7 +4732,11 @@ namespace NinjaTrader.NinjaScript.Strategies
                 AplicarBreakEvenSeAtingiuRR();
             }
 
-            if (!tradedToday && Position.MarketPosition == MarketPosition.Flat)
+            bool blockEntries = IsEntryBlocked(out string blockReason);
+            if (blockEntries && !ShouldThrottleAudit("ENTRY_BLOCKED", LogThrottleSeconds))
+                Log("SAFE_MODE", $"ENTRY_BLOCKED reason={blockReason}");
+
+            if (!blockEntries && !tradedToday && Position.MarketPosition == MarketPosition.Flat)
             {
                 if (!Bars.IsFirstBarOfSession &&
                     closeTime >= scheduledTime &&
@@ -4633,6 +4884,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (Position != null && Position.MarketPosition != MarketPosition.Flat)
                 EnsureBracketAlive("OnBarUpdate", "MissingOrDead");
 
+            MaybeRunReconcile("Periodic", "OnBarUpdate");
+            EvaluateSafeModeExit();
             PublishSnapshotHeartbeat("OnBarUpdate");
         }
 
@@ -4640,6 +4893,8 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             if (position.Account != Account || position.Instrument != Instrument)
                 return;
+
+            UpdateHeartbeat("OnPositionUpdate");
 
             DateTime tradingDay = GetTradingDay(Times[0][0]);
 
@@ -4750,6 +5005,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 SetBracketState(BracketState.Closed, "PositionFlat", "OnPositionUpdate");
 
                 PublishPanelSnapshot("OnPositionUpdate_flat");
+                MaybeRunReconcile("PositionFlat", "OnPositionUpdate");
+                EvaluateSafeModeExit();
                 return;
             }
 
@@ -4823,6 +5080,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             UpdateBracketState("PositionOpen", "OnPositionUpdate");
             PublishPanelSnapshot("OnPositionUpdate_bracket");
+            MaybeRunReconcile("PositionOpen", "OnPositionUpdate");
+            EvaluateSafeModeExit();
         }
 
         protected override void OnOrderUpdate(Order order, double limitPrice, double stopPrice, int quantity, int filled,
@@ -4833,6 +5092,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             if (order.Account != Account || order.Instrument != Instrument)
                 return;
+
+            UpdateHeartbeat("OnOrderUpdate");
 
             string orderName = order.Name ?? string.Empty;
             bool isExit = orderName.IndexOf("StopLoss", StringComparison.OrdinalIgnoreCase) >= 0
@@ -4898,6 +5159,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             if (isBracket && (orderState == OrderState.Accepted || orderState == OrderState.Working || orderState == OrderState.Submitted))
                 UpdateBracketState("OrderActive", "OnOrderUpdate");
+
+            bool unknownOrderAnomaly = orderState == OrderState.Unknown
+                && (IsHeartbeatStale() || IsBracketMissingOrDead() || HasOrphanBracketOrders());
+            if (orderState == OrderState.Rejected || unknownOrderAnomaly)
+                EnterSafeMode("ORDER_STATE_ANOMALY", "OnOrderUpdate");
+
+            MaybeRunReconcile("OrderUpdate", "OnOrderUpdate");
+            EvaluateSafeModeExit();
         }
 
         protected override void OnExecutionUpdate(Execution execution, string executionId, double price, int quantity,
@@ -4910,6 +5179,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             if (order.Account != Account || order.Instrument != Instrument)
                 return;
+
+            UpdateHeartbeat("OnExecutionUpdate");
 
             string orderName = order.Name ?? string.Empty;
 
@@ -4991,6 +5262,14 @@ namespace NinjaTrader.NinjaScript.Strategies
                 PublishPanelSnapshot("OnExecutionUpdate_dead");
                 EnsureBracketAlive("OnExecutionUpdate", "OrderDead");
             }
+
+            bool unknownExecAnomaly = order.OrderState == OrderState.Unknown
+                && (IsHeartbeatStale() || IsBracketMissingOrDead() || HasOrphanBracketOrders());
+            if (order.OrderState == OrderState.Rejected || unknownExecAnomaly)
+                EnterSafeMode("EXECUTION_STATE_ANOMALY", "OnExecutionUpdate");
+
+            MaybeRunReconcile("ExecutionUpdate", "OnExecutionUpdate");
+            EvaluateSafeModeExit();
         }
 
         private void AplicarBreakEvenSeAtingiuRR()
