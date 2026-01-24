@@ -1977,6 +1977,8 @@ namespace NinjaTrader.NinjaScript.Strategies
         private static readonly TimeSpan OverlayDuration = new TimeSpan(9, 0, 0);
         private bool overlayWasActiveOnEnable = false;
         private bool overlayWasActiveCaptured = false;
+        private bool overlayWindowActiveLast = false;
+        private bool overlayWindowActiveCaptured = false;
         private string lastExitReason = "Unknown";
 
         private bool IsHedgeActive() => GetEffectiveInvertMode() != InvertModeType.Disabled;
@@ -2307,6 +2309,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                     overlayWasActiveOnEnable = overlayActiveNow;
                     overlayWasActiveCaptured = true;
                 }
+                string enableMessage = overlayWasActiveOnEnable ? "Attention" : "Status";
+                Log("PanelRiskMessage",
+                    $"reason=Enable message={enableMessage} overlayWasActiveOnEnable={overlayWasActiveOnEnable} offSnapshot=false ninjaNow={now:O} state={State} td={overlayTradingDay:yyyy-MM-dd} sourceTZ={GetBarTimeZone()?.Id}");
                 Log("OverlayDiag",
                     $"td={overlayTradingDay:yyyy-MM-dd} overlayStart={overlayStart:O} overlayEnd={overlayEnd:O} ninjaNow={now:O} overlayActiveNow={overlayActiveNow} overlayWasActiveOnEnable={overlayWasActiveOnEnable} state={State} sourceTZ={GetBarTimeZone()?.Id}");
                 riskOverlayHelper?.TryShow(this, overlayTradingDay, Times[0][0], overlayStart, overlayEnd);
@@ -2320,6 +2325,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 isStrategyActive = false;
                 overlayWasActiveOnEnable = false;
                 overlayWasActiveCaptured = false;
+                overlayWindowActiveLast = false;
+                overlayWindowActiveCaptured = false;
                 PublishPanelOffSnapshot("Terminated");
                 try { panelHelper?.Dispose(); panelHelper = null; } catch { }
                 riskOverlayHelper?.Remove();
@@ -3136,7 +3143,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }
                 else
                 {
-                    snap.EndDayText = $"Entry+{AutoCloseMaxDuration:hh\\:mm}";
+                    snap.EndDayText = GetDefaultAutoCloseDisplayTimeBR();
                 }
             }
             else
@@ -3502,6 +3509,36 @@ namespace NinjaTrader.NinjaScript.Strategies
                 : entryTimeLocal.Date;
             scheduledCloseLocal = entryTimeLocal.Add(AutoCloseMaxDuration);
             return true;
+        }
+
+        private string GetDefaultAutoCloseDisplayTimeBR()
+        {
+            DateTime now = GetSafeTime();
+            return IsUsaDst(now) ? "17:00 BR" : "16:00 BR";
+        }
+
+        private void UpdateOverlayWindowState(DateTime now, DateTime tradingDay)
+        {
+            DateTime td;
+            DateTime overlayStart;
+            DateTime overlayEnd;
+            GetOverlayWindow(now, out td, out overlayStart, out overlayEnd);
+            bool overlayActiveNow = now >= overlayStart && now < overlayEnd;
+
+            if (!overlayWindowActiveCaptured || td.Date != tradingDay.Date)
+            {
+                overlayWindowActiveLast = overlayActiveNow;
+                overlayWindowActiveCaptured = true;
+                return;
+            }
+
+            if (overlayActiveNow == overlayWindowActiveLast)
+                return;
+
+            overlayWindowActiveLast = overlayActiveNow;
+            string transition = overlayActiveNow ? "Start" : "End";
+            Log("OverlayWindowTransition",
+                $"transition={transition} ninjaNow={now:O} td={tradingDay:yyyy-MM-dd} overlayStart={overlayStart:O} overlayEnd={overlayEnd:O} state={State} sourceTZ={GetBarTimeZone()?.Id}");
         }
 
         private void GetOverlayWindow(DateTime referenceTime, out DateTime tradingDay, out DateTime overlayStart, out DateTime overlayEnd)
@@ -3948,6 +3985,11 @@ namespace NinjaTrader.NinjaScript.Strategies
             dayBreakevenDollars = "-";
             overlayWasActiveOnEnable = false;
             overlayWasActiveCaptured = false;
+            overlayWindowActiveLast = false;
+            overlayWindowActiveCaptured = false;
+            DateTime now = GetSafeTime();
+            Log("PanelRiskMessage",
+                $"reason=DayReset overlayWasActiveOnEnable={overlayWasActiveOnEnable} offSnapshot=false ninjaNow={now:O} state={State} td={tradingDay:yyyy-MM-dd} sourceTZ={GetBarTimeZone()?.Id}");
 
             Audit("DayReset", $"td={tradingDay:yyyy-MM-dd}");
         }
@@ -4254,6 +4296,9 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 ResetDayCaches(tradingDay);
             }
+
+            if (State == State.Realtime)
+                UpdateOverlayWindowState(closeTime, tradingDay);
 
             EvaluateInvertPlanLifecycle(closeTime, tradingDay);
 
