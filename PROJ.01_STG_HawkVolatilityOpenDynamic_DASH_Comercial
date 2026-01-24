@@ -1972,8 +1972,9 @@ namespace NinjaTrader.NinjaScript.Strategies
         // ============================
         // OVERLAY TIME (Brasilia-based)
         // ============================
-        // Cutoff do overlay definido em Brasília e convertido uma única vez para o timezone do feed.
-        private static readonly TimeSpan OverlayBrasiliaBase = new TimeSpan(11, 0, 0);
+        // Overlay baseado no cronômetro ancorado no horário de entrada planejada.
+        private static readonly TimeSpan OverlayAnchorOffset = new TimeSpan(0, 29, 30);
+        private static readonly TimeSpan OverlayDuration = new TimeSpan(9, 0, 0);
         private string lastExitReason = "Unknown";
 
         private bool IsHedgeActive() => GetEffectiveInvertMode() != InvertModeType.Disabled;
@@ -2294,10 +2295,10 @@ namespace NinjaTrader.NinjaScript.Strategies
                 lastTradesCount = SystemPerformance.AllTrades.Count;
                 PublishPanelSnapshot("StateRealtime");
                 DateTime overlayTradingDay;
-                TimeSpan overlayBrTime;
-                TimeSpan overlayFeedTime;
-                GetOverlaySchedule(Times[0][0], out overlayTradingDay, out overlayBrTime, out overlayFeedTime);
-                riskOverlayHelper?.TryShow(this, overlayTradingDay, Times[0][0], overlayFeedTime);
+                DateTime overlayStart;
+                DateTime overlayEnd;
+                GetOverlayWindow(Times[0][0], out overlayTradingDay, out overlayStart, out overlayEnd);
+                riskOverlayHelper?.TryShow(this, overlayTradingDay, Times[0][0], overlayStart, overlayEnd);
             }
             else if (State == State.Terminated)
             {
@@ -2399,7 +2400,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             private DateTime riskOverlayResetDate = DateTime.MinValue;
             private ChartControl chartControl;
 
-            public void TryShow(HawkVolatilityOpen owner, DateTime tradingDay, DateTime ninjaNow, TimeSpan overlayCutoff)
+            public void TryShow(HawkVolatilityOpen owner, DateTime tradingDay, DateTime ninjaNow, DateTime overlayStart, DateTime overlayEnd)
             {
                 if (owner == null)
                     return;
@@ -2412,7 +2413,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 // Overlay exibido no máximo uma vez por dia operacional.
                 if (tradingDay.Date == riskOverlayLastDate.Date)
                     return;
-                if (ninjaNow.TimeOfDay < overlayCutoff)
+                if (ninjaNow < overlayStart || ninjaNow >= overlayEnd)
                     return;
 
                 riskOverlayLastDate = tradingDay.Date;
@@ -2421,7 +2422,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             private void ResetDailyState(DateTime tradingDay, DateTime ninjaNow)
             {
-                if (ninjaNow.TimeOfDay >= new TimeSpan(0, 1, 0) && riskOverlayResetDate.Date != tradingDay.Date)
+                if (riskOverlayResetDate.Date != tradingDay.Date)
                 {
                     riskOverlayLastDate = DateTime.MinValue;
                     riskOverlayResetDate = tradingDay.Date;
@@ -3498,12 +3499,22 @@ namespace NinjaTrader.NinjaScript.Strategies
             return true;
         }
 
-        private void GetOverlaySchedule(DateTime referenceTime, out DateTime tradingDay, out TimeSpan brOverlayTime, out TimeSpan overlayFeedTime)
+        private void GetOverlayWindow(DateTime referenceTime, out DateTime tradingDay, out DateTime overlayStart, out DateTime overlayEnd)
         {
-            DateTime brasiliaNow = ConvertToBrasilia(referenceTime);
-            tradingDay = brasiliaNow.Date;
-            brOverlayTime = OverlayBrasiliaBase;
-            overlayFeedTime = ConvertBrasiliaTodToFeedTod(tradingDay, brOverlayTime);
+            tradingDay = GetTradingDay(referenceTime);
+            string entryHms = IsUsaDst(referenceTime) ? EntryTimeDstUsaHHmmss : EntryTimeNormalHHmmss;
+            try
+            {
+                var hms = entryHms.Split(':');
+                DateTime entryTime = new DateTime(tradingDay.Year, tradingDay.Month, tradingDay.Day,
+                    int.Parse(hms[0]), int.Parse(hms[1]), int.Parse(hms[2]));
+                overlayStart = entryTime.Subtract(OverlayAnchorOffset);
+            }
+            catch
+            {
+                overlayStart = BuildHedgeAnchorLocal(referenceTime, tradingDay).Subtract(OverlayAnchorOffset);
+            }
+            overlayEnd = overlayStart.Add(OverlayDuration);
         }
 
         private string FormatOrderSnapshot(Order order)
