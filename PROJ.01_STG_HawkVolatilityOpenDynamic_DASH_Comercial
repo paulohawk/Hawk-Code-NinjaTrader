@@ -3634,7 +3634,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         private string BuildOverlayTimeAudit(DateTime nowFeed, DateTime overlayStartFeed, DateTime overlayEndFeed, DateTime cutoffFeed)
         {
-            return $"{BuildTimeTruthAudit(\"Overlay\", nowFeed)} {BuildOverlayWindowAudit(nowFeed, overlayStartFeed, overlayEndFeed, cutoffFeed)}";
+            return $"{BuildTimeTruthAudit("Overlay", nowFeed)} {BuildOverlayWindowAudit(nowFeed, overlayStartFeed, overlayEndFeed, cutoffFeed)}";
         }
 
         private void UpdateOverlayWindowState(DateTime now, DateTime tradingDay)
