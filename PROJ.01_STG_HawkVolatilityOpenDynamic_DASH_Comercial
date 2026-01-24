@@ -3514,7 +3514,9 @@ namespace NinjaTrader.NinjaScript.Strategies
         private string GetDefaultAutoCloseDisplayTimeBR()
         {
             DateTime now = GetSafeTime();
-            return IsUsaDst(now) ? "17:00 BR" : "16:00 BR";
+            int month = now.Month;
+            bool isNovToMar = month == 11 || month == 12 || month == 1 || month == 2 || month == 3;
+            return isNovToMar ? "17:00 BR" : "16:00 BR";
         }
 
         private void UpdateOverlayWindowState(DateTime now, DateTime tradingDay)
