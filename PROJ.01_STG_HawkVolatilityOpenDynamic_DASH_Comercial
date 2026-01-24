@@ -4393,9 +4393,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 ResetDayCaches(tradingDay);
             }
 
-            if (State == State.Realtime)
-                UpdateOverlayWindowState(closeTime, tradingDay);
-
             EvaluateInvertPlanLifecycle(closeTime, tradingDay);
 
             string entryHms = IsUsaDst(closeTime) ? EntryTimeDstUsaHHmmss : EntryTimeNormalHHmmss;
