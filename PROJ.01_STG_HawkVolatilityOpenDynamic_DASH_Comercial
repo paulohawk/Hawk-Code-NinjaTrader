@@ -2308,7 +2308,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 DateTime nowOverlay = GetOverlayNow();
                 GetOverlayWindowDecision(nowOverlay, out overlayTradingDay, out overlayStart, out overlayEnd, out overlayCutoff);
                 bool isInsideOperationalWindow = IsInsideWindow(nowOverlay, overlayStart, overlayEnd);
-                bool penaltyNow = isInsideOperationalWindow && nowOverlay >= overlayCutoff;
+                bool penaltyNow = isInsideOperationalWindow;
                 overlayPenaltyTradingDay = overlayTradingDay.Date;
                 overlayStartCached = overlayStart;
                 overlayEndCached = overlayEnd;
@@ -2318,8 +2318,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                 bool overlayVisibleNow = penaltyNow;
                 Log("TimeTruth", BuildTimeTruthAudit("Enable", nowRaw));
                 string enableMessage = overlayPenaltyOnEnable ? "Attention" : "Status";
+                bool isPlayback = IsPlaybackAccount();
                 Log("OverlayEnableDecision",
-                    $"nowRaw={nowRaw:O} nowOverlay={nowOverlay:O} overlayStart={overlayStart:O} cutoff={overlayCutoff:O} overlayEnd={overlayEnd:O} penalty={overlayPenaltyOnEnable} inside={isInsideOperationalWindow}");
+                    $"nowRaw={nowRaw:O} nowOverlay={nowOverlay:O} overlayStart={overlayStart:O} cutoff={overlayCutoff:O} overlayEnd={overlayEnd:O} penalty={overlayPenaltyOnEnable} inside={isInsideOperationalWindow} replay={isPlayback}");
                 Log("PanelRiskMessage",
                     $"reason=Enable message={enableMessage} overlayPenaltyOnEnable={overlayPenaltyOnEnable} isInsideOperationalWindow={isInsideOperationalWindow} offSnapshot=false state={State} td={overlayTradingDay:yyyy-MM-dd}");
                 if (overlayVisibleNow)
@@ -3611,12 +3612,26 @@ namespace NinjaTrader.NinjaScript.Strategies
             return $"{BuildTimeTruthAudit("Overlay", nowFeed)} {BuildOverlayWindowAudit(nowFeed, overlayStartFeed, overlayEndFeed, cutoffFeed)}";
         }
 
-        private DateTime ConvertBrToFeedForOverlay(DateTime t) => t.AddHours(-3);
+        // NOTE: Playback detection by account name is best-effort; if the account is renamed it may mis-detect.
+        // Prefer a stronger flag (AccountType/connection playback) when available in the environment.
+        private bool IsPlaybackAccount()
+        {
+            var acc = Account?.Name;
+            return !string.IsNullOrWhiteSpace(acc) &&
+                   acc.IndexOf("playback", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private DateTime ConvertBrToFeedForOverlay(DateTime t, bool isPlayback)
+        {
+            if (!isPlayback)
+                return t;
+            return t.AddHours(-3);
+        }
 
         private DateTime GetOverlayNow()
         {
             DateTime nowRaw = GetSafeTime();
-            return ConvertBrToFeedForOverlay(nowRaw);
+            return ConvertBrToFeedForOverlay(nowRaw, IsPlaybackAccount());
         }
 
 
