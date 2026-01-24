@@ -1980,8 +1980,11 @@ namespace NinjaTrader.NinjaScript.Strategies
         private DateTime overlayPenaltyTradingDay = Core.Globals.MinDate;
         private DateTime overlayStartCached = Core.Globals.MinDate;
         private DateTime overlayEndCached = Core.Globals.MinDate;
+        private DateTime overlayCutoffCached = Core.Globals.MinDate;
         private bool overlayVisibleLast = false;
         private bool overlayVisibleCaptured = false;
+        private bool penaltyActiveLast = false;
+        private bool penaltyActiveCaptured = false;
         private string lastExitReason = "Unknown";
 
         private bool IsHedgeActive() => GetEffectiveInvertMode() != InvertModeType.Disabled;
@@ -2306,20 +2309,26 @@ namespace NinjaTrader.NinjaScript.Strategies
                 DateTime overlayEnd;
                 DateTime now = GetSafeTime();
                 GetOverlayWindow(now, out overlayTradingDay, out overlayStart, out overlayEnd);
-                bool overlayActiveNow = now >= overlayStart && now < overlayEnd;
+                DateTime cutoffTime = overlayStart.Add(OverlayAnchorOffset);
+                bool isInsideOperationalWindow = now >= overlayStart && now < overlayEnd;
+                bool penaltyNow = isInsideOperationalWindow && now >= cutoffTime;
                 overlayPenaltyTradingDay = overlayTradingDay.Date;
                 overlayStartCached = overlayStart;
                 overlayEndCached = overlayEnd;
-                overlayPenaltyOnEnable = overlayActiveNow;
+                overlayCutoffCached = cutoffTime;
+                overlayPenaltyOnEnable = penaltyNow;
                 overlayPenaltyCaptured = true;
-                bool overlayVisibleNow = overlayPenaltyOnEnable && now < overlayEndCached;
+                bool overlayVisibleNow = overlayPenaltyOnEnable && isInsideOperationalWindow;
                 overlayVisibleLast = overlayVisibleNow;
                 overlayVisibleCaptured = true;
+                penaltyActiveLast = overlayPenaltyOnEnable && isInsideOperationalWindow;
+                penaltyActiveCaptured = true;
+                string timeAudit = BuildOverlayTimeAudit(now, overlayStartCached, overlayEndCached, overlayCutoffCached);
                 string enableMessage = overlayPenaltyOnEnable ? "Attention" : "Status";
                 Log("PanelRiskMessage",
-                    $"reason=Enable message={enableMessage} overlayPenaltyOnEnable={overlayPenaltyOnEnable} overlayActiveNow={overlayActiveNow} offSnapshot=false ninjaNow={now:O} state={State} td={overlayTradingDay:yyyy-MM-dd} sourceTZ={GetBarTimeZone()?.Id}");
+                    $"reason=Enable message={enableMessage} overlayPenaltyOnEnable={overlayPenaltyOnEnable} isInsideOperationalWindow={isInsideOperationalWindow} offSnapshot=false state={State} td={overlayTradingDay:yyyy-MM-dd} {timeAudit}");
                 Log("OverlayDiag",
-                    $"td={overlayTradingDay:yyyy-MM-dd} overlayStart={overlayStart:O} overlayEnd={overlayEnd:O} ninjaNow={now:O} overlayActiveNow={overlayActiveNow} overlayPenaltyOnEnable={overlayPenaltyOnEnable} state={State} sourceTZ={GetBarTimeZone()?.Id}");
+                    $"td={overlayTradingDay:yyyy-MM-dd} overlayPenaltyOnEnable={overlayPenaltyOnEnable} isInsideOperationalWindow={isInsideOperationalWindow} state={State} {timeAudit}");
                 if (overlayVisibleNow)
                     riskOverlayHelper?.TryShow(this, overlayTradingDay, now, overlayStartCached, overlayEndCached);
                 else
@@ -2337,8 +2346,11 @@ namespace NinjaTrader.NinjaScript.Strategies
                 overlayPenaltyTradingDay = Core.Globals.MinDate;
                 overlayStartCached = Core.Globals.MinDate;
                 overlayEndCached = Core.Globals.MinDate;
+                overlayCutoffCached = Core.Globals.MinDate;
                 overlayVisibleLast = false;
                 overlayVisibleCaptured = false;
+                penaltyActiveLast = false;
+                penaltyActiveCaptured = false;
                 PublishPanelOffSnapshot("Terminated");
                 try { panelHelper?.Dispose(); panelHelper = null; } catch { }
                 riskOverlayHelper?.Remove();
@@ -3187,7 +3199,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 DateTime now = GetSafeTime();
                 bool sameDay = overlayPenaltyCaptured && overlayPenaltyTradingDay.Date == GetTradingDay(now).Date;
-                overlayAttention = sameDay && overlayPenaltyOnEnable && now < overlayEndCached;
+                bool isInsideOperationalWindow = sameDay && now >= overlayStartCached && now < overlayEndCached;
+                overlayAttention = overlayPenaltyOnEnable && isInsideOperationalWindow;
             }
             snap.RiskWarningIsAttention = overlayAttention;
             snap.RiskWarningText = overlayAttention
@@ -3537,6 +3550,20 @@ namespace NinjaTrader.NinjaScript.Strategies
             return isNovToMar ? "17:00 BR" : "16:00 BR";
         }
 
+        private string BuildOverlayTimeAudit(DateTime nowFeed, DateTime overlayStartFeed, DateTime overlayEndFeed, DateTime cutoffFeed)
+        {
+            DateTime nowBr = ConvertToBrasilia(nowFeed);
+            DateTime startBr = ConvertToBrasilia(overlayStartFeed);
+            DateTime endBr = ConvertToBrasilia(overlayEndFeed);
+            DateTime cutoffBr = ConvertToBrasilia(cutoffFeed);
+            string feedTz = GetBarTimeZone()?.Id ?? "Unknown";
+            string brTz = GetBrasiliaTimeZone()?.Id ?? "Unknown";
+            return
+                $"nowFeed={nowFeed:O} feedTZ={feedTz} nowBR={nowBr:O} brTZ={brTz} " +
+                $"windowFeed={overlayStartFeed:HH\\:mm}-{overlayEndFeed:HH\\:mm} windowBR={startBr:HH\\:mm}-{endBr:HH\\:mm} " +
+                $"cutoffFeed={cutoffFeed:HH\\:mm} cutoffBR={cutoffBr:HH\\:mm}";
+        }
+
         private void UpdateOverlayWindowState(DateTime now, DateTime tradingDay)
         {
             DateTime td;
@@ -3553,10 +3580,21 @@ namespace NinjaTrader.NinjaScript.Strategies
                 overlayPenaltyTradingDay = Core.Globals.MinDate;
                 overlayStartCached = Core.Globals.MinDate;
                 overlayEndCached = Core.Globals.MinDate;
+                overlayCutoffCached = Core.Globals.MinDate;
                 overlayVisibleLast = false;
                 overlayVisibleCaptured = false;
+                penaltyActiveLast = false;
+                penaltyActiveCaptured = false;
                 riskOverlayHelper?.Remove();
                 return;
+            }
+
+            bool isInsideOperationalWindow = now >= overlayStartCached && now < overlayEndCached;
+            bool penaltyActiveNow = overlayPenaltyOnEnable && isInsideOperationalWindow;
+            if (!penaltyActiveCaptured)
+            {
+                penaltyActiveLast = penaltyActiveNow;
+                penaltyActiveCaptured = true;
             }
 
             if (!overlayPenaltyOnEnable)
@@ -3569,7 +3607,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 return;
             }
 
-            bool overlayVisibleNow = now >= overlayStartCached && now < overlayEndCached;
+            bool overlayVisibleNow = penaltyActiveNow;
             if (!overlayVisibleCaptured)
             {
                 overlayVisibleLast = overlayVisibleNow;
@@ -3582,15 +3620,28 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             overlayVisibleLast = overlayVisibleNow;
             string transition = overlayVisibleNow ? "Start" : "End";
+            string timeAudit = BuildOverlayTimeAudit(now, overlayStartCached, overlayEndCached, overlayCutoffCached);
             Log("OverlayWindowTransition",
-                $"transition={transition} ninjaNow={now:O} td={tradingDay:yyyy-MM-dd} overlayStart={overlayStartCached:O} overlayEnd={overlayEndCached:O} state={State} sourceTZ={GetBarTimeZone()?.Id}");
+                $"transition={transition} td={tradingDay:yyyy-MM-dd} state={State} {timeAudit}");
             string message = overlayVisibleNow ? "Attention" : "Status";
             Log("PanelRiskMessage",
-                $"reason=OverlayWindow{transition} message={message} overlayPenaltyOnEnable={overlayPenaltyOnEnable} overlayVisibleNow={overlayVisibleNow} ninjaNow={now:O} td={tradingDay:yyyy-MM-dd} state={State} sourceTZ={GetBarTimeZone()?.Id}");
+                $"reason=OverlayWindow{transition} message={message} overlayPenaltyOnEnable={overlayPenaltyOnEnable} overlayVisibleNow={overlayVisibleNow} td={tradingDay:yyyy-MM-dd} state={State} {timeAudit}");
             if (overlayVisibleNow)
                 riskOverlayHelper?.TryShow(this, overlayPenaltyTradingDay, now, overlayStartCached, overlayEndCached);
             else
                 riskOverlayHelper?.Remove();
+
+            if (!penaltyActiveNow && penaltyActiveLast)
+            {
+                penaltyActiveLast = false;
+                string timeAudit = BuildOverlayTimeAudit(now, overlayStartCached, overlayEndCached, overlayCutoffCached);
+                Log("PanelRiskMessage",
+                    $"reason=PenaltyEnd message=Status overlayPenaltyOnEnable={overlayPenaltyOnEnable} isInsideOperationalWindow={isInsideOperationalWindow} td={tradingDay:yyyy-MM-dd} state={State} {timeAudit}");
+            }
+            else
+            {
+                penaltyActiveLast = penaltyActiveNow;
+            }
         }
 
         private void GetOverlayWindow(DateTime referenceTime, out DateTime tradingDay, out DateTime overlayStart, out DateTime overlayEnd)
@@ -4040,13 +4091,17 @@ namespace NinjaTrader.NinjaScript.Strategies
             overlayPenaltyTradingDay = Core.Globals.MinDate;
             overlayStartCached = Core.Globals.MinDate;
             overlayEndCached = Core.Globals.MinDate;
+            overlayCutoffCached = Core.Globals.MinDate;
             overlayVisibleLast = false;
             overlayVisibleCaptured = false;
+            penaltyActiveLast = false;
+            penaltyActiveCaptured = false;
             DateTime now = GetSafeTime();
             if (State == State.Realtime)
             {
+                string timeAudit = BuildOverlayTimeAudit(now, overlayStartCached, overlayEndCached, overlayCutoffCached);
                 Log("PanelRiskMessage",
-                    $"reason=DayReset offSnapshot=false ninjaNow={now:O} state={State} td={tradingDay:yyyy-MM-dd} sourceTZ={GetBarTimeZone()?.Id}");
+                    $"reason=DayReset offSnapshot=false state={State} td={tradingDay:yyyy-MM-dd} {timeAudit}");
             }
             riskOverlayHelper?.Remove();
 
