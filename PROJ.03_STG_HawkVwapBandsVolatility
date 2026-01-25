@@ -2040,6 +2040,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private Order flattenOrder = null;
 		private bool flattenInProgress = false;
+		private bool _preCloseInProgress = false;
 		private int flattenAttemptCount = 0;
 		private int flattenStartBar = -1;
 		private readonly int flattenRetryBars = 2;
@@ -3634,6 +3635,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private void BracketWatchdog(string sourceTag)
 		{
+			if (_preCloseInProgress || flattenInProgress) return;
+
 			if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
 			{
 				_lastBracketQty = 0;
@@ -3644,8 +3647,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				_bracketValidationSuspensionLogged = false;
 				return;
 			}
-
-			if (flattenInProgress) return;
 
 			ExitMode mode = GetExitMode();
 			string reason = string.Empty;
@@ -4888,6 +4889,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					new Dictionary<string, string> { { "reason", reason } });
 				flattenInProgress = false;
 				flattenOrder = null;
+				_preCloseInProgress = false;
 				return;
 			}
 
@@ -5003,6 +5005,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				LogMsg("FlattenSuccess", $"reason={flattenReason} attempts={flattenAttemptCount}", 2);
 				flattenInProgress = false;
 				flattenOrder = null;
+				_preCloseInProgress = false;
 				return;
 			}
 
@@ -5263,6 +5266,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			LogMsg("PreClose", $"Starting flatten early at {brNow} (preClose={preCloseTime}, FlattenTime={flattenSpan})", 2);
 
 			// Do NOT lock day yet; lock only at AutoClose.
+			_preCloseInProgress = true;
 			RequestFlatten("PreClose", allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
 
 			PublishPanelSnapshot("PreClose");
@@ -5687,6 +5691,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					_lastEntrySignalName = string.Empty;
 					_entrySignalCycleId = 0;
 					_bracketFailSafeActive = false;
+					_preCloseInProgress = false;
 					HawkLog("INFO", "CYCLE", "CYCLE_RESET", "position_flat");
 				}
 
@@ -6209,6 +6214,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			bool isStopOrder = order.Name != null && order.Name.IndexOf("Stop", StringComparison.OrdinalIgnoreCase) >= 0;
 			bool isTargetOrder = isOppBand || isVwap || isFinTarget;
 			bool shouldTriggerBracketWatchdog = (orderState == OrderState.Rejected || orderState == OrderState.Cancelled) && (isStopOrder || isTargetOrder);
+			bool shouldRunBracketWatchdog = shouldTriggerBracketWatchdog && !_preCloseInProgress && !flattenInProgress;
 			bool isCloseBarEntry = order.Name != null &&
 				(order.Name.StartsWith(CloseBarEntryLongName, StringComparison.OrdinalIgnoreCase) ||
 				 order.Name.StartsWith(CloseBarEntryShortName, StringComparison.OrdinalIgnoreCase));
@@ -6225,7 +6231,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					if (oppositeBandExitOrderReplace == order) oppositeBandExitOrderReplace = null;
 					if (orderState == OrderState.Rejected)
 						LogMsg("OppBandExitReplaceFailed", $"name={order.Name} err={error} native={nativeError} lim={limitPrice:0.00}", 1);
-					if (shouldTriggerBracketWatchdog) BracketWatchdog("OnOrderUpdate");
+					if (shouldRunBracketWatchdog) BracketWatchdog("OnOrderUpdate");
 					return;
 				}
 
@@ -6238,7 +6244,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					oppositeBandExitOrder = order;
 					oppositeBandExitOrderReplace = null;
 					LogMsg("OppBandExitReplaced", $"name={order.Name} newLim={limitPrice:0.00}", 2);
-					if (shouldTriggerBracketWatchdog) BracketWatchdog("OnOrderUpdate");
+					if (shouldRunBracketWatchdog) BracketWatchdog("OnOrderUpdate");
 					return;
 				}
 			}
@@ -6250,7 +6256,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					if (exitVwapOrderReplace == order) exitVwapOrderReplace = null;
 					if (orderState == OrderState.Rejected)
 						LogMsg("VWAPExitReplaceFailed", $"name={order.Name} err={error} native={nativeError} lim={limitPrice:0.00}", 1);
-					if (shouldTriggerBracketWatchdog) BracketWatchdog("OnOrderUpdate");
+					if (shouldRunBracketWatchdog) BracketWatchdog("OnOrderUpdate");
 					return;
 				}
 
@@ -6263,7 +6269,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					exitVwapOrder = order;
 					exitVwapOrderReplace = null;
 					LogMsg("VWAPExitReplaced", $"name={order.Name} newLim={limitPrice:0.00}", 2);
-					if (shouldTriggerBracketWatchdog) BracketWatchdog("OnOrderUpdate");
+					if (shouldRunBracketWatchdog) BracketWatchdog("OnOrderUpdate");
 					return;
 				}
 			}
@@ -6275,7 +6281,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					if (financialTargetOrderReplace == order) financialTargetOrderReplace = null;
 					if (orderState == OrderState.Rejected)
 						LogMsg("FinTargetReplaceFailed", $"name={order.Name} err={error} native={nativeError} lim={limitPrice:0.00}", 1);
-					if (shouldTriggerBracketWatchdog) BracketWatchdog("OnOrderUpdate");
+					if (shouldRunBracketWatchdog) BracketWatchdog("OnOrderUpdate");
 					return;
 				}
 
@@ -6288,7 +6294,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					financialTargetOrder = order;
 					financialTargetOrderReplace = null;
 					LogMsg("FinTargetReplaced", $"name={order.Name} newLim={limitPrice:0.00}", 2);
-					if (shouldTriggerBracketWatchdog) BracketWatchdog("OnOrderUpdate");
+					if (shouldRunBracketWatchdog) BracketWatchdog("OnOrderUpdate");
 					return;
 				}
 			}
@@ -6312,7 +6318,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 						if (!isBuy && gridShortReplace[idx] == order) gridShortReplace[idx] = null;
 						if (orderState == OrderState.Rejected)
 							LogMsg("GridReplaceFailed", $"Grid{idx + 1} {order.OrderAction} rejected lim={limitPrice:0.00} err={error} native={nativeError}", 1);
-						if (shouldTriggerBracketWatchdog) BracketWatchdog("OnOrderUpdate");
+						if (shouldRunBracketWatchdog) BracketWatchdog("OnOrderUpdate");
 						return;
 					}
 
@@ -6337,7 +6343,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 							gridShortReplace[idx] = null;
 						}
 						LogMsg("GridReplaced", $"Grid{idx + 1} action={order.OrderAction} newLim={limitPrice:0.00}", 3);
-						if (shouldTriggerBracketWatchdog) BracketWatchdog("OnOrderUpdate");
+						if (shouldRunBracketWatchdog) BracketWatchdog("OnOrderUpdate");
 						return;
 					}
 				}
@@ -6368,7 +6374,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					closeBarOrderActiveBar = -1;
 				}
 				ClearOrderReference(order);
-				if (shouldTriggerBracketWatchdog) BracketWatchdog("OnOrderUpdate");
+				if (shouldRunBracketWatchdog) BracketWatchdog("OnOrderUpdate");
 			}
 			else
 			{
@@ -6428,6 +6434,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				LogMsg("FlattenSuccess", $"reason={flattenReason} byExecution attempt={flattenAttemptCount}", 2);
 				flattenInProgress = false;
 				flattenOrder = null;
+				_preCloseInProgress = false;
 			}
 
 			ProcessNewRealtimeTrades();
