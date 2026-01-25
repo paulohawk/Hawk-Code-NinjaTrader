@@ -22,10 +22,13 @@ using NinjaTrader.NinjaScript;
 // - Reforçou busca de conta: se não achar via selector, tenta conta com posição no instrumento, senão primeira conta.
 // - Defaults de cores conforme print: Stop = gradient gray, Target = DarkGoldenrod, Outline = DimGray, Text = White.
 // - FlexGapWidth = 90 (print).
-namespace NinjaTrader.NinjaScript.Indicators
+namespace NinjaTrader.NinjaScript
 {
     public enum LogLevelSetting { DEBUG, INFO, WARN, ERROR }
+}
 
+namespace NinjaTrader.NinjaScript.Indicators
+{
     public class HawkOrderDecorator : Indicator
     {
         private readonly List<OrderType> stopTypes   = new List<OrderType> { OrderType.StopMarket, OrderType.StopLimit, OrderType.MIT };
