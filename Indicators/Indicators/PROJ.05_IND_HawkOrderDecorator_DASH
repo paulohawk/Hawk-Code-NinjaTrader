@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
+using System.Threading;
 using System.Windows;
 using System.Windows.Media;
 using System.Xml.Serialization;
@@ -25,6 +26,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 {
     public class HawkOrderDecorator : Indicator
     {
+        public enum LogLevelSetting { DEBUG, INFO, WARN, ERROR }
+
         private readonly List<OrderType> stopTypes   = new List<OrderType> { OrderType.StopMarket, OrderType.StopLimit, OrderType.MIT };
         private readonly List<OrderType> targetTypes = new List<OrderType> { OrderType.Limit };
 
@@ -55,6 +58,9 @@ namespace NinjaTrader.NinjaScript.Indicators
         private SharpDX.DirectWrite.TextFormat textFormat;
         private float sampleTextWidth;
         private const string sampleText = "XXXXXXXX XXX XXXX";
+        private volatile string lastSnapshotSignature = string.Empty;
+        private long lastComputeLogTicks;
+        private const int computeValuesDebugThrottleMs = 250;
 
         #region Ninja defaults
         protected override void OnStateChange()
@@ -89,22 +95,30 @@ namespace NinjaTrader.NinjaScript.Indicators
                 TargetFillBrush = Brushes.DarkGoldenrod;
                 OutlineBrush    = Brushes.DimGray;
                 TextBrush       = Brushes.White;
+
+                EnableVerboseLog = false;
+                LogLevel = LogLevelSetting.INFO;
             }
             else if (State == State.Configure)
             {
                 SubscribeAccounts();
+                LogVerbose(LogLevelSetting.INFO, "Init", "State.Configure: subscriptions registered.");
             }
             else if (State == State.DataLoaded)
             {
                 HookAccountSelector();
+                LogVerbose(LogLevelSetting.INFO, "Init", "State.DataLoaded: account selector hooked.");
+                LogVerbose(LogLevelSetting.INFO, "Init", $"Chart/Instrument detected. ChartControl={(ChartControl != null ? "yes" : "no")}, Instrument={Instrument?.FullName ?? "n/a"}.");
             }
             else if (State == State.Realtime)
             {
+                LogVerbose(LogLevelSetting.INFO, "Init", "State.Realtime: initial compute and refresh.");
                 ComputeValues();
                 ForceRefresh();
             }
             else if (State == State.Terminated)
             {
+                LogVerbose(LogLevelSetting.INFO, "Dispose", "State.Terminated: unhooking subscriptions.");
                 UnsubscribeAccounts();
                 UnsubscribeChartTraderVisibility();
                 UnhookAccountSelector();
@@ -142,6 +156,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private void AccountSelector_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
         {
             selectedAccount = accountSelector?.SelectedAccount;
+            LogVerbose(LogLevelSetting.INFO, "Init", $"Account selector changed. SelectedAccount={selectedAccount?.Name ?? "null"}");
             ComputeValues();
         }
         #endregion
@@ -212,24 +227,28 @@ namespace NinjaTrader.NinjaScript.Indicators
             var st = e.OrderState;
             if (st != OrderState.Accepted && st != OrderState.Working && st != OrderState.PartFilled && st != OrderState.Filled)
                 return;
+            LogVerbose(LogLevelSetting.DEBUG, "OrderUpdate", $"OrderUpdate: State={st}, OrderId={e.Order?.OrderId}, Qty={e.Order?.Quantity}.");
             ComputeValues();
         }
 
         private void OnExecutionUpdate(object sender, ExecutionEventArgs e)
         {
             if (e == null || e.Execution == null) return;
+            LogVerbose(LogLevelSetting.DEBUG, "ExecutionUpdate", $"ExecutionUpdate: OrderId={e.Execution?.Order?.OrderId}, Qty={e.Execution?.Quantity}.");
             ComputeValues();
         }
 
         private void OnPositionUpdate(object sender, PositionEventArgs e)
         {
             if (e == null || e.Position == null) return;
+            LogVerbose(LogLevelSetting.DEBUG, "PositionUpdate", $"PositionUpdate: MarketPosition={e.Position?.MarketPosition}, Qty={e.Position?.Quantity}.");
             ComputeValues();
         }
 
         private void OnAccountItemUpdate(object sender, AccountItemEventArgs e)
         {
             if (e.AccountItem != AccountItem.UnrealizedProfitLoss) return;
+            LogVerbose(LogLevelSetting.DEBUG, "AccountItemUpdate", $"AccountItemUpdate: {e.AccountItem}.");
             ComputeValues();
         }
 
@@ -242,12 +261,18 @@ namespace NinjaTrader.NinjaScript.Indicators
         #region Core compute
         private void ComputeValues()
         {
+            LogVerboseThrottled(LogLevelSetting.DEBUG, "ComputeValues", "Start ComputeValues.");
             List<DecorSnapshot> snapshots = new List<DecorSnapshot>();
 
-            if (State == State.Terminated) return;
+            if (State == State.Terminated)
+            {
+                LogVerbose(LogLevelSetting.WARN, "ComputeValues", "Early return: State.Terminated.");
+                return;
+            }
             if (ChartControl == null || Instrument == null)
             {
-                UpdateRenderCache(Array.Empty<DecorSnapshot>());
+                LogVerbose(LogLevelSetting.WARN, "ComputeValues", "Early return: ChartControl or Instrument not available.");
+                UpdateRenderCacheIfChanged(Array.Empty<DecorSnapshot>(), "Missing ChartControl/Instrument");
                 return;
             }
 
@@ -276,10 +301,13 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             if (selectedAccount == null)
             {
-                UpdateRenderCache(Array.Empty<DecorSnapshot>());
+                LogVerbose(LogLevelSetting.WARN, "ComputeValues", "Early return: no account available.");
+                UpdateRenderCacheIfChanged(Array.Empty<DecorSnapshot>(), "No account available");
                 return;
             }
+            LogVerbose(LogLevelSetting.INFO, "ComputeValues", $"SelectedAccount={selectedAccount?.Name ?? "null"}.");
 
+            int ordersVisited = 0;
             foreach (var pos in selectedAccount.Positions)
             {
                 if (pos.Instrument != Instrument) continue;
@@ -291,10 +319,13 @@ namespace NinjaTrader.NinjaScript.Indicators
                 {
                     if (order == null) continue;
                     if (order.Instrument != Instrument) continue;
+                    if (order.Quantity <= 0) continue;
 
                     if (order.OrderState != OrderState.Accepted &&
                         order.OrderState != OrderState.Working &&
                         order.OrderState != OrderState.PartFilled) continue;
+
+                    ordersVisited++;
 
                     // saída
                     if (pos.MarketPosition == MarketPosition.Long && order.IsLong) continue;
@@ -334,13 +365,15 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             if (toRender.Count == 0)
             {
-                UpdateRenderCache(Array.Empty<DecorSnapshot>());
+                LogVerbose(LogLevelSetting.INFO, "ComputeValues", $"No decorators found. OrdersVisited={ordersVisited}.");
+                UpdateRenderCacheIfChanged(Array.Empty<DecorSnapshot>(), "No decorators found");
                 return;
             }
 
             snapshots = BuildSnapshots(toRender);
 
-            UpdateRenderCache(snapshots.ToArray());
+            LogVerbose(LogLevelSetting.INFO, "ComputeValues", $"DecoratorsGenerated={snapshots.Count}, OrdersVisited={ordersVisited}.");
+            UpdateRenderCacheIfChanged(snapshots.ToArray(), "Snapshots updated");
         }
 
         private List<DecorSnapshot> BuildSnapshots(Dictionary<double, DecorInfo> toRender)
@@ -371,6 +404,41 @@ namespace NinjaTrader.NinjaScript.Indicators
             });
         }
 
+        private void UpdateRenderCacheIfChanged(DecorSnapshot[] snapshots, string reason)
+        {
+            string signature = BuildSnapshotSignature(snapshots);
+            if (signature == lastSnapshotSignature)
+            {
+                LogVerbose(LogLevelSetting.DEBUG, "ComputeValues", $"Skip UpdateRenderCache: signature unchanged. Reason={reason}.");
+                return;
+            }
+
+            lastSnapshotSignature = signature;
+            UpdateRenderCache(snapshots);
+            LogVerbose(LogLevelSetting.DEBUG, "ComputeValues", $"UpdateRenderCache executed. Reason={reason}.");
+        }
+
+        private string BuildSnapshotSignature(DecorSnapshot[] snapshots)
+        {
+            if (snapshots == null || snapshots.Length == 0)
+                return "0|0|0";
+
+            int count = 0;
+            double sumPrices = 0.0;
+            int hash = 17;
+
+            foreach (var item in snapshots)
+            {
+                count++;
+                sumPrices += item.Price;
+                hash = unchecked(hash * 23 + item.Price.GetHashCode());
+                hash = unchecked(hash * 23 + (item.Text?.GetHashCode() ?? 0));
+                hash = unchecked(hash * 23 + item.Kind.GetHashCode());
+            }
+
+            return $"{count}|{sumPrices:0.#####}|{hash}";
+        }
+
         private DecorKind GetDecorKind(OrderType ot)
         {
             if (stopTypes.Contains(ot)) return DecorKind.STOP;
@@ -394,51 +462,66 @@ namespace NinjaTrader.NinjaScript.Indicators
             var localCache = renderCache;
             if (localCache == null || localCache.Length == 0) return;
             if (ChartPanel == null) return;
-
-            if (chartControl.Properties.LabelFont != chartFont)
+            if (chartControl == null) { LogVerbose(LogLevelSetting.WARN, "OnRender", "Render aborted: chartControl null."); return; }
+            if (ChartBars == null) { LogVerbose(LogLevelSetting.WARN, "OnRender", "Render aborted: ChartBars null."); return; }
+            if (chartScale == null) { LogVerbose(LogLevelSetting.WARN, "OnRender", "Render aborted: chartScale null."); return; }
+            if (chartScale.MinValue >= chartScale.MaxValue)
             {
-                chartFont = chartControl.Properties.LabelFont;
-                textFormat = chartFont.ToDirectWriteTextFormat();
-                sampleTextWidth = MeasureTextWidth(chartFont, sampleText);
+                LogVerbose(LogLevelSetting.WARN, "OnRender", "Render aborted: chartScale invalid (Min >= Max).");
+                return;
             }
 
-            using (var borderDx = OutlineBrush.ToDxBrush(RenderTarget))
-            using (var stopDx = StopFillBrush.ToDxBrush(RenderTarget))
-            using (var targetDx = TargetFillBrush.ToDxBrush(RenderTarget))
-            using (var textDx = TextBrush.ToDxBrush(RenderTarget))
+            try
             {
-                double barPct = chartControl.OwnerChart?.ChartTrader?.Properties?.OrderDisplayBarLength ?? 0;
-                double barPx = ChartPanel.W * (barPct / 100.0);
-
-                foreach (var item in localCache)
+                if (chartControl.Properties.LabelFont != chartFont)
                 {
-                    var layout = new SharpDX.DirectWrite.TextLayout(
-                        NinjaTrader.Core.Globals.DirectWriteFactory,
-                        item.Text,
-                        textFormat,
-                        ChartPanel.X + ChartPanel.W,
-                        textFormat.FontSize);
-
-                    float tw = layout.Metrics.Width;
-                    float th = layout.Metrics.Height;
-
-                    float x = (float)(ChartPanel.W - (barPx + tw + sampleTextWidth + FlexGapWidth));
-                    int yPx = chartScale.GetYByValue(item.Price);
-                    float y = yPx - ((th + 7) / 2);
-
-                    var start = new SharpDX.Vector2(x, y);
-                    var textPos = new SharpDX.Vector2(start.X + 4, start.Y + 3);
-                    var lineStart = new SharpDX.Vector2(start.X + tw + 9, yPx);
-                    var lineEnd = new SharpDX.Vector2(ChartPanel.W, yPx);
-
-                    var rect = new SharpDX.RectangleF(start.X, start.Y, tw + 8, th + 6);
-                    RenderTarget.FillRectangle(rect, item.Kind == DecorKind.STOP ? stopDx : targetDx);
-                    RenderTarget.DrawRectangle(rect, borderDx, 1f);
-                    RenderTarget.DrawLine(lineStart, lineEnd, borderDx);
-
-                    RenderTarget.DrawTextLayout(textPos, layout, textDx, SharpDX.Direct2D1.DrawTextOptions.NoSnap);
-                    layout.Dispose();
+                    chartFont = chartControl.Properties.LabelFont;
+                    textFormat = chartFont.ToDirectWriteTextFormat();
+                    sampleTextWidth = MeasureTextWidth(chartFont, sampleText);
                 }
+
+                using (var borderDx = OutlineBrush.ToDxBrush(RenderTarget))
+                using (var stopDx = StopFillBrush.ToDxBrush(RenderTarget))
+                using (var targetDx = TargetFillBrush.ToDxBrush(RenderTarget))
+                using (var textDx = TextBrush.ToDxBrush(RenderTarget))
+                {
+                    double barPct = chartControl.OwnerChart?.ChartTrader?.Properties?.OrderDisplayBarLength ?? 0;
+                    double barPx = ChartPanel.W * (barPct / 100.0);
+
+                    foreach (var item in localCache)
+                    {
+                        var layout = new SharpDX.DirectWrite.TextLayout(
+                            NinjaTrader.Core.Globals.DirectWriteFactory,
+                            item.Text,
+                            textFormat,
+                            ChartPanel.X + ChartPanel.W,
+                            textFormat.FontSize);
+
+                        float tw = layout.Metrics.Width;
+                        float th = layout.Metrics.Height;
+
+                        float x = (float)(ChartPanel.W - (barPx + tw + sampleTextWidth + FlexGapWidth));
+                        int yPx = chartScale.GetYByValue(item.Price);
+                        float y = yPx - ((th + 7) / 2);
+
+                        var start = new SharpDX.Vector2(x, y);
+                        var textPos = new SharpDX.Vector2(start.X + 4, start.Y + 3);
+                        var lineStart = new SharpDX.Vector2(start.X + tw + 9, yPx);
+                        var lineEnd = new SharpDX.Vector2(ChartPanel.W, yPx);
+
+                        var rect = new SharpDX.RectangleF(start.X, start.Y, tw + 8, th + 6);
+                        RenderTarget.FillRectangle(rect, item.Kind == DecorKind.STOP ? stopDx : targetDx);
+                        RenderTarget.DrawRectangle(rect, borderDx, 1f);
+                        RenderTarget.DrawLine(lineStart, lineEnd, borderDx);
+
+                        RenderTarget.DrawTextLayout(textPos, layout, textDx, SharpDX.Direct2D1.DrawTextOptions.NoSnap);
+                        layout.Dispose();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogVerbose(LogLevelSetting.ERROR, "OnRender", $"Render exception: {ex.GetType().Name} - {ex.Message}");
             }
         }
 
@@ -466,6 +549,93 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 try { ChartControl?.InvalidateVisual(); } catch { }
             });
+        }
+        #endregion
+
+        #region Logging
+        private void LogVerbose(LogLevelSetting level, string context, string message)
+        {
+            if (!EnableVerboseLog)
+                return;
+
+            if (!ShouldLog(level))
+                return;
+
+            string instrument = Instrument?.FullName ?? "n/a";
+            string bars = BarsPeriod == null ? "n/a" : $"{BarsPeriod.Value} {BarsPeriod.BarsPeriodType}";
+            string chartId = ChartControl?.OwnerChart?.GetHashCode().ToString() ?? "n/a";
+            string account = selectedAccount?.Name ?? "n/a";
+            string threadLabel = GetThreadLabel();
+            string timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
+
+            string log = $"[{timestamp}] [HawkOrderDecorator] [{level}] [{context}] " +
+                         $"Instrument={instrument} Bars={bars} ChartId={chartId} Account={account} " +
+                         $"Thread={threadLabel} Message={message}";
+            try
+            {
+                Print(log);
+            }
+            catch { }
+        }
+
+        private void LogVerboseThrottled(LogLevelSetting level, string context, string message)
+        {
+            if (!EnableVerboseLog)
+                return;
+
+            if (!ShouldLog(level))
+                return;
+
+            if (level == LogLevelSetting.DEBUG)
+            {
+                long nowTicks = DateTime.UtcNow.Ticks;
+                long lastTicks = Interlocked.Read(ref lastComputeLogTicks);
+                if (nowTicks - lastTicks < TimeSpan.FromMilliseconds(computeValuesDebugThrottleMs).Ticks)
+                    return;
+                Interlocked.Exchange(ref lastComputeLogTicks, nowTicks);
+            }
+
+            LogVerbose(level, context, message);
+        }
+
+        private bool ShouldLog(LogLevelSetting level)
+        {
+            int requested = GetLogRank(LogLevel);
+            int current = GetLogRank(level);
+
+            return current >= requested;
+        }
+
+        private int GetLogRank(LogLevelSetting level)
+        {
+            return level switch
+            {
+                LogLevelSetting.DEBUG => 1,
+                LogLevelSetting.INFO => 2,
+                LogLevelSetting.WARN => 3,
+                LogLevelSetting.ERROR => 4,
+                _ => 2
+            };
+        }
+
+        private string GetThreadLabel()
+        {
+            try
+            {
+                var dispatcher = ChartControl?.Dispatcher;
+                if (dispatcher != null && dispatcher.CheckAccess())
+                    return "UI";
+            }
+            catch { }
+
+            try
+            {
+                return $"Worker:{Thread.CurrentThread.ManagedThreadId}";
+            }
+            catch
+            {
+                return "Worker";
+            }
         }
         #endregion
 
@@ -499,6 +669,16 @@ namespace NinjaTrader.NinjaScript.Indicators
         [NinjaScriptProperty]
         [Display(Name = "Decorator Gap (px)", Description = "Gap à esquerda do bloco padrão do ChartTrader", GroupName = "UI", Order = 100)]
         public int FlexGapWidth { get; set; }
+
+        [Browsable(false)]
+        [NinjaScriptProperty]
+        [Display(Name = "Enable Verbose Log", Description = "Ativa log detalhado para suporte técnico.", GroupName = "Support", Order = 300)]
+        public bool EnableVerboseLog { get; set; }
+
+        [Browsable(false)]
+        [NinjaScriptProperty]
+        [Display(Name = "Log Level", Description = "Nível mínimo de log quando EnableVerboseLog estiver ativo.", GroupName = "Support", Order = 310)]
+        public LogLevelSetting LogLevel { get; set; }
 
         [Browsable(false)]
         [NinjaScriptProperty, XmlIgnore]
