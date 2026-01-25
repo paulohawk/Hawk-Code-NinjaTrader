@@ -24,10 +24,10 @@ using NinjaTrader.NinjaScript;
 // - FlexGapWidth = 90 (print).
 namespace NinjaTrader.NinjaScript.Indicators
 {
+    public enum LogLevelSetting { DEBUG, INFO, WARN, ERROR }
+
     public class HawkOrderDecorator : Indicator
     {
-        public enum LogLevelSetting { DEBUG, INFO, WARN, ERROR }
-
         private readonly List<OrderType> stopTypes   = new List<OrderType> { OrderType.StopMarket, OrderType.StopLimit, OrderType.MIT };
         private readonly List<OrderType> targetTypes = new List<OrderType> { OrderType.Limit };
 
