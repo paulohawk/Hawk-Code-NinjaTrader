@@ -16,9 +16,9 @@ using NinjaTrader.NinjaScript;
 
 // Decorador de ordens (STOP / TARGET) para exibir caixas com ticks e $ ao lado das linhas de ordem.
 // Ajustes:
+// - Indicador standalone e event-driven (Order/Execution/Position/AccountItem), sem dependências externas.
 // - Removeu dependência de ChartTrader visível (renderiza mesmo com ChartTrader fechado).
 // - Reforçou busca de conta: se não achar via selector, tenta conta com posição no instrumento, senão primeira conta.
-// - Mantém disparo via eventos (Order/Execution/Position/AccountItem) para aparecer rápido sem OnEachTick.
 // - Defaults de cores conforme print: Stop = gradient gray, Target = DarkGoldenrod, Outline = DimGray, Text = White.
 // - FlexGapWidth = 90 (print).
 namespace NinjaTrader.NinjaScript.Indicators
@@ -254,27 +254,6 @@ namespace NinjaTrader.NinjaScript.Indicators
             var qtyByKey = new Dictionary<string, int>();
             var toRender = new Dictionary<double, DecorInfo>();
 
-            if (HawkOrderDecoratorState.Enabled)
-            {
-                var entryPrice = HawkOrderDecoratorState.EntryPrice;
-                var stopPrice = HawkOrderDecoratorState.StopPrice;
-                var targetPrice = HawkOrderDecoratorState.TargetPrice;
-                var quantity = HawkOrderDecoratorState.Quantity;
-                var side = HawkOrderDecoratorState.Side;
-
-                if (side == MarketPosition.Flat || quantity <= 0)
-                {
-                    UpdateRenderCache(Array.Empty<DecorSnapshot>());
-                    return;
-                }
-
-                AddHubDecor(toRender, DecorKind.STOP, stopPrice, entryPrice, quantity, side);
-                AddHubDecor(toRender, DecorKind.TARGET, targetPrice, entryPrice, quantity, side);
-                snapshots = BuildSnapshots(toRender);
-                UpdateRenderCache(snapshots.ToArray());
-                return;
-            }
-
             // Resolve conta selecionada ou uma conta com posição no instrumento
             if (selectedAccount == null)
             {
@@ -390,27 +369,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                 renderCache = snapshots ?? Array.Empty<DecorSnapshot>();
                 ForceRefresh();
             });
-        }
-
-        private void AddHubDecor(Dictionary<double, DecorInfo> toRender, DecorKind kind, double price, double entryPrice, int quantity, MarketPosition side)
-        {
-            if (price <= 0) return;
-
-            double priceDiff = (side == MarketPosition.Long) ? (price - entryPrice) : (entryPrice - price);
-            int ticks = (int)Math.Round(priceDiff / TickSize);
-            double points = priceDiff * quantity;
-            double currencyValue = priceDiff * Instrument.MasterInstrument.PointValue * quantity;
-            double accCash = 0.0;
-
-            string text = $"{(kind == DecorKind.STOP ? "STOP" : "TARGET")} ({quantity})";
-            text += DisplayTicks ? $"  :  {((kind == DecorKind.STOP && ticks > 0) ? "+" : "")}{ticks} T" : "";
-            text += DisplayPoints ? $"  :  {((kind == DecorKind.STOP && points > 0) ? "+" : "")}{points:F2} P" : "";
-            text += DisplayCurrency ? $"  :  {Symbol} {currencyValue:N2}" : "";
-            if (DisplayPercentOfAccount && accCash > 0)
-                text += $"  :  {(currencyValue / accCash):P2}";
-
-            var item = new DecorInfo { Kind = kind, Text = text };
-            toRender[price] = item;
         }
 
         private DecorKind GetDecorKind(OrderType ot)
