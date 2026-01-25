@@ -1931,6 +1931,18 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private Order financialTargetOrder = null;
 		private Order financialTargetOrderReplace = null;
 		private bool breakEvenActivated = false;
+		private DateTime _lastBracketRebuildUtc = DateTime.MinValue;
+		private DateTime _lastBracketCheckUtc = DateTime.MinValue;
+		private DateTime _lastBracketFillUtc = DateTime.MinValue;
+		private DateTime _lastBracketConfirmedUtc = DateTime.MinValue;
+		private int _bracketRebuildCount = 0;
+		private int _lastBracketQty = 0;
+		private bool _bracketFailSafeActive = false;
+		private string _lastEntrySignalName = string.Empty;
+		private int _currentCycleId = 0;
+		private int _entrySignalCycleId = 0;
+		private readonly TimeSpan _bracketRebuildCooldown = TimeSpan.FromSeconds(5);
+		private const int BracketRebuildLimit = 5;
 		private double entryPrice = 0.0;
 		private bool closeBarOrderPending = false;
 		private Order closeBarOrder = null;
@@ -3205,6 +3217,414 @@ namespace NinjaTrader.NinjaScript.Strategies
 		}
 		#endregion
 
+		#region Bracket watchdog helpers
+		private string GetFromEntrySignal()
+		{
+			if (string.IsNullOrWhiteSpace(_lastEntrySignalName)) return null;
+			if (!cycleOpen) return null;
+			if (_entrySignalCycleId != _currentCycleId) return null;
+			return _lastEntrySignalName;
+		}
+
+		private bool IsFailSafeBlocking() =>
+			_bracketFailSafeActive && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0;
+
+		private bool ShouldRepairBracket() =>
+			State == State.Realtime && !isAnalyzerMode && !flattenInProgress && !IsFailSafeBlocking();
+
+		private bool IsBracketOrderActive(Order ord) =>
+			ord != null && (ord.OrderState == OrderState.Working || ord.OrderState == OrderState.Accepted || ord.OrderState == OrderState.Submitted);
+
+		private bool IsBracketOrderCancelling(Order ord) =>
+			ord != null && (ord.OrderState == OrderState.CancelPending || ord.OrderState == OrderState.CancelSubmitted);
+
+		private bool IsBracketOrderDead(Order ord) =>
+			ord == null || ord.OrderState == OrderState.Cancelled || ord.OrderState == OrderState.Rejected || ord.OrderState == OrderState.Unknown;
+
+		private bool TryGetBidAsk(out double bid, out double ask)
+		{
+			bid = 0;
+			ask = 0;
+			try
+			{
+				bid = GetCurrentBid();
+				ask = GetCurrentAsk();
+			}
+			catch { }
+			return bid > 0 && ask > 0;
+		}
+
+		private double AdjustStopPriceForBracket(double price, MarketPosition side, string sourceTag)
+		{
+			double original = price;
+			bool adjusted = false;
+			double bid, ask;
+			double tick = Instrument?.MasterInstrument?.TickSize ?? TickSize;
+
+			if (TryGetBidAsk(out bid, out ask) && tick > 0)
+			{
+				if (side == MarketPosition.Long && price > bid - tick)
+				{
+					price = Math.Max(tick, bid - tick);
+					adjusted = true;
+				}
+				else if (side == MarketPosition.Short && price < ask + tick)
+				{
+					price = ask + tick;
+					adjusted = true;
+				}
+			}
+
+			if (Instrument?.MasterInstrument != null)
+				price = Instrument.MasterInstrument.RoundToTickSize(price);
+
+			if (adjusted)
+				LogMsg("BRACKET_PRICE_ADJUST", $"{sourceTag} stop side={side} original={original:0.00} adjusted={price:0.00} bid={bid:0.00} ask={ask:0.00}", 2);
+
+			return price;
+		}
+
+		private double AdjustTargetPriceForBracket(double price, MarketPosition side, string sourceTag)
+		{
+			double original = price;
+			bool adjusted = false;
+			double bid, ask;
+			double tick = Instrument?.MasterInstrument?.TickSize ?? TickSize;
+
+			if (TryGetBidAsk(out bid, out ask) && tick > 0)
+			{
+				if (side == MarketPosition.Long && price < ask + tick)
+				{
+					price = ask + tick;
+					adjusted = true;
+				}
+				else if (side == MarketPosition.Short && price > bid - tick)
+				{
+					price = Math.Max(tick, bid - tick);
+					adjusted = true;
+				}
+			}
+
+			if (Instrument?.MasterInstrument != null)
+				price = Instrument.MasterInstrument.RoundToTickSize(price);
+
+			if (adjusted)
+				LogMsg("BRACKET_PRICE_ADJUST", $"{sourceTag} target side={side} original={original:0.00} adjusted={price:0.00} bid={bid:0.00} ask={ask:0.00}", 2);
+
+			return price;
+		}
+
+		private Order GetActiveTargetOrder(ExitMode mode)
+		{
+			switch (mode)
+			{
+				case ExitMode.Vwap:
+					return IsBracketOrderActive(exitVwapOrder) ? exitVwapOrder :
+						IsBracketOrderActive(exitVwapOrderReplace) ? exitVwapOrderReplace : exitVwapOrder ?? exitVwapOrderReplace;
+				case ExitMode.OppositeBand:
+					return IsBracketOrderActive(oppositeBandExitOrder) ? oppositeBandExitOrder :
+						IsBracketOrderActive(oppositeBandExitOrderReplace) ? oppositeBandExitOrderReplace : oppositeBandExitOrder ?? oppositeBandExitOrderReplace;
+				default:
+					return IsBracketOrderActive(financialTargetOrder) ? financialTargetOrder :
+						IsBracketOrderActive(financialTargetOrderReplace) ? financialTargetOrderReplace : financialTargetOrder ?? financialTargetOrderReplace;
+			}
+		}
+
+		private bool TryGetBracketStopPrice(out double stopPrice, out string reason)
+		{
+			stopPrice = double.NaN;
+			reason = string.Empty;
+
+			if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
+			{
+				reason = "position_flat";
+				return false;
+			}
+
+			int qty = Math.Abs(Position.Quantity);
+			double pointValue = Instrument?.MasterInstrument?.PointValue ?? 1.0;
+			double tick = Instrument?.MasterInstrument?.TickSize ?? TickSize;
+			double usdRisk = 0;
+
+			if (EnableFinancialStop && FinancialStopUsd > 0)
+				usdRisk = FinancialStopUsd;
+			else if (TradeStopLossUsd > 0)
+				usdRisk = TradeStopLossUsd;
+
+			if (usdRisk > 0)
+			{
+				double riskPerContract = usdRisk / Math.Max(1, qty);
+				double points = riskPerContract / pointValue;
+				if (Position.MarketPosition == MarketPosition.Long)
+					stopPrice = Position.AveragePrice - points;
+				else if (Position.MarketPosition == MarketPosition.Short)
+					stopPrice = Position.AveragePrice + points;
+			}
+			else if (EnableStopLoss && StopLossTicks > 0 && tick > 0)
+			{
+				double points = StopLossTicks * tick;
+				if (Position.MarketPosition == MarketPosition.Long)
+					stopPrice = Position.AveragePrice - points;
+				else if (Position.MarketPosition == MarketPosition.Short)
+					stopPrice = Position.AveragePrice + points;
+			}
+
+			if (double.IsNaN(stopPrice) || stopPrice <= 0)
+			{
+				reason = "invalid_stop_price";
+				return false;
+			}
+
+			stopPrice = AdjustStopPriceForBracket(stopPrice, Position.MarketPosition, "Watchdog");
+			return true;
+		}
+
+		private bool TryGetBracketTargetPrice(ExitMode mode, out double targetPrice, out string reason)
+		{
+			targetPrice = double.NaN;
+			reason = string.Empty;
+
+			if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
+			{
+				reason = "position_flat";
+				return false;
+			}
+
+			int qty = Math.Abs(Position.Quantity);
+			double pointValue = Instrument?.MasterInstrument?.PointValue ?? 1.0;
+
+			switch (mode)
+			{
+				case ExitMode.Vwap:
+					if (double.IsNaN(lastSnapVwap) || lastSnapVwap <= 0)
+					{
+						reason = "vwap_unavailable";
+						return false;
+					}
+					targetPrice = lastSnapVwap;
+					break;
+				case ExitMode.OppositeBand:
+					int idxBand = Math.Max(1, Math.Min(5, OppBandExitDeviation)) - 1;
+					if (Position.MarketPosition == MarketPosition.Long)
+						targetPrice = upper[idxBand];
+					else if (Position.MarketPosition == MarketPosition.Short)
+						targetPrice = lower[idxBand];
+					if (double.IsNaN(targetPrice) || targetPrice <= 0)
+					{
+						reason = "band_unavailable";
+						return false;
+					}
+					break;
+				default:
+					if (TradeProfitTargetUsd <= 0)
+					{
+						reason = "target_usd_disabled";
+						return false;
+					}
+					double profitPerContract = TradeProfitTargetUsd / Math.Max(1, qty);
+					double points = profitPerContract / pointValue;
+					if (Position.MarketPosition == MarketPosition.Long)
+						targetPrice = Position.AveragePrice + points;
+					else if (Position.MarketPosition == MarketPosition.Short)
+						targetPrice = Position.AveragePrice - points;
+					break;
+			}
+
+			if (double.IsNaN(targetPrice) || targetPrice <= 0)
+			{
+				reason = "invalid_target_price";
+				return false;
+			}
+
+			targetPrice = AdjustTargetPriceForBracket(targetPrice, Position.MarketPosition, "Watchdog");
+			return true;
+		}
+
+		private bool IsBracketValid(ExitMode mode, out string reason)
+		{
+			reason = string.Empty;
+			if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
+			{
+				reason = "position_flat";
+				return false;
+			}
+
+			int qty = Math.Abs(Position.Quantity);
+			Order targetOrder = GetActiveTargetOrder(mode);
+
+			if (!IsBracketOrderActive(stopLossOrder))
+			{
+				reason = "stop_missing_or_dead";
+				return false;
+			}
+			if (!IsBracketOrderActive(targetOrder))
+			{
+				reason = "target_missing_or_dead";
+				return false;
+			}
+
+			if (stopLossOrder.Quantity != qty)
+			{
+				reason = $"stop_qty_mismatch stop={stopLossOrder.Quantity} pos={qty}";
+				return false;
+			}
+			if (targetOrder.Quantity != qty)
+			{
+				reason = $"target_qty_mismatch target={targetOrder.Quantity} pos={qty}";
+				return false;
+			}
+
+			if (_lastBracketFillUtc != DateTime.MinValue)
+			{
+				if (stopLossOrder.Time < _lastBracketFillUtc || targetOrder.Time < _lastBracketFillUtc)
+				{
+					reason = "post_fill_unconfirmed";
+					return false;
+				}
+			}
+
+			return true;
+		}
+
+		private bool TryCancelBracketOrders(string reasonTag, ExitMode mode)
+		{
+			Order targetOrder = GetActiveTargetOrder(mode);
+			if (IsBracketOrderCancelling(stopLossOrder) || IsBracketOrderCancelling(targetOrder))
+			{
+				LogMsg("BRACKET_REBUILD", $"{reasonTag} block=cancel_pending stopState={stopLossOrder?.OrderState} targetState={targetOrder?.OrderState}", 2);
+				_lastBlockReason = "bracket_cancel_pending";
+				return false;
+			}
+
+			if (IsBracketOrderActive(stopLossOrder))
+			{
+				try { CancelOrder(stopLossOrder); } catch { }
+			}
+			if (IsBracketOrderActive(targetOrder))
+			{
+				try { CancelOrder(targetOrder); } catch { }
+			}
+
+			if (IsBracketOrderActive(stopLossOrder) || IsBracketOrderActive(targetOrder) ||
+				IsBracketOrderCancelling(stopLossOrder) || IsBracketOrderCancelling(targetOrder))
+			{
+				LogMsg("BRACKET_REBUILD", $"{reasonTag} block=cancel_incomplete stopState={stopLossOrder?.OrderState} targetState={targetOrder?.OrderState}", 2);
+				_lastBlockReason = "bracket_cancel_incomplete";
+				return false;
+			}
+
+			return true;
+		}
+
+		private void BracketWatchdog(string sourceTag)
+		{
+			if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
+			{
+				_lastBracketQty = 0;
+				_lastBracketFillUtc = DateTime.MinValue;
+				_lastBracketConfirmedUtc = DateTime.MinValue;
+				_bracketFailSafeActive = false;
+				return;
+			}
+
+			if (flattenInProgress) return;
+
+			ExitMode mode = GetExitMode();
+			string reason;
+			_lastBracketCheckUtc = DateTime.UtcNow;
+
+			if (IsBracketValid(mode, out reason))
+			{
+				_lastBracketQty = Math.Abs(Position.Quantity);
+				_lastBracketConfirmedUtc = DateTime.UtcNow;
+				return;
+			}
+
+			if (reason.IndexOf("qty_mismatch", StringComparison.OrdinalIgnoreCase) >= 0)
+				LogMsg("BRACKET_QTY_MISMATCH", $"{sourceTag} {reason}", 1);
+
+			LogMsg("BRACKET_MISSING", $"{sourceTag} reason={reason} pos={Position.MarketPosition} qty={Math.Abs(Position.Quantity)}", 1);
+
+			if (!ShouldRepairBracket())
+			{
+				LogMsg("BRACKET_CHECK", $"{sourceTag} action=validate_only state={State} analyzer={isAnalyzerMode} failSafe={IsFailSafeBlocking()}", 3);
+				return;
+			}
+
+			if ((DateTime.UtcNow - _lastBracketRebuildUtc) < _bracketRebuildCooldown)
+			{
+				LogMsg("BRACKET_REBUILD", $"{sourceTag} skipped=cooldown last={_lastBracketRebuildUtc:O}", 2);
+				return;
+			}
+
+			if (IsBracketOrderCancelling(stopLossOrder) || IsBracketOrderCancelling(GetActiveTargetOrder(mode)))
+			{
+				LogMsg("BRACKET_REBUILD", $"{sourceTag} skipped=cancel_pending stopState={stopLossOrder?.OrderState} targetState={GetActiveTargetOrder(mode)?.OrderState}", 2);
+				_lastBlockReason = "bracket_cancel_pending";
+				return;
+			}
+
+			if (_bracketRebuildCount >= BracketRebuildLimit)
+			{
+				LogMsg("BRACKET_FAILSAFE_FLATTEN", $"{sourceTag} reason=rebuild_limit count={_bracketRebuildCount}", 1);
+				_bracketFailSafeActive = true;
+				RequestFlatten("BracketFailsafe", allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
+				return;
+			}
+
+			if (BlockIfSameBar("BracketRebuild")) return;
+
+			if (!TryCancelBracketOrders(sourceTag, mode))
+				return;
+
+			string stopReason;
+			string targetReason;
+			double stopPrice;
+			double targetPrice;
+
+			if (!TryGetBracketStopPrice(out stopPrice, out stopReason) ||
+				!TryGetBracketTargetPrice(mode, out targetPrice, out targetReason))
+			{
+				_bracketRebuildCount++;
+				_lastBracketRebuildUtc = DateTime.UtcNow;
+				LogMsg("BRACKET_REBUILD", $"{sourceTag} failed stopReason={stopReason} targetReason={targetReason} count={_bracketRebuildCount}", 1);
+				return;
+			}
+
+			int qty = Math.Abs(Position.Quantity);
+			string fromEntry = GetFromEntrySignal();
+			Order newStop = null;
+			Order newTarget = null;
+
+			if (Position.MarketPosition == MarketPosition.Long)
+			{
+				newStop = ExitLongStopMarket(0, true, qty, stopPrice, "FinStopL", fromEntry);
+				if (mode == ExitMode.Vwap)
+					newTarget = ExitLongLimit(0, true, qty, targetPrice, "VWAPExitL", fromEntry);
+				else if (mode == ExitMode.OppositeBand)
+					newTarget = ExitLongLimit(0, true, qty, targetPrice, "OppBandExitL", fromEntry);
+				else
+					newTarget = ExitLongLimit(0, true, qty, targetPrice, "FinTargetL", fromEntry);
+			}
+			else if (Position.MarketPosition == MarketPosition.Short)
+			{
+				newStop = ExitShortStopMarket(0, true, qty, stopPrice, "FinStopS", fromEntry);
+				if (mode == ExitMode.Vwap)
+					newTarget = ExitShortLimit(0, true, qty, targetPrice, "VWAPExitS", fromEntry);
+				else if (mode == ExitMode.OppositeBand)
+					newTarget = ExitShortLimit(0, true, qty, targetPrice, "OppBandExitS", fromEntry);
+				else
+					newTarget = ExitShortLimit(0, true, qty, targetPrice, "FinTargetS", fromEntry);
+			}
+
+				_lastBracketRebuildUtc = DateTime.UtcNow;
+				_bracketRebuildCount++;
+				_lastBracketQty = qty;
+				MarkActionExecuted();
+				LogMsg("BRACKET_REBUILD", $"{sourceTag} stop={stopPrice:0.00} target={targetPrice:0.00} mode={mode} qty={qty} count={_bracketRebuildCount} stopOrder={newStop?.Name} targetOrder={newTarget?.Name}", 1);
+			}
+		#endregion
+
 		#region Flatten timer helpers
 		private void StartFlattenTimerIfNeeded()
 		{
@@ -3264,7 +3684,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private void MaintainOppositeBandExitOrder()
 		{
-			if (isLockedForDay || flattenInProgress)
+			if (isLockedForDay || flattenInProgress || IsFailSafeBlocking())
 			{
 				CancelOppositeBandExit();
 				return;
@@ -3293,6 +3713,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 
 			target = Instrument.MasterInstrument.RoundToTickSize(target);
+			target = AdjustTargetPriceForBracket(target, Position.MarketPosition, "MaintainOppBandExit");
 
 			int qty = Math.Abs(Position.Quantity);
 
@@ -3351,10 +3772,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 						LogMsg("OrderBlock", "blocked working exit order for OppBandExitReplace", 3);
 						return;
 					}
+					string fromEntry = GetFromEntrySignal();
 					if (Position.MarketPosition == MarketPosition.Long)
-						oppositeBandExitOrderReplace = ExitLongLimit(0, true, qty, target, "OppBandExitL_R", null);
+						oppositeBandExitOrderReplace = ExitLongLimit(0, true, qty, target, "OppBandExitL_R", fromEntry);
 					else
-						oppositeBandExitOrderReplace = ExitShortLimit(0, true, qty, target, "OppBandExitS_R", null);
+						oppositeBandExitOrderReplace = ExitShortLimit(0, true, qty, target, "OppBandExitS_R", fromEntry);
 
 					if (oppositeBandExitOrderReplace != null)
 					{
@@ -3377,7 +3799,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 					LogMsg("OrderBlock", "blocked working exit order for OppBandExitNew", 3);
 					return;
 				}
-				oppositeBandExitOrder = ExitLongLimit(0, true, qty, target, "OppBandExitL", null);
+				string fromEntry = GetFromEntrySignal();
+				oppositeBandExitOrder = ExitLongLimit(0, true, qty, target, "OppBandExitL", fromEntry);
 				if (oppositeBandExitOrder != null)
 				{
 					MarkActionExecuted();
@@ -3395,7 +3818,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 					LogMsg("OrderBlock", "blocked working exit order for OppBandExitNew", 3);
 					return;
 				}
-				oppositeBandExitOrder = ExitShortLimit(0, true, qty, target, "OppBandExitS", null);
+				string fromEntry = GetFromEntrySignal();
+				oppositeBandExitOrder = ExitShortLimit(0, true, qty, target, "OppBandExitS", fromEntry);
 				if (oppositeBandExitOrder != null)
 				{
 					MarkActionExecuted();
@@ -3450,7 +3874,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private void MaintainFinancialTargetLimit()
 		{
-			if (isLockedForDay || flattenInProgress)
+			if (isLockedForDay || flattenInProgress || IsFailSafeBlocking())
 			{
 				CancelFinancialTarget();
 				return;
@@ -3492,6 +3916,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 
 			target = Instrument.MasterInstrument.RoundToTickSize(target);
+			target = AdjustTargetPriceForBracket(target, Position.MarketPosition, "MaintainFinancialTarget");
 
 			double ts = Instrument.MasterInstrument.TickSize;
 			double repricingThreshold = ts * 0.5;
@@ -3518,10 +3943,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 				LogMsg("OrderBlock", "blocked working exit order for FinTargetReplace", 3);
 				return;
 			}
+			string fromEntry = GetFromEntrySignal();
 			if (Position.MarketPosition == MarketPosition.Long)
-				financialTargetOrderReplace = ExitLongLimit(0, true, qty, target, "FinTargetL_R", null);
+				financialTargetOrderReplace = ExitLongLimit(0, true, qty, target, "FinTargetL_R", fromEntry);
 			else if (Position.MarketPosition == MarketPosition.Short)
-				financialTargetOrderReplace = ExitShortLimit(0, true, qty, target, "FinTargetS_R", null);
+				financialTargetOrderReplace = ExitShortLimit(0, true, qty, target, "FinTargetS_R", fromEntry);
 
 			if (financialTargetOrderReplace != null)
 			{
@@ -3535,7 +3961,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		#region Financial stop maintenance (USD -> preço)
 		private void MaintainFinancialStopLoss()
 		{
-			if (isLockedForDay || flattenInProgress)
+			if (isLockedForDay || flattenInProgress || IsFailSafeBlocking())
 			{
 				CancelStopLoss();
 				return;
@@ -3570,6 +3996,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 
 			stopPrice = Instrument.MasterInstrument.RoundToTickSize(stopPrice);
+			stopPrice = AdjustStopPriceForBracket(stopPrice, Position.MarketPosition, "MaintainFinancialStop");
 
 			double ts = Instrument.MasterInstrument.TickSize;
 			double repricingThreshold = ts * 0.5;
@@ -3599,10 +4026,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 				LogMsg("OrderBlock", "blocked working exit order for FinStop", 3);
 				return;
 			}
+			string fromEntry = GetFromEntrySignal();
 			if (Position.MarketPosition == MarketPosition.Long)
-				stopLossOrder = ExitLongStopMarket(0, true, qty, stopPrice, "FinStopL", null);
+				stopLossOrder = ExitLongStopMarket(0, true, qty, stopPrice, "FinStopL", fromEntry);
 			else if (Position.MarketPosition == MarketPosition.Short)
-				stopLossOrder = ExitShortStopMarket(0, true, qty, stopPrice, "FinStopS", null);
+				stopLossOrder = ExitShortStopMarket(0, true, qty, stopPrice, "FinStopS", fromEntry);
 
 			if (stopLossOrder != null)
 			{
@@ -4107,10 +4535,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 		#region VWAP exit
 		private void MaintainVwapExitOrder(double vwap)
 		{
-			if (isLockedForDay || flattenInProgress) { CancelExitVwap(); return; }
+			if (isLockedForDay || flattenInProgress || IsFailSafeBlocking()) { CancelExitVwap(); return; }
 
 			int qty = Math.Abs(Position.Quantity);
 			if (qty <= 0) { CancelExitVwap(); return; }
+
+			vwap = AdjustTargetPriceForBracket(vwap, Position.MarketPosition, "MaintainVwapExit");
 
 			double ts = Instrument.MasterInstrument.TickSize;
 			double repricingThreshold = ts * 0.5;
@@ -4141,7 +4571,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 							LogMsg("OrderBlock", "blocked working exit order for VWAPExitReplace", 3);
 							return;
 						}
-						exitVwapOrderReplace = ExitLongLimit(0, true, qty, vwap, "VWAPExitL_R", null);
+						string fromEntry = GetFromEntrySignal();
+						exitVwapOrderReplace = ExitLongLimit(0, true, qty, vwap, "VWAPExitL_R", fromEntry);
 						if (exitVwapOrderReplace != null)
 						{
 							MarkActionExecuted();
@@ -4160,7 +4591,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 					LogMsg("OrderBlock", "blocked working exit order for VWAPExitNew", 3);
 					return;
 				}
-				exitVwapOrder = ExitLongLimit(0, true, qty, vwap, "VWAPExitL", null);
+				string fromEntry = GetFromEntrySignal();
+				exitVwapOrder = ExitLongLimit(0, true, qty, vwap, "VWAPExitL", fromEntry);
 				if (exitVwapOrder != null)
 				{
 					MarkActionExecuted();
@@ -4182,7 +4614,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 							LogMsg("OrderBlock", "blocked working exit order for VWAPExitReplace", 3);
 							return;
 						}
-						exitVwapOrderReplace = ExitShortLimit(0, true, qty, vwap, "VWAPExitS_R", null);
+						string fromEntry = GetFromEntrySignal();
+						exitVwapOrderReplace = ExitShortLimit(0, true, qty, vwap, "VWAPExitS_R", fromEntry);
 						if (exitVwapOrderReplace != null)
 						{
 							MarkActionExecuted();
@@ -4201,7 +4634,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 					LogMsg("OrderBlock", "blocked working exit order for VWAPExitNew", 3);
 					return;
 				}
-				exitVwapOrder = ExitShortLimit(0, true, qty, vwap, "VWAPExitS", null);
+				string fromEntry = GetFromEntrySignal();
+				exitVwapOrder = ExitShortLimit(0, true, qty, vwap, "VWAPExitS", fromEntry);
 				if (exitVwapOrder != null)
 				{
 					MarkActionExecuted();
@@ -4388,10 +4822,19 @@ namespace NinjaTrader.NinjaScript.Strategies
 				return;
 			if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
 				return;
+			if (IsFailSafeBlocking())
+				return;
 			if (TickSize <= 0)
 				return;
 			if (entryPrice == 0)
 				return;
+
+			string bracketReason;
+			if (!IsBracketValid(GetExitMode(), out bracketReason))
+			{
+				LogMsg("BRACKET_CHECK", $"BreakEven blocked reason={bracketReason}", 3);
+				return;
+			}
 
 			double riskTriggerUsd = TradeStopLossUsd * BreakEvenTriggerRiskMultiple;
 			if (riskTriggerUsd <= 0)
@@ -4406,12 +4849,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 				{
 					double newStop = entryPrice + (BreakEvenOffsetTicks * TickSize);
 					newStop = Instrument.MasterInstrument.RoundToTickSize(newStop);
+					newStop = AdjustStopPriceForBracket(newStop, Position.MarketPosition, "BreakEven");
 					CancelStopLoss();
 					CancelFinancialTarget();
 					if (BlockIfSameBar("BreakEven")) return;
 					if (HasWorkingOrders(stopLossOrder)) return;
 					int qty = Math.Abs(Position.Quantity);
-					stopLossOrder = ExitLongStopMarket(0, true, qty, newStop, "BreakEvenStopL", null);
+					string fromEntry = GetFromEntrySignal();
+					stopLossOrder = ExitLongStopMarket(0, true, qty, newStop, "BreakEvenStopL", fromEntry);
 					breakEvenActivated = true;
 					dayBreakevenDollars = "ON";
 					if (GetExitMode() == ExitMode.Financial && !isLockedForDay && !flattenInProgress)
@@ -4428,12 +4873,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 				{
 					double newStop = entryPrice - (BreakEvenOffsetTicks * TickSize);
 					newStop = Instrument.MasterInstrument.RoundToTickSize(newStop);
+					newStop = AdjustStopPriceForBracket(newStop, Position.MarketPosition, "BreakEven");
 					CancelStopLoss();
 					CancelFinancialTarget();
 					if (BlockIfSameBar("BreakEven")) return;
 					if (HasWorkingOrders(stopLossOrder)) return;
 					int qty = Math.Abs(Position.Quantity);
-					stopLossOrder = ExitShortStopMarket(0, true, qty, newStop, "BreakEvenStopS", null);
+					string fromEntry = GetFromEntrySignal();
+					stopLossOrder = ExitShortStopMarket(0, true, qty, newStop, "BreakEvenStopS", fromEntry);
 					breakEvenActivated = true;
 					dayBreakevenDollars = "ON";
 					if (GetExitMode() == ExitMode.Financial && !isLockedForDay && !flattenInProgress)
@@ -4456,9 +4903,75 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 		}
 
+		private void MaintainBracketStopLoss()
+		{
+			if (isLockedForDay || flattenInProgress || IsFailSafeBlocking())
+			{
+				CancelStopLoss();
+				return;
+			}
+
+			if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
+			{
+				CancelStopLoss();
+				return;
+			}
+
+			string reason;
+			double stopPrice;
+			if (!TryGetBracketStopPrice(out stopPrice, out reason))
+			{
+				LogMsg("BRACKET_MISSING", $"MaintainStopLoss reason={reason}", 1);
+				return;
+			}
+
+			int qty = Math.Abs(Position.Quantity);
+			double ts = Instrument.MasterInstrument.TickSize;
+			double repricingThreshold = ts * 0.5;
+			bool needReprice = true;
+
+			if (stopLossOrder != null &&
+			    (stopLossOrder.OrderState == OrderState.Working || stopLossOrder.OrderState == OrderState.Accepted || stopLossOrder.OrderState == OrderState.Submitted || stopLossOrder.OrderState == OrderState.CancelPending || stopLossOrder.OrderState == OrderState.CancelSubmitted))
+			{
+				if (Math.Abs(stopLossOrder.StopPrice - stopPrice) <= repricingThreshold &&
+				    stopLossOrder.Quantity == qty)
+					needReprice = false;
+			}
+
+			if (!needReprice) return;
+
+			try
+			{
+				if (stopLossOrder != null && !IsCancelling(stopLossOrder)) CancelOrder(stopLossOrder);
+			}
+			catch { }
+
+			if (BlockIfSameBar("BracketStop")) return;
+			if (HasWorkingOrders(stopLossOrder))
+			{
+				_lastBlockReason = "block_working_exit:BracketStop";
+				SupportDump("trade_blocked");
+				LogMsg("OrderBlock", "blocked working exit order for BracketStop", 3);
+				return;
+			}
+
+			string fromEntry = GetFromEntrySignal();
+			if (Position.MarketPosition == MarketPosition.Long)
+				stopLossOrder = ExitLongStopMarket(0, true, qty, stopPrice, "FinStopL", fromEntry);
+			else if (Position.MarketPosition == MarketPosition.Short)
+				stopLossOrder = ExitShortStopMarket(0, true, qty, stopPrice, "FinStopS", fromEntry);
+
+			if (stopLossOrder != null)
+			{
+				MarkActionExecuted();
+				SupportDump($"order_sent:{stopLossOrder.Name}");
+			}
+			LogMsg("FinStopUpdated", $"side={Position.MarketPosition} qty={qty} avg={Position.AveragePrice:0.00} stop={stopPrice:0.00}", 2);
+		}
+
 		private void MaintainStopLoss()
 		{
-			if (isLockedForDay || flattenInProgress)
+			if (isLockedForDay || flattenInProgress || IsFailSafeBlocking())
 			{
 				CancelStopLoss();
 				return;
@@ -4470,6 +4983,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (EnableFinancialStop && FinancialStopUsd > 0)
 			{
 				MaintainFinancialStopLoss();
+				return;
+			}
+
+			if (TradeStopLossUsd > 0 || (EnableStopLoss && StopLossTicks > 0))
+			{
+				MaintainBracketStopLoss();
 				return;
 			}
 
@@ -4573,12 +5092,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 			else
 			{
-				cycleOpen = false;
-				cycleDirection = Regime.None;
-				_cycleRealizedAtEntry = 0;
-			}
-			breakEvenActivated = false;
-			entryPrice = 0.0;
+			cycleOpen = false;
+			cycleDirection = Regime.None;
+			_cycleRealizedAtEntry = 0;
+		}
+		breakEvenActivated = false;
+		entryPrice = 0.0;
+		_lastEntrySignalName = string.Empty;
+		_entrySignalCycleId = 0;
 
 			for (int i = 0; i < 5; i++)
 			{
@@ -4594,6 +5115,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private bool CanStartNewCycle(Regime side)
 		{
 			if (side == Regime.None) return false;
+			if (_bracketFailSafeActive) return false;
 
 			if (MaxTradesPerDay > 0 && tradesClosedTodayTotal >= MaxTradesPerDay)
 				return false;
@@ -4620,6 +5142,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			if (!cycleOpen && nowPos != MarketPosition.Flat && qty > 0)
 			{
+				_currentCycleId++;
+				if (!string.IsNullOrWhiteSpace(_lastEntrySignalName))
+					_entrySignalCycleId = _currentCycleId;
+				else
+					_entrySignalCycleId = 0;
 				cycleOpen = true;
 				cycleDirection = side;
 				breakEvenActivated = false;
@@ -4649,6 +5176,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 				cycleDirection = Regime.None;
 				breakEvenActivated = false;
 				entryPrice = 0.0;
+				_lastEntrySignalName = string.Empty;
+				_entrySignalCycleId = 0;
 				_cycleRealizedAtEntry = 0;
 			}
 		}
@@ -4787,7 +5316,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			bool cycleAlreadyOpen = cycleOpen || (Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0);
 			bool canStartCycle = cycleAlreadyOpen || CanStartNewCycle(newRegime);
 
-			decision.RepriceGrid = inWindow && newRegime != Regime.None && !isLockedForDay && canStartCycle;
+			decision.RepriceGrid = inWindow && newRegime != Regime.None && !isLockedForDay && canStartCycle && !IsFailSafeBlocking();
 			decision.CancelSideGridForLimit = !canStartCycle && newRegime != Regime.None;
 			decision.CancelAllGrid = !decision.RepriceGrid && !decision.CancelSideGridForLimit;
 			decision.CancelStopsWhenFlat = decision.CancelAllGrid && (Position == null || Position.MarketPosition == MarketPosition.Flat);
@@ -4797,6 +5326,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private void TryExecute(SignalDecision decision, double vwap, int touched, DateTime nowBrtDt, int nowBrtInt, bool inWindow)
 		{
+			if (IsFailSafeBlocking())
+			{
+				CancelAllGrid("failsafe");
+				CheckFlattenProgress();
+				LogMsg("BRACKET_FAILSAFE_FLATTEN", "failsafe active; skipping trade logic until flat", 1);
+				return;
+			}
+
 			if (decision.RegimeChanged)
 			{
 				lastRegime = currentRegime;
@@ -4916,6 +5453,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 					breakEvenActivated = false;
 					entryPrice = 0.0;
 					dayBreakevenDollars = "-";
+					_lastEntrySignalName = string.Empty;
+					_entrySignalCycleId = 0;
+					_bracketFailSafeActive = false;
 					LogDisplayPanel("BreakEvenReset", "pos=Flat reset breakEvenActivated/entryPrice");
 				}
 
@@ -4942,6 +5482,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 					dayStatus = "Warmup";
 					LogMsg("Skip", "Warmup: CurrentBar < 1", 3);
 					PublishPanelSnapshot("Warmup");
+					return;
+				}
+
+				if (IsFailSafeBlocking())
+				{
+					CancelAllGrid("failsafe");
+					CheckFlattenProgress();
+					PublishPanelSnapshot("FailSafe");
+					LogMsg("BRACKET_FAILSAFE_FLATTEN", "failsafe active; OnBarUpdate skipping operations until flat", 1);
 					return;
 				}
 
@@ -5013,6 +5562,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 						UpdateStreaksIfClosedTradesChanged();
 					}
 					UpdateUnrealizedTicksFromPosition();
+					BracketWatchdog("OnBarUpdate");
 
 					dayStopDollars = $"-{DailyLossLimitUsd:0}";
 					dayTargetDollars = $"+{DailyProfitLimitUsd:0}";
@@ -5109,6 +5659,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 						UpdateStreaksIfClosedTradesChanged();
 					}
 					UpdateUnrealizedTicksFromPosition();
+					BracketWatchdog("OnBarUpdate");
 
 					dayStopDollars = $"-{DailyLossLimitUsd:0}";
 					dayTargetDollars = $"+{DailyProfitLimitUsd:0}";
@@ -5430,6 +5981,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 			bool isOppBand = order.Name != null && order.Name.StartsWith("OppBandExit", StringComparison.OrdinalIgnoreCase);
 			bool isVwap = order.Name != null && order.Name.StartsWith("VWAPExit", StringComparison.OrdinalIgnoreCase);
 			bool isFinTarget = order.Name != null && order.Name.StartsWith("FinTarget", StringComparison.OrdinalIgnoreCase);
+			bool isStopOrder = order.Name != null && order.Name.IndexOf("Stop", StringComparison.OrdinalIgnoreCase) >= 0;
+			bool isTargetOrder = isOppBand || isVwap || isFinTarget;
+			bool shouldTriggerBracketWatchdog = (orderState == OrderState.Rejected || orderState == OrderState.Cancelled) && (isStopOrder || isTargetOrder);
 			bool isCloseBarEntry = order.Name != null &&
 				(order.Name.StartsWith(CloseBarEntryLongName, StringComparison.OrdinalIgnoreCase) ||
 				 order.Name.StartsWith(CloseBarEntryShortName, StringComparison.OrdinalIgnoreCase));
@@ -5446,6 +6000,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					if (oppositeBandExitOrderReplace == order) oppositeBandExitOrderReplace = null;
 					if (orderState == OrderState.Rejected)
 						LogMsg("OppBandExitReplaceFailed", $"name={order.Name} err={error} native={nativeError} lim={limitPrice:0.00}", 1);
+					if (shouldTriggerBracketWatchdog) BracketWatchdog("OnOrderUpdate");
 					return;
 				}
 
@@ -5458,6 +6013,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					oppositeBandExitOrder = order;
 					oppositeBandExitOrderReplace = null;
 					LogMsg("OppBandExitReplaced", $"name={order.Name} newLim={limitPrice:0.00}", 2);
+					if (shouldTriggerBracketWatchdog) BracketWatchdog("OnOrderUpdate");
 					return;
 				}
 			}
@@ -5469,6 +6025,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					if (exitVwapOrderReplace == order) exitVwapOrderReplace = null;
 					if (orderState == OrderState.Rejected)
 						LogMsg("VWAPExitReplaceFailed", $"name={order.Name} err={error} native={nativeError} lim={limitPrice:0.00}", 1);
+					if (shouldTriggerBracketWatchdog) BracketWatchdog("OnOrderUpdate");
 					return;
 				}
 
@@ -5481,6 +6038,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					exitVwapOrder = order;
 					exitVwapOrderReplace = null;
 					LogMsg("VWAPExitReplaced", $"name={order.Name} newLim={limitPrice:0.00}", 2);
+					if (shouldTriggerBracketWatchdog) BracketWatchdog("OnOrderUpdate");
 					return;
 				}
 			}
@@ -5492,6 +6050,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					if (financialTargetOrderReplace == order) financialTargetOrderReplace = null;
 					if (orderState == OrderState.Rejected)
 						LogMsg("FinTargetReplaceFailed", $"name={order.Name} err={error} native={nativeError} lim={limitPrice:0.00}", 1);
+					if (shouldTriggerBracketWatchdog) BracketWatchdog("OnOrderUpdate");
 					return;
 				}
 
@@ -5504,6 +6063,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					financialTargetOrder = order;
 					financialTargetOrderReplace = null;
 					LogMsg("FinTargetReplaced", $"name={order.Name} newLim={limitPrice:0.00}", 2);
+					if (shouldTriggerBracketWatchdog) BracketWatchdog("OnOrderUpdate");
 					return;
 				}
 			}
@@ -5527,6 +6087,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 						if (!isBuy && gridShortReplace[idx] == order) gridShortReplace[idx] = null;
 						if (orderState == OrderState.Rejected)
 							LogMsg("GridReplaceFailed", $"Grid{idx + 1} {order.OrderAction} rejected lim={limitPrice:0.00} err={error} native={nativeError}", 1);
+						if (shouldTriggerBracketWatchdog) BracketWatchdog("OnOrderUpdate");
 						return;
 					}
 
@@ -5551,6 +6112,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 							gridShortReplace[idx] = null;
 						}
 						LogMsg("GridReplaced", $"Grid{idx + 1} action={order.OrderAction} newLim={limitPrice:0.00}", 3);
+						if (shouldTriggerBracketWatchdog) BracketWatchdog("OnOrderUpdate");
 						return;
 					}
 				}
@@ -5581,6 +6143,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					closeBarOrderActiveBar = -1;
 				}
 				ClearOrderReference(order);
+				if (shouldTriggerBracketWatchdog) BracketWatchdog("OnOrderUpdate");
 			}
 			else
 			{
@@ -5596,6 +6159,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 				LogMsg("OrderFill", $"{execution.Order.Name} {execution.Order.OrderAction} qty={quantity} price={price:0.00}", 2);
 
 				MarkBandFilledFromOrderName(execution.Order.Name);
+
+				if (execution.Order.OrderAction == OrderAction.Buy || execution.Order.OrderAction == OrderAction.SellShort)
+				{
+					_lastEntrySignalName = execution.Order.Name;
+					_entrySignalCycleId = _currentCycleId;
+				}
+
+				_lastBracketFillUtc = time.ToUniversalTime();
 
 				if (execution.Order.Name != null &&
 					(execution.Order.Name.StartsWith(CloseBarEntryLongName, StringComparison.OrdinalIgnoreCase) ||
@@ -5624,6 +6195,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 
 			ProcessNewRealtimeTrades();
+			BracketWatchdog("OnExecutionUpdate");
 		}
 		#endregion
 
