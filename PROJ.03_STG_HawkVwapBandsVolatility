@@ -3578,7 +3578,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				return;
 
 			string stopReason;
-			string targetReason;
+			string targetReason = string.Empty;
 			double stopPrice;
 			double targetPrice;
 
@@ -4558,6 +4558,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			if (Position.MarketPosition == MarketPosition.Long)
 			{
+				string fromEntry = null;
 				if (exitVwapOrder != null && IsActiveOrSubmitted(exitVwapOrder))
 				{
 					if (Math.Abs(exitVwapOrder.LimitPrice - vwap) > repricingThreshold ||
@@ -4571,7 +4572,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 							LogMsg("OrderBlock", "blocked working exit order for VWAPExitReplace", 3);
 							return;
 						}
-						string fromEntry = GetFromEntrySignal();
+						fromEntry = GetFromEntrySignal();
 						exitVwapOrderReplace = ExitLongLimit(0, true, qty, vwap, "VWAPExitL_R", fromEntry);
 						if (exitVwapOrderReplace != null)
 						{
@@ -4591,7 +4592,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					LogMsg("OrderBlock", "blocked working exit order for VWAPExitNew", 3);
 					return;
 				}
-				string fromEntry = GetFromEntrySignal();
+				fromEntry = GetFromEntrySignal();
 				exitVwapOrder = ExitLongLimit(0, true, qty, vwap, "VWAPExitL", fromEntry);
 				if (exitVwapOrder != null)
 				{
@@ -4601,6 +4602,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 			else if (Position.MarketPosition == MarketPosition.Short)
 			{
+				string fromEntry = null;
 				if (exitVwapOrder != null && IsActiveOrSubmitted(exitVwapOrder))
 				{
 					if (Math.Abs(exitVwapOrder.LimitPrice - vwap) > repricingThreshold ||
@@ -4614,7 +4616,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 							LogMsg("OrderBlock", "blocked working exit order for VWAPExitReplace", 3);
 							return;
 						}
-						string fromEntry = GetFromEntrySignal();
+						fromEntry = GetFromEntrySignal();
 						exitVwapOrderReplace = ExitShortLimit(0, true, qty, vwap, "VWAPExitS_R", fromEntry);
 						if (exitVwapOrderReplace != null)
 						{
@@ -4634,7 +4636,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					LogMsg("OrderBlock", "blocked working exit order for VWAPExitNew", 3);
 					return;
 				}
-				string fromEntry = GetFromEntrySignal();
+				fromEntry = GetFromEntrySignal();
 				exitVwapOrder = ExitShortLimit(0, true, qty, vwap, "VWAPExitS", fromEntry);
 				if (exitVwapOrder != null)
 				{
