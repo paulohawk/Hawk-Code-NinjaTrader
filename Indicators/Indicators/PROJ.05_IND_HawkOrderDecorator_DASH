@@ -673,12 +673,10 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Display(Name = "Decorator Gap (px)", Description = "Gap à esquerda do bloco padrão do ChartTrader", GroupName = "UI", Order = 100)]
         public int FlexGapWidth { get; set; }
 
-        [Browsable(false)]
         [NinjaScriptProperty]
         [Display(Name = "Enable Verbose Log", Description = "Ativa log detalhado para suporte técnico.", GroupName = "Support", Order = 300)]
         public bool EnableVerboseLog { get; set; }
 
-        [Browsable(false)]
         [NinjaScriptProperty]
         [Display(Name = "Log Level", Description = "Nível mínimo de log quando EnableVerboseLog estiver ativo.", GroupName = "Support", Order = 310)]
         public LogLevelSetting LogLevel { get; set; }
