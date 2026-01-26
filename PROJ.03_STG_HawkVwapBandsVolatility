@@ -5558,7 +5558,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private bool HandleAutoCloseState(string sourceTag, DateTime? nowOverride = null)
 		{
-			if (State != State.Realtime || isAnalyzerMode)
+			if (State != State.Realtime)
 				return false;
 
 			DateTime nowSource = nowOverride ?? GetNowSource();
@@ -6013,11 +6013,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 				UpdateSnapshot("bar");
 				EnsurePanelInitializedOnce();
 
-				if (HandleAutoCloseState("OnBarUpdate"))
-					return;
-
 				if (BarsInProgress == 1)
 				{
+					if (State == State.Realtime && HandleAutoCloseState("OnBarUpdate"))
+						return;
+
 					var nowBrtDtClock = GetNowBrt();
 					DateTime calDayClock = nowBrtDtClock.Date;
 					ApplyDailyResetIfNeeded(calDayClock);
@@ -6509,8 +6509,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 				dayStatus = "Waiting";
 				lastAutoCloseDate = DateTime.MinValue;
 				_autoCloseWindowReached = false;
-				_autoCloseTriggered = false;
-				_autoCloseArmedForDay = State != State.Realtime;
+					_autoCloseTriggered = false;
+					_autoCloseArmedForDay = false;
 				_preCloseInProgress = false;
 
 				lastRegime = currentRegime;
