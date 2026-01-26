@@ -1974,7 +1974,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private bool isLockedForDay = false;
 		private double realizedPnlDay = 0;
 
-		private int startHHmmss, stopHHmmss, flattenHHmmss;
+		private int stopHHmmss, flattenHHmmss;
 		private TimeSpan flattenSpan = new TimeSpan(17, 0, 0);
 		private HVB_PanelHelper panelHelper;
 		private DateTime lastPanelPub = DateTime.MinValue;
@@ -2066,6 +2066,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private int[] _lastGridRepriceBarLong = new int[5];
 		private int[] _lastGridRepriceBarShort = new int[5];
 
+		private TimeZoneInfo _brtTimeZone;
+		private TimeZoneInfo _usEasternTimeZone;
+
 		private bool _panelCacheLoaded = false;
 		private DateTime _lastPanelCacheSaveUtc = DateTime.MinValue;
 		private readonly TimeSpan _panelCacheSaveThrottle = TimeSpan.FromSeconds(5);
@@ -2115,7 +2118,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 				}
 				else if (State == State.Configure)
 				{
-					startHHmmss = ParseHms(StartTimeBrt);
+					_brtTimeZone = GetBrasiliaTimeZone();
+					_usEasternTimeZone = GetUsEasternTimeZone();
+
 					stopHHmmss = ParseHms(StopNewTradesTimeBrt);
 					flattenHHmmss = ParseHms(FlattenTimeBrt);
 					TimeSpan ts;
@@ -2419,16 +2424,52 @@ namespace NinjaTrader.NinjaScript.Strategies
 			return h * 10000 + m * 100 + sec;
 		}
 
-		private DateTime ConvertToBrasilia(DateTime dt)
+		private int ToHhmmss(TimeSpan time)
+		{
+			return time.Hours * 10000 + time.Minutes * 100 + time.Seconds;
+		}
+
+		private TimeZoneInfo GetBrasiliaTimeZone()
 		{
 			try
 			{
+				if (_brtTimeZone != null) return _brtTimeZone;
+
 				TimeZoneInfo brt = null;
 				string[] possibleIds = new string[] { "E. South America Standard Time", "America/Sao_Paulo", "SA Eastern Standard Time" };
 				foreach (var id in possibleIds)
 				{
 					try { brt = TimeZoneInfo.FindSystemTimeZoneById(id); if (brt != null) break; } catch { }
 				}
+				_brtTimeZone = brt;
+				return brt;
+			}
+			catch { return null; }
+		}
+
+		private TimeZoneInfo GetUsEasternTimeZone()
+		{
+			try
+			{
+				if (_usEasternTimeZone != null) return _usEasternTimeZone;
+
+				TimeZoneInfo eastern = null;
+				string[] possibleIds = new string[] { "Eastern Standard Time", "America/New_York" };
+				foreach (var id in possibleIds)
+				{
+					try { eastern = TimeZoneInfo.FindSystemTimeZoneById(id); if (eastern != null) break; } catch { }
+				}
+				_usEasternTimeZone = eastern;
+				return eastern;
+			}
+			catch { return null; }
+		}
+
+		private DateTime ConvertToBrasilia(DateTime dt)
+		{
+			try
+			{
+				TimeZoneInfo brt = GetBrasiliaTimeZone();
 
 				if (brt == null) return dt.ToLocalTime();
 
@@ -2448,13 +2489,62 @@ namespace NinjaTrader.NinjaScript.Strategies
 			catch { return dt; }
 		}
 
+		private DateTime ConvertToUsEastern(DateTime dt)
+		{
+			try
+			{
+				TimeZoneInfo eastern = GetUsEasternTimeZone();
+				if (eastern == null) return dt;
+
+				if (dt.Kind == DateTimeKind.Utc) return TimeZoneInfo.ConvertTimeFromUtc(dt, eastern);
+				if (dt.Kind == DateTimeKind.Local)
+					return TimeZoneInfo.ConvertTime(dt, TimeZoneInfo.Local, eastern);
+
+				TimeZoneInfo brt = GetBrasiliaTimeZone();
+				if (brt != null)
+				{
+					var unspecified = DateTime.SpecifyKind(dt, DateTimeKind.Unspecified);
+					return TimeZoneInfo.ConvertTime(unspecified, brt, eastern);
+				}
+
+				return TimeZoneInfo.ConvertTime(DateTime.SpecifyKind(dt, DateTimeKind.Unspecified), eastern);
+			}
+			catch { return dt; }
+		}
+
+		private bool IsUsaDstForTradingDay(DateTime tradingDayBrt)
+		{
+			try
+			{
+				TimeZoneInfo eastern = GetUsEasternTimeZone();
+				if (eastern == null) return false;
+
+				DateTime referenceBrt = tradingDayBrt.Date.AddHours(12);
+				DateTime easternTime = ConvertToUsEastern(referenceBrt);
+				return eastern.IsDaylightSavingTime(easternTime);
+			}
+			catch { return false; }
+		}
+
+		private TimeSpan GetStartAnalysisTimeBrt(DateTime tradingDayBrt)
+		{
+			bool usaDst = IsUsaDstForTradingDay(tradingDayBrt);
+
+			// REGRA FINAL:
+			// Nov–Mar  → 10:00 BRT
+			// Mar–Nov  → 09:00 BRT
+			return usaDst
+				? new TimeSpan(9, 0, 0)
+				: new TimeSpan(10, 0, 0);
+		}
+
 		private int ToBrtHHmmss(DateTime t)
 		{
 			var brt = ConvertToBrasilia(t).AddMinutes(UserBrtOffsetMinutes);
 			return ToTime(brt);
 		}
 
-		private bool InTradingWindow(int nowBrt) => nowBrt >= startHHmmss && nowBrt < stopHHmmss;
+		private bool InTradingWindow(int nowBrt, int startAnalysisHhmmss) => nowBrt >= startAnalysisHhmmss && nowBrt < stopHHmmss;
 		private bool IsFlattenWindow(int nowBrt) => nowBrt >= flattenHHmmss;
 
 		private string GetCacheKey()
@@ -5942,6 +6032,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 				int nowBrtInt = ToBrtHHmmss(Time[0]);
 				DateTime calDay = nowBrtDt.Date;
 				bool isAnalyzer = (ChartControl == null);
+				TimeSpan startAnalysisTime = GetStartAnalysisTimeBrt(calDay);
+				int startAnalysisInt = ToHhmmss(startAnalysisTime);
 
 				ApplyDailyResetIfNeeded(calDay);
 
@@ -6023,12 +6115,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 						}
 					}
 
-					bool inWindow = InTradingWindow(nowBrtInt) && !isLockedForDay;
+					bool inWindow = InTradingWindow(nowBrtInt, startAnalysisInt) && !isLockedForDay;
 					if (isAnalyzer && IgnoreWindowInAnalyzer)
 						inWindow = !isLockedForDay;
 
 					if (!isLockedForDay)
-						dayStatus = inWindow ? "Trading" : (nowBrtInt < startHHmmss ? "BeforeStart" : "StopNewTrades");
+						dayStatus = inWindow ? "Trading" : (nowBrtInt < startAnalysisInt ? "BeforeStart" : "StopNewTrades");
 					else
 						dayStatus = "Locked";
 
@@ -6118,12 +6210,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 						}
 					}
 
-					bool inWindow = InTradingWindow(nowBrtInt) && !isLockedForDay;
+					bool inWindow = InTradingWindow(nowBrtInt, startAnalysisInt) && !isLockedForDay;
 					if (isAnalyzer && IgnoreWindowInAnalyzer)
 						inWindow = !isLockedForDay;
 
 					if (!isLockedForDay)
-						dayStatus = inWindow ? "Trading" : (nowBrtInt < startHHmmss ? "BeforeStart" : "StopNewTrades");
+						dayStatus = inWindow ? "Trading" : (nowBrtInt < startAnalysisInt ? "BeforeStart" : "StopNewTrades");
 					else
 						dayStatus = "Locked";
 
