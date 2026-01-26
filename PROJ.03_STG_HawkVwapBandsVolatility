@@ -5558,6 +5558,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private bool HandleAutoCloseState(string sourceTag, DateTime? nowOverride = null)
 		{
+			if (State != State.Realtime)
+				return false;
+
 			DateTime nowSource = nowOverride ?? GetNowSource();
 			DateTime nowBrt = GetNowBrt(nowSource);
 			DateTime calDay = nowBrt.Date;
@@ -5566,11 +5569,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			GetAutoCloseSchedule(calDay, out TimeSpan preCloseTime, out TimeSpan autoCloseTime, out bool usaDst);
 
-			if (State != State.Realtime || isAnalyzerMode)
-			{
-				_autoCloseArmedForDay = true;
-			}
-			else if (!_autoCloseArmedForDay && nowBrt.TimeOfDay < autoCloseTime)
+			if (!_autoCloseArmedForDay && nowBrt.TimeOfDay < autoCloseTime)
 			{
 				_autoCloseArmedForDay = true;
 			}
@@ -6014,11 +6013,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 				UpdateSnapshot("bar");
 				EnsurePanelInitializedOnce();
 
-				if (HandleAutoCloseState("OnBarUpdate"))
-					return;
-
 				if (BarsInProgress == 1)
 				{
+					if (State == State.Realtime && HandleAutoCloseState("OnBarUpdate"))
+						return;
+
 					var nowBrtDtClock = GetNowBrt();
 					DateTime calDayClock = nowBrtDtClock.Date;
 					ApplyDailyResetIfNeeded(calDayClock);
@@ -6076,7 +6075,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				}
 
 				var nowBrtDt = ConvertToBrasilia(Time[0]).AddMinutes(UserBrtOffsetMinutes);
-				GetAutoCloseSchedule(nowBrtDt.Date, out _, out TimeSpan autoCloseTime, out _);
 				int nowBrtInt = ToBrtHHmmss(Time[0]);
 				DateTime calDay = nowBrtDt.Date;
 				bool isAnalyzer = (ChartControl == null);
@@ -6163,16 +6161,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 						}
 					}
 
-				bool autoCloseEntryBlocked = _autoCloseWindowReached || _autoCloseTriggered;
-				bool autoCloseArmingBlocked = State == State.Realtime && !_autoCloseArmedForDay && nowBrtDt.TimeOfDay >= autoCloseTime;
-				bool inWindow = InTradingWindow(nowBrtInt, startAnalysisInt) && !isLockedForDay && !autoCloseEntryBlocked && !autoCloseArmingBlocked;
+				bool inWindow = InTradingWindow(nowBrtInt, startAnalysisInt) && !isLockedForDay;
 				if (isAnalyzer && IgnoreWindowInAnalyzer)
-					inWindow = !isLockedForDay && !autoCloseEntryBlocked && !autoCloseArmingBlocked;
+					inWindow = !isLockedForDay;
 
 				if (!isLockedForDay)
-					dayStatus = autoCloseEntryBlocked
-						? "PreClose"
-						: (autoCloseArmingBlocked ? "StopNewTrades" : (inWindow ? "Trading" : (nowBrtInt < startAnalysisInt ? "BeforeStart" : "StopNewTrades")));
+					dayStatus = inWindow ? "Trading" : (nowBrtInt < startAnalysisInt ? "BeforeStart" : "StopNewTrades");
 				else
 					dayStatus = "Locked";
 
@@ -6262,16 +6256,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 						}
 					}
 
-					bool autoCloseEntryBlocked = _autoCloseWindowReached || _autoCloseTriggered;
-					bool autoCloseArmingBlocked = State == State.Realtime && !_autoCloseArmedForDay && nowBrtDt.TimeOfDay >= autoCloseTime;
-					bool inWindow = InTradingWindow(nowBrtInt, startAnalysisInt) && !isLockedForDay && !autoCloseEntryBlocked && !autoCloseArmingBlocked;
+					bool inWindow = InTradingWindow(nowBrtInt, startAnalysisInt) && !isLockedForDay;
 					if (isAnalyzer && IgnoreWindowInAnalyzer)
-						inWindow = !isLockedForDay && !autoCloseEntryBlocked && !autoCloseArmingBlocked;
+						inWindow = !isLockedForDay;
 
 					if (!isLockedForDay)
-						dayStatus = autoCloseEntryBlocked
-							? "PreClose"
-							: (autoCloseArmingBlocked ? "StopNewTrades" : (inWindow ? "Trading" : (nowBrtInt < startAnalysisInt ? "BeforeStart" : "StopNewTrades")));
+						dayStatus = inWindow ? "Trading" : (nowBrtInt < startAnalysisInt ? "BeforeStart" : "StopNewTrades");
 					else
 						dayStatus = "Locked";
 
@@ -6519,8 +6509,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 				dayStatus = "Waiting";
 				lastAutoCloseDate = DateTime.MinValue;
 				_autoCloseWindowReached = false;
-				_autoCloseTriggered = false;
-				_autoCloseArmedForDay = State != State.Realtime;
+					_autoCloseTriggered = false;
+					_autoCloseArmedForDay = false;
 				_preCloseInProgress = false;
 
 				lastRegime = currentRegime;
