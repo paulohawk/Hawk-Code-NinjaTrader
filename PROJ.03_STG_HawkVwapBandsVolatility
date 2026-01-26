@@ -6076,7 +6076,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				}
 
 				var nowBrtDt = ConvertToBrasilia(Time[0]).AddMinutes(UserBrtOffsetMinutes);
-				GetAutoCloseSchedule(nowBrtDt.Date, out _, out TimeSpan autoCloseTime, out _);
 				int nowBrtInt = ToBrtHHmmss(Time[0]);
 				DateTime calDay = nowBrtDt.Date;
 				bool isAnalyzer = (ChartControl == null);
@@ -6163,16 +6162,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 						}
 					}
 
-				bool autoCloseEntryBlocked = _autoCloseWindowReached || _autoCloseTriggered;
-				bool autoCloseArmingBlocked = State == State.Realtime && !_autoCloseArmedForDay && nowBrtDt.TimeOfDay >= autoCloseTime;
-				bool inWindow = InTradingWindow(nowBrtInt, startAnalysisInt) && !isLockedForDay && !autoCloseEntryBlocked && !autoCloseArmingBlocked;
+				bool inWindow = InTradingWindow(nowBrtInt, startAnalysisInt) && !isLockedForDay;
 				if (isAnalyzer && IgnoreWindowInAnalyzer)
-					inWindow = !isLockedForDay && !autoCloseEntryBlocked && !autoCloseArmingBlocked;
+					inWindow = !isLockedForDay;
 
 				if (!isLockedForDay)
-					dayStatus = autoCloseEntryBlocked
-						? "PreClose"
-						: (autoCloseArmingBlocked ? "StopNewTrades" : (inWindow ? "Trading" : (nowBrtInt < startAnalysisInt ? "BeforeStart" : "StopNewTrades")));
+					dayStatus = inWindow ? "Trading" : (nowBrtInt < startAnalysisInt ? "BeforeStart" : "StopNewTrades");
 				else
 					dayStatus = "Locked";
 
@@ -6262,16 +6257,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 						}
 					}
 
-					bool autoCloseEntryBlocked = _autoCloseWindowReached || _autoCloseTriggered;
-					bool autoCloseArmingBlocked = State == State.Realtime && !_autoCloseArmedForDay && nowBrtDt.TimeOfDay >= autoCloseTime;
-					bool inWindow = InTradingWindow(nowBrtInt, startAnalysisInt) && !isLockedForDay && !autoCloseEntryBlocked && !autoCloseArmingBlocked;
+					bool inWindow = InTradingWindow(nowBrtInt, startAnalysisInt) && !isLockedForDay;
 					if (isAnalyzer && IgnoreWindowInAnalyzer)
-						inWindow = !isLockedForDay && !autoCloseEntryBlocked && !autoCloseArmingBlocked;
+						inWindow = !isLockedForDay;
 
 					if (!isLockedForDay)
-						dayStatus = autoCloseEntryBlocked
-							? "PreClose"
-							: (autoCloseArmingBlocked ? "StopNewTrades" : (inWindow ? "Trading" : (nowBrtInt < startAnalysisInt ? "BeforeStart" : "StopNewTrades")));
+						dayStatus = inWindow ? "Trading" : (nowBrtInt < startAnalysisInt ? "BeforeStart" : "StopNewTrades");
 					else
 						dayStatus = "Locked";
 
