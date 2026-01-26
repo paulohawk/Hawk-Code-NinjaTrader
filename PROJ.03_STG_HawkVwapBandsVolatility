@@ -5558,6 +5558,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private bool HandleAutoCloseState(string sourceTag, DateTime? nowOverride = null)
 		{
+			if (State != State.Realtime || isAnalyzerMode)
+				return false;
+
 			DateTime nowSource = nowOverride ?? GetNowSource();
 			DateTime nowBrt = GetNowBrt(nowSource);
 			DateTime calDay = nowBrt.Date;
@@ -5566,11 +5569,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			GetAutoCloseSchedule(calDay, out TimeSpan preCloseTime, out TimeSpan autoCloseTime, out bool usaDst);
 
-			if (State != State.Realtime || isAnalyzerMode)
-			{
-				_autoCloseArmedForDay = true;
-			}
-			else if (!_autoCloseArmedForDay && nowBrt.TimeOfDay < autoCloseTime)
+			if (!_autoCloseArmedForDay && nowBrt.TimeOfDay < autoCloseTime)
 			{
 				_autoCloseArmedForDay = true;
 			}
