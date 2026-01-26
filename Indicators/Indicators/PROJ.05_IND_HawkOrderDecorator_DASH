@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
-using System.Threading;
 using System.Windows;
 using System.Windows.Media;
 using System.Xml.Serialization;
@@ -62,8 +61,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private float sampleTextWidth;
         private const string sampleText = "XXXXXXXX XXX XXXX";
         private volatile string lastSnapshotSignature = string.Empty;
-        private long lastComputeLogTicks;
-        private const int computeValuesDebugThrottleMs = 250;
+        private int lastRenderCount;
 
         #region Ninja defaults
         protected override void OnStateChange()
@@ -105,23 +103,18 @@ namespace NinjaTrader.NinjaScript.Indicators
             else if (State == State.Configure)
             {
                 SubscribeAccounts();
-                LogVerbose(LogLevelSetting.INFO, "Init", "State.Configure: subscriptions registered.");
             }
             else if (State == State.DataLoaded)
             {
                 HookAccountSelector();
-                LogVerbose(LogLevelSetting.INFO, "Init", "State.DataLoaded: account selector hooked.");
-                LogVerbose(LogLevelSetting.INFO, "Init", $"Chart/Instrument detected. ChartControl={(ChartControl != null ? "yes" : "no")}, Instrument={Instrument?.FullName ?? "n/a"}.");
             }
             else if (State == State.Realtime)
             {
-                LogVerbose(LogLevelSetting.INFO, "Init", "State.Realtime: initial compute and refresh.");
                 ComputeValues();
                 ForceRefresh();
             }
             else if (State == State.Terminated)
             {
-                LogVerbose(LogLevelSetting.INFO, "Dispose", "State.Terminated: unhooking subscriptions.");
                 UnsubscribeAccounts();
                 UnsubscribeChartTraderVisibility();
                 UnhookAccountSelector();
@@ -159,7 +152,6 @@ namespace NinjaTrader.NinjaScript.Indicators
         private void AccountSelector_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
         {
             selectedAccount = accountSelector?.SelectedAccount;
-            LogVerbose(LogLevelSetting.INFO, "Init", $"Account selector changed. SelectedAccount={selectedAccount?.Name ?? "null"}");
             ComputeValues();
         }
         #endregion
@@ -230,28 +222,24 @@ namespace NinjaTrader.NinjaScript.Indicators
             var st = e.OrderState;
             if (st != OrderState.Accepted && st != OrderState.Working && st != OrderState.PartFilled && st != OrderState.Filled)
                 return;
-            LogVerbose(LogLevelSetting.DEBUG, "OrderUpdate", $"OrderUpdate: State={st}, OrderId={e.Order?.OrderId}, Qty={e.Order?.Quantity}.");
             ComputeValues();
         }
 
         private void OnExecutionUpdate(object sender, ExecutionEventArgs e)
         {
             if (e == null || e.Execution == null) return;
-            LogVerbose(LogLevelSetting.DEBUG, "ExecutionUpdate", $"ExecutionUpdate: OrderId={e.Execution?.Order?.OrderId}, Qty={e.Execution?.Quantity}.");
             ComputeValues();
         }
 
         private void OnPositionUpdate(object sender, PositionEventArgs e)
         {
             if (e == null || e.Position == null) return;
-            LogVerbose(LogLevelSetting.DEBUG, "PositionUpdate", $"PositionUpdate: MarketPosition={e.Position?.MarketPosition}, Qty={e.Position?.Quantity}.");
             ComputeValues();
         }
 
         private void OnAccountItemUpdate(object sender, AccountItemEventArgs e)
         {
             if (e.AccountItem != AccountItem.UnrealizedProfitLoss) return;
-            LogVerbose(LogLevelSetting.DEBUG, "AccountItemUpdate", $"AccountItemUpdate: {e.AccountItem}.");
             ComputeValues();
         }
 
@@ -264,18 +252,15 @@ namespace NinjaTrader.NinjaScript.Indicators
         #region Core compute
         private void ComputeValues()
         {
-            LogVerboseThrottled(LogLevelSetting.DEBUG, "ComputeValues", "Start ComputeValues.");
             List<DecorSnapshot> snapshots = new List<DecorSnapshot>();
 
             if (State == State.Terminated)
             {
-                LogVerbose(LogLevelSetting.WARN, "ComputeValues", "Early return: State.Terminated.");
                 return;
             }
             if (ChartControl == null || Instrument == null)
             {
-                LogVerbose(LogLevelSetting.WARN, "ComputeValues", "Early return: ChartControl or Instrument not available.");
-                UpdateRenderCacheIfChanged(Array.Empty<DecorSnapshot>(), "Missing ChartControl/Instrument");
+                UpdateRenderCacheIfChanged(Array.Empty<DecorSnapshot>(), "Missing ChartControl/Instrument", false);
                 return;
             }
 
@@ -304,11 +289,9 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             if (selectedAccount == null)
             {
-                LogVerbose(LogLevelSetting.WARN, "ComputeValues", "Early return: no account available.");
-                UpdateRenderCacheIfChanged(Array.Empty<DecorSnapshot>(), "No account available");
+                UpdateRenderCacheIfChanged(Array.Empty<DecorSnapshot>(), "No account available", false);
                 return;
             }
-            LogVerbose(LogLevelSetting.INFO, "ComputeValues", $"SelectedAccount={selectedAccount?.Name ?? "null"}.");
 
             int ordersVisited = 0;
             foreach (var pos in selectedAccount.Positions)
@@ -368,15 +351,13 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             if (toRender.Count == 0)
             {
-                LogVerbose(LogLevelSetting.INFO, "ComputeValues", $"No decorators found. OrdersVisited={ordersVisited}.");
-                UpdateRenderCacheIfChanged(Array.Empty<DecorSnapshot>(), "No decorators found");
+                UpdateRenderCacheIfChanged(Array.Empty<DecorSnapshot>(), "No decorators found", true);
                 return;
             }
 
             snapshots = BuildSnapshots(toRender);
 
-            LogVerbose(LogLevelSetting.INFO, "ComputeValues", $"DecoratorsGenerated={snapshots.Count}, OrdersVisited={ordersVisited}.");
-            UpdateRenderCacheIfChanged(snapshots.ToArray(), "Snapshots updated");
+            UpdateRenderCacheIfChanged(snapshots.ToArray(), "Snapshots updated", true);
         }
 
         private List<DecorSnapshot> BuildSnapshots(Dictionary<double, DecorInfo> toRender)
@@ -407,18 +388,21 @@ namespace NinjaTrader.NinjaScript.Indicators
             });
         }
 
-        private void UpdateRenderCacheIfChanged(DecorSnapshot[] snapshots, string reason)
+        private void UpdateRenderCacheIfChanged(DecorSnapshot[] snapshots, string reason, bool logChange)
         {
             string signature = BuildSnapshotSignature(snapshots);
             if (signature == lastSnapshotSignature)
             {
-                LogVerbose(LogLevelSetting.DEBUG, "ComputeValues", $"Skip UpdateRenderCache: signature unchanged. Reason={reason}.");
                 return;
             }
 
             lastSnapshotSignature = signature;
+            int previousCount = lastRenderCount;
+            int newCount = snapshots?.Length ?? 0;
+            lastRenderCount = newCount;
             UpdateRenderCache(snapshots);
-            LogVerbose(LogLevelSetting.DEBUG, "ComputeValues", $"UpdateRenderCache executed. Reason={reason}.");
+            if (logChange)
+                LogSnapshotChange(previousCount, newCount, reason);
         }
 
         private string BuildSnapshotSignature(DecorSnapshot[] snapshots)
@@ -465,12 +449,11 @@ namespace NinjaTrader.NinjaScript.Indicators
             var localCache = renderCache;
             if (localCache == null || localCache.Length == 0) return;
             if (ChartPanel == null) return;
-            if (chartControl == null) { LogVerbose(LogLevelSetting.WARN, "OnRender", "Render aborted: chartControl null."); return; }
-            if (ChartBars == null) { LogVerbose(LogLevelSetting.WARN, "OnRender", "Render aborted: ChartBars null."); return; }
-            if (chartScale == null) { LogVerbose(LogLevelSetting.WARN, "OnRender", "Render aborted: chartScale null."); return; }
+            if (chartControl == null) return;
+            if (ChartBars == null) return;
+            if (chartScale == null) return;
             if (chartScale.MinValue >= chartScale.MaxValue)
             {
-                LogVerbose(LogLevelSetting.WARN, "OnRender", "Render aborted: chartScale invalid (Min >= Max).");
                 return;
             }
 
@@ -524,7 +507,8 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             catch (Exception ex)
             {
-                LogVerbose(LogLevelSetting.ERROR, "OnRender", $"Render exception: {ex.GetType().Name} - {ex.Message}");
+                if (IsSupportLoggingEnabled())
+                    Print($"[HawkOrderDecorator][ERROR] Render failed: {ex}");
             }
         }
 
@@ -556,49 +540,21 @@ namespace NinjaTrader.NinjaScript.Indicators
         #endregion
 
         #region Logging
-        private void LogVerbose(LogLevelSetting level, string context, string message)
+        private bool IsSupportLoggingEnabled()
         {
-            if (!EnableVerboseLog)
+            return EnableVerboseLog && State == State.Realtime;
+        }
+
+        private void LogSnapshotChange(int previousCount, int newCount, string reason)
+        {
+            if (!IsSupportLoggingEnabled())
                 return;
 
-            if (!ShouldLog(level))
+            if (!ShouldLog(LogLevelSetting.INFO))
                 return;
 
             string instrument = Instrument?.FullName ?? "n/a";
-            string bars = BarsPeriod == null ? "n/a" : $"{BarsPeriod.Value} {BarsPeriod.BarsPeriodType}";
-            string chartId = ChartControl?.OwnerChart?.GetHashCode().ToString() ?? "n/a";
-            string account = selectedAccount?.Name ?? "n/a";
-            string threadLabel = GetThreadLabel();
-            string timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
-
-            string log = $"[{timestamp}] [HawkOrderDecorator] [{level}] [{context}] " +
-                         $"Instrument={instrument} Bars={bars} ChartId={chartId} Account={account} " +
-                         $"Thread={threadLabel} Message={message}";
-            try
-            {
-                Print(log);
-            }
-            catch { }
-        }
-
-        private void LogVerboseThrottled(LogLevelSetting level, string context, string message)
-        {
-            if (!EnableVerboseLog)
-                return;
-
-            if (!ShouldLog(level))
-                return;
-
-            if (level == LogLevelSetting.DEBUG)
-            {
-                long nowTicks = DateTime.UtcNow.Ticks;
-                long lastTicks = Interlocked.Read(ref lastComputeLogTicks);
-                if (nowTicks - lastTicks < TimeSpan.FromMilliseconds(computeValuesDebugThrottleMs).Ticks)
-                    return;
-                Interlocked.Exchange(ref lastComputeLogTicks, nowTicks);
-            }
-
-            LogVerbose(level, context, message);
+            Print($"[HawkOrderDecorator][STATE] Instrument={instrument} PrevDecorators={previousCount} NewDecorators={newCount} Reason={reason}");
         }
 
         private bool ShouldLog(LogLevelSetting level)
@@ -621,25 +577,6 @@ namespace NinjaTrader.NinjaScript.Indicators
             };
         }
 
-        private string GetThreadLabel()
-        {
-            try
-            {
-                var dispatcher = ChartControl?.Dispatcher;
-                if (dispatcher != null && dispatcher.CheckAccess())
-                    return "UI";
-            }
-            catch { }
-
-            try
-            {
-                return $"Worker:{Thread.CurrentThread.ManagedThreadId}";
-            }
-            catch
-            {
-                return "Worker";
-            }
-        }
         #endregion
 
         #region Parameters
