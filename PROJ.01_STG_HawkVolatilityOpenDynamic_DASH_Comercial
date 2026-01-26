@@ -1988,11 +1988,11 @@ namespace NinjaTrader.NinjaScript.Strategies
         private const int AutoCloseMaxWindowMinutes = 15;
         private static readonly TimeSpan AutoCloseMaxDuration = new TimeSpan(5, 30, 0);
         // ============================
-        // OVERLAY TIME (Chart-time based, same clock as Entry)
+        // OVERLAY TIME (fixed BRT window)
         // ============================
-        // Overlay baseado no cronômetro ancorado no horário de entrada planejada.
         private static readonly TimeSpan OverlayAnchorOffset = new TimeSpan(0, 29, 30);
-        private static readonly TimeSpan OverlayDuration = new TimeSpan(9, 0, 0);
+        private static readonly TimeSpan OverlayStartTime = new TimeSpan(11, 0, 0);
+        private static readonly TimeSpan OverlayEndTime = new TimeSpan(20, 0, 0);
         private bool overlayPenaltyOnEnable = false;
         private bool overlayPenaltyCaptured = false;
         private DateTime overlayPenaltyTradingDay = Core.Globals.MinDate;
@@ -2330,9 +2330,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 DateTime overlayEnd;
                 DateTime overlayCutoff;
                 DateTime nowRaw = GetSafeTime();
-                DateTime nowOverlay = GetOverlayNow();
-                GetOverlayWindowDecision(nowOverlay, out overlayTradingDay, out overlayStart, out overlayEnd, out overlayCutoff);
-                bool isInsideOperationalWindow = IsInsideWindow(nowOverlay, overlayStart, overlayEnd);
+                GetOverlayWindowDecision(nowRaw, out overlayTradingDay, out overlayStart, out overlayEnd, out overlayCutoff);
+                bool isInsideOperationalWindow = IsInsideWindow(nowRaw, overlayStart, overlayEnd);
                 bool penaltyNow = isInsideOperationalWindow;
                 overlayPenaltyTradingDay = overlayTradingDay.Date;
                 overlayStartCached = overlayStart;
@@ -2345,11 +2344,11 @@ namespace NinjaTrader.NinjaScript.Strategies
                 string enableMessage = overlayPenaltyOnEnable ? "Attention" : "Status";
                 bool isPlayback = IsPlaybackAccount();
                 Log("OverlayEnableDecision",
-                    $"nowRaw={nowRaw:O} nowOverlay={nowOverlay:O} overlayStart={overlayStart:O} cutoff={overlayCutoff:O} overlayEnd={overlayEnd:O} penalty={overlayPenaltyOnEnable} inside={isInsideOperationalWindow} replay={isPlayback}");
+                    $"nowRaw={nowRaw:O} overlayStart={overlayStart:O} cutoff={overlayCutoff:O} overlayEnd={overlayEnd:O} penalty={overlayPenaltyOnEnable} inside={isInsideOperationalWindow} replay={isPlayback}");
                 Log("PanelRiskMessage",
                     $"reason=Enable message={enableMessage} overlayPenaltyOnEnable={overlayPenaltyOnEnable} isInsideOperationalWindow={isInsideOperationalWindow} offSnapshot=false state={State} td={overlayTradingDay:yyyy-MM-dd}");
                 if (overlayVisibleNow)
-                    riskOverlayHelper?.TryShow(this, overlayTradingDay, nowOverlay, overlayStartCached, overlayEndCached);
+                    riskOverlayHelper?.TryShow(this, overlayTradingDay, nowRaw, overlayStart, overlayEnd);
                 else
                     riskOverlayHelper?.Remove();
             }
@@ -3862,20 +3861,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                    acc.IndexOf("playback", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
-        private DateTime ConvertBrToFeedForOverlay(DateTime t, bool isPlayback)
-        {
-            if (!isPlayback)
-                return t;
-            return t.AddHours(-3);
-        }
-
-        private DateTime GetOverlayNow()
-        {
-            DateTime nowRaw = GetSafeTime();
-            return ConvertBrToFeedForOverlay(nowRaw, IsPlaybackAccount());
-        }
-
-
         private void GetOverlayWindowDecision(DateTime nowDecision, out DateTime tradingDay, out DateTime overlayStart, out DateTime overlayEnd, out DateTime cutoff)
         {
             GetOverlayWindow(nowDecision, out tradingDay, out overlayStart, out overlayEnd);
@@ -3890,24 +3875,11 @@ namespace NinjaTrader.NinjaScript.Strategies
         private void GetOverlayWindow(DateTime referenceTime, out DateTime tradingDay, out DateTime overlayStart, out DateTime overlayEnd)
         {
             tradingDay = GetTradingDay(referenceTime);
-            string entryHms = IsUsaDst(referenceTime) ? EntryTimeDstUsaHHmmss : EntryTimeNormalHHmmss;
-            TimeSpan entryBrTime;
-            try
-            {
-                var hms = entryHms.Split(':');
-                entryBrTime = new TimeSpan(int.Parse(hms[0]), int.Parse(hms[1]), int.Parse(hms[2]));
-            }
-            catch
-            {
-                entryBrTime = BuildHedgeAnchorLocal(referenceTime, tradingDay).TimeOfDay;
-            }
-            DateTime entryTimeBrasilia = new DateTime(tradingDay.Year, tradingDay.Month, tradingDay.Day,
-                entryBrTime.Hours, entryBrTime.Minutes, entryBrTime.Seconds, DateTimeKind.Unspecified);
-            var brTz = GetBrasiliaTimeZone();
-            var feedTz = GetBarTimeZone();
-            DateTime entryTimeFeed = ConvertFromTimeZone(entryTimeBrasilia, brTz, feedTz);
-            overlayStart = entryTimeFeed.Subtract(OverlayAnchorOffset);
-            overlayEnd = overlayStart.Add(OverlayDuration);
+            DateTime baseDate = referenceTime.Date;
+            overlayStart = new DateTime(baseDate.Year, baseDate.Month, baseDate.Day,
+                OverlayStartTime.Hours, OverlayStartTime.Minutes, OverlayStartTime.Seconds, DateTimeKind.Unspecified);
+            overlayEnd = new DateTime(baseDate.Year, baseDate.Month, baseDate.Day,
+                OverlayEndTime.Hours, OverlayEndTime.Minutes, OverlayEndTime.Seconds, DateTimeKind.Unspecified);
         }
 
         private string FormatOrderSnapshot(Order order)
