@@ -1992,7 +1992,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private double[] lastSnapUpper = new double[5];
 		private double[] lastSnapLower = new double[5];
 
-		private DateTime lastAutoCloseDate = DateTime.MinValue;
 
 		private readonly double[] upper = new double[5];
 		private readonly double[] lower = new double[5];
@@ -2049,7 +2048,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private Order flattenOrder = null;
 		private bool flattenInProgress = false;
-		private bool _preCloseInProgress = false;
 		private int flattenAttemptCount = 0;
 		private int flattenStartBar = -1;
 		private readonly int flattenRetryBars = 2;
@@ -2058,9 +2056,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private bool flattenAllowFallback = false;
 		private System.Timers.Timer _flattenTimer = null;
 
-		private bool _autoCloseWindowReached = false;
-		private bool _autoCloseTriggered = false;
-		private bool _autoCloseArmedForDay = false;
 
 		private bool isAnalyzerMode = false;
 		private bool panelInitialized = false;
@@ -3862,7 +3857,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private void BracketWatchdog(string sourceTag)
 		{
-			if (_preCloseInProgress || flattenInProgress) return;
+			if (flattenInProgress) return;
 
 			if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
 			{
@@ -4078,7 +4073,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				try
 				{
 					if (State == State.Realtime)
-						TriggerCustomEvent(_ => HandleAutoCloseState("Timer"), null);
+						TriggerCustomEvent(_ => HandleAutoCloseSimple("Timer"), null);
 					if (flattenInProgress && State == State.Realtime)
 					{
 						TriggerCustomEvent(_ => CheckFlattenProgress(), null);
@@ -5166,7 +5161,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 					new Dictionary<string, string> { { "reason", reason } });
 				flattenInProgress = false;
 				flattenOrder = null;
-				_preCloseInProgress = false;
 				return;
 			}
 
@@ -5282,7 +5276,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				LogMsg("FlattenSuccess", $"reason={flattenReason} attempts={flattenAttemptCount}", 2);
 				flattenInProgress = false;
 				flattenOrder = null;
-				_preCloseInProgress = false;
 				return;
 			}
 
@@ -5530,7 +5523,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		}
 		#endregion
 
-		#region AutoClose state machine
+		#region AutoClose simple exit
 		private DateTime GetNowSource()
 		{
 			try
@@ -5556,82 +5549,22 @@ namespace NinjaTrader.NinjaScript.Strategies
 			autoCloseTime = usaDst ? new TimeSpan(16, 0, 0) : new TimeSpan(17, 0, 0);
 		}
 
-		private bool HandleAutoCloseState(string sourceTag, DateTime? nowOverride = null)
+		private void HandleAutoCloseSimple(string sourceTag, DateTime? nowOverride = null)
 		{
 			if (State != State.Realtime)
-				return false;
+				return;
 
-			DateTime nowSource = nowOverride ?? GetNowSource();
-			DateTime nowBrt = GetNowBrt(nowSource);
-			DateTime calDay = nowBrt.Date;
+			DateTime nowBrt = GetNowBrt(nowOverride);
+			GetAutoCloseSchedule(nowBrt.Date, out _, out TimeSpan autoCloseTime, out _);
 
-			ApplyDailyResetIfNeeded(calDay);
+			if (nowBrt.TimeOfDay < autoCloseTime)
+				return;
 
-			GetAutoCloseSchedule(calDay, out TimeSpan preCloseTime, out TimeSpan autoCloseTime, out bool usaDst);
-
-			if (!_autoCloseArmedForDay && nowBrt.TimeOfDay < autoCloseTime)
+			if (Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0 && !flattenInProgress)
 			{
-				_autoCloseArmedForDay = true;
+				LogMsg("AutoClose", $"closing position nowBrt={nowBrt:HH:mm:ss} src={sourceTag}", 2);
+				RequestFlatten("AutoClose", allowAccountFallback: true);
 			}
-
-			if (!_autoCloseArmedForDay)
-				return false;
-
-			if (!_autoCloseWindowReached && nowBrt.TimeOfDay >= preCloseTime)
-			{
-				_autoCloseWindowReached = true;
-				_preCloseInProgress = true;
-				dayStatus = "PreClose";
-				LogMsg("PreClose", $"window_reached nowBrt={nowBrt:HH:mm:ss} preClose={preCloseTime} autoClose={autoCloseTime} dst={(usaDst ? "ON" : "OFF")} src={sourceTag}", 2);
-
-				CancelAllGrid("preclose");
-				CancelExitVwap();
-				CancelOppositeBandExit();
-				CancelFinancialTarget();
-				RequestFlatten("PreClose", allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
-				PublishPanelSnapshot("PreClose");
-			}
-
-			bool shouldTriggerAutoClose = nowBrt.TimeOfDay >= autoCloseTime;
-			if (shouldTriggerAutoClose && !_autoCloseTriggered)
-			{
-				_autoCloseTriggered = true;
-				lastAutoCloseDate = calDay.Date;
-				dayStatus = "AutoClose";
-				LogMsg("AutoClose", $"triggered nowBrt={nowBrt:HH:mm:ss} autoClose={autoCloseTime} dst={(usaDst ? "ON" : "OFF")} src={sourceTag}", 2);
-			}
-
-			if (_autoCloseTriggered)
-			{
-
-				CancelAllGrid("autoclose");
-				CancelExitVwap();
-				CancelOppositeBandExit();
-				CancelFinancialTarget();
-
-				if (Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
-				{
-					if (!flattenInProgress)
-						RequestFlatten("AutoClose", allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
-					else
-						CheckFlattenProgress();
-				}
-				else
-				{
-					if (!isLockedForDay)
-					{
-						CancelStopLoss();
-						LockDay("AutoClose", nowSource.ToUniversalTime());
-						LogMsg("AutoCloseLock", $"flat_confirmed nowBrt={nowBrt:HH:mm:ss} dst={(usaDst ? "ON" : "OFF")} src={sourceTag}", 2);
-					}
-					_preCloseInProgress = false;
-				}
-
-				PublishPanelSnapshot("AutoClose");
-				return true;
-			}
-
-			return false;
 		}
 		#endregion
 
@@ -6015,14 +5948,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 				if (BarsInProgress == 1)
 				{
-					if (State == State.Realtime && HandleAutoCloseState("OnBarUpdate"))
-						return;
-
-					var nowBrtDtClock = GetNowBrt();
-					DateTime calDayClock = nowBrtDtClock.Date;
-					ApplyDailyResetIfNeeded(calDayClock);
-
-					PublishPanelSnapshot("Clock");
+					HandleAutoCloseSimple("Clock");
 					return;
 				}
 
@@ -6036,8 +5962,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 					_lastEntrySignalName = string.Empty;
 					_entrySignalCycleId = 0;
 					_bracketFailSafeActive = false;
-					if (!_autoCloseWindowReached)
-						_preCloseInProgress = false;
 					HawkLog("INFO", "CYCLE", "CYCLE_RESET", "position_flat");
 				}
 
@@ -6507,12 +6431,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				_totalPnlDay = 0;
 				_cachedPnlDay = "0.00";
 				dayStatus = "Waiting";
-				lastAutoCloseDate = DateTime.MinValue;
-				_autoCloseWindowReached = false;
-					_autoCloseTriggered = false;
-					_autoCloseArmedForDay = false;
-				_preCloseInProgress = false;
-
 				lastRegime = currentRegime;
 				currentRegime = Regime.None;
 				closeBarOrderPending = false;
@@ -6557,7 +6475,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			bool isStopOrder = order.Name != null && order.Name.IndexOf("Stop", StringComparison.OrdinalIgnoreCase) >= 0;
 			bool isTargetOrder = isOppBand || isVwap || isFinTarget;
 			bool shouldTriggerBracketWatchdog = (orderState == OrderState.Rejected || orderState == OrderState.Cancelled) && (isStopOrder || isTargetOrder);
-			bool shouldRunBracketWatchdog = shouldTriggerBracketWatchdog && !_preCloseInProgress && !flattenInProgress;
+			bool shouldRunBracketWatchdog = shouldTriggerBracketWatchdog && !flattenInProgress;
 			bool isCloseBarEntry = order.Name != null &&
 				(order.Name.StartsWith(CloseBarEntryLongName, StringComparison.OrdinalIgnoreCase) ||
 				 order.Name.StartsWith(CloseBarEntryShortName, StringComparison.OrdinalIgnoreCase));
@@ -6788,7 +6706,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				LogMsg("FlattenSuccess", $"reason={flattenReason} byExecution attempt={flattenAttemptCount}", 2);
 				flattenInProgress = false;
 				flattenOrder = null;
-				_preCloseInProgress = false;
 			}
 
 			ProcessNewRealtimeTrades();
