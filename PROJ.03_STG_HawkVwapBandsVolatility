@@ -2746,6 +2746,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 			return usaDst ? new TimeSpan(16, 0, 0) : new TimeSpan(17, 0, 0);
 		}
 
+		private TimeSpan GetSessionStartTimeBrt(DateTime brtDay)
+		{
+			bool usaDst = IsUsaDstForTradingDay(brtDay);
+			return usaDst ? new TimeSpan(9, 0, 0) : new TimeSpan(10, 0, 0);
+		}
+
 		private HVB_PanelStateHub.PanelSnapshot BuildSnapshot(bool offSnapshot, string statusOverride = null)
 		{
 			if (string.IsNullOrWhiteSpace(cacheKey))
@@ -5562,11 +5568,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 			if (sessionStartBrt == DateTime.MinValue || sessionStartBrt.Date != nowBrt.Date)
 			{
+				TimeSpan sessionStartTime = GetSessionStartTimeBrt(nowBrt.Date);
 				sessionStartBrt = new DateTime(
 					nowBrt.Year,
 					nowBrt.Month,
 					nowBrt.Day,
-					10, 0, 0);
+					sessionStartTime.Hours,
+					sessionStartTime.Minutes,
+					sessionStartTime.Seconds);
 			}
 
 			if (autoCloseExecutedToday)
@@ -6465,11 +6474,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 				closeBarOrderCancelBar = -1;
 				closeBarRearmAfterCancel = false;
 
+				TimeSpan sessionStartTime = GetSessionStartTimeBrt(calDay.Date);
 				sessionStartBrt = new DateTime(
 					calDay.Year,
 					calDay.Month,
 					calDay.Day,
-					10, 0, 0);
+					sessionStartTime.Hours,
+					sessionStartTime.Minutes,
+					sessionStartTime.Seconds);
 				autoCloseExecutedToday = false;
 
 				ResetTradeCounters(calDay);
