@@ -2038,6 +2038,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private string _lastAction = "";
 		private int _lastActionBar = -1;
 
+		private const int BIP_AUTOCLOSE = 1;
+		private DateTime _autoCloseDayBrt = DateTime.MinValue;
+		private bool _autoCloseExitSentToday = false;
+
 		private int tradesClosedTodayTotal = 0;
 		private int tradesClosedTodayBuy = 0;
 		private int tradesClosedTodaySell = 0;
@@ -2118,6 +2122,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 				{
 					_brtTimeZone = GetBrasiliaTimeZone();
 					_usEasternTimeZone = GetUsEasternTimeZone();
+
+					AddDataSeries(BarsPeriodType.Minute, 1);
 
 					stopHHmmss = ParseHms(StopNewTradesTimeBrt);
 					flattenHHmmss = ParseHms(FlattenTimeBrt);
@@ -2534,6 +2540,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 				: new TimeSpan(10, 0, 0);
 		}
 
+		private TimeSpan GetAutoCloseTimeBrt(DateTime tradingDayBrt)
+		{
+			bool usaDst = IsUsaDstForTradingDay(tradingDayBrt);
+			return usaDst
+				? new TimeSpan(16, 0, 0)
+				: new TimeSpan(17, 0, 0);
+		}
+
 		private int ToBrtHHmmss(DateTime t)
 		{
 			var brt = ConvertToBrasilia(t).AddMinutes(UserBrtOffsetMinutes);
@@ -2542,6 +2556,40 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private bool InTradingWindow(int nowBrt, int startAnalysisHhmmss) => nowBrt >= startAnalysisHhmmss && nowBrt < stopHHmmss;
 		private bool IsFlattenWindow(int nowBrt) => nowBrt >= flattenHHmmss;
+
+		private void TryAutoCloseByClock(DateTime nowBrt, DateTime barTime)
+		{
+			DateTime brtDay = nowBrt.Date;
+			if (_autoCloseDayBrt != brtDay)
+			{
+				_autoCloseDayBrt = brtDay;
+				_autoCloseExitSentToday = false;
+			}
+			TimeSpan scheduledTime = GetAutoCloseTimeBrt(brtDay);
+			DateTime scheduled = new DateTime(brtDay.Year, brtDay.Month, brtDay.Day, scheduledTime.Hours, scheduledTime.Minutes, scheduledTime.Seconds);
+
+			if (nowBrt < scheduled) return;
+			if (_autoCloseExitSentToday) return;
+
+			LogMsg("AutoClose", $"trigger nowBrt={nowBrt:HH:mm:ss} scheduled={scheduled:HH:mm:ss} pos={Position.MarketPosition} qty={Position.Quantity}", 2);
+
+			bool isFlat = Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0;
+			if (isFlat)
+			{
+				_autoCloseExitSentToday = true;
+				return;
+			}
+
+			if (flattenInProgress) return;
+
+			CancelAllGrid("autoclose");
+			CancelExitVwap();
+			CancelOppositeBandExit();
+			CancelFinancialTarget();
+			CancelStopLossForce();
+			RequestFlatten("AutoClose", allowAccountFallback: true);
+			_autoCloseExitSentToday = true;
+		}
 
 		private string GetCacheKey()
 		{
@@ -5904,6 +5952,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 				UpdateSnapshot("bar");
 				EnsurePanelInitializedOnce();
 
+				if (BarsInProgress == BIP_AUTOCLOSE)
+				{
+					var barTime = Times[BIP_AUTOCLOSE][0];
+					var nowBrtDt = ConvertToBrasilia(barTime).AddMinutes(UserBrtOffsetMinutes);
+					ApplyDailyResetIfNeeded(nowBrtDt.Date);
+					TryAutoCloseByClock(nowBrtDt, barTime);
+					return;
+				}
+
 				if (BarsInProgress != 0) return;
 
 				var nowBrtDt = ConvertToBrasilia(Time[0]).AddMinutes(UserBrtOffsetMinutes);
@@ -6393,6 +6450,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 				closeBarOrderActiveBar = -1;
 				closeBarOrderCancelBar = -1;
 				closeBarRearmAfterCancel = false;
+				_autoCloseDayBrt = calDay.Date;
+				_autoCloseExitSentToday = false;
 
 				ResetTradeCounters(calDay);
 
