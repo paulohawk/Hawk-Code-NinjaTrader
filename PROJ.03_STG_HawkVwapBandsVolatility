@@ -2084,7 +2084,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 					AddDataSeries(BarsPeriodType.Minute, 1);
 
-					stopHHmmss = ParseHms(StopNewTradesTimeBrt);
+					stopHHmmss = GetStopNewTradesHhmmss(ConvertToBrasilia(DateTime.UtcNow).Date);
 					flattenHHmmss = ParseHms(FlattenTimeBrt);
 					TimeSpan ts;
 					if (TimeSpan.TryParse(FlattenTimeBrt, out ts)) flattenSpan = ts;
@@ -2377,6 +2377,28 @@ namespace NinjaTrader.NinjaScript.Strategies
 			return usaDst
 				? new TimeSpan(16, 0, 0)
 				: new TimeSpan(17, 0, 0);
+		}
+
+		private TimeSpan GetStopNewTradesTimeBrt(DateTime tradingDayBrt)
+		{
+			bool usaDst = IsUsaDstForTradingDay(tradingDayBrt);
+			return usaDst
+				? new TimeSpan(15, 30, 0)
+				: new TimeSpan(16, 30, 0);
+		}
+
+		private int GetStopNewTradesHhmmss(DateTime tradingDayBrt)
+		{
+			TimeSpan stopTime = GetStopNewTradesTimeBrt(tradingDayBrt);
+			DateTime stopDateTimeBrt = new DateTime(
+				tradingDayBrt.Year,
+				tradingDayBrt.Month,
+				tradingDayBrt.Day,
+				stopTime.Hours,
+				stopTime.Minutes,
+				stopTime.Seconds
+			);
+			return ToTime(ConvertToBrasilia(stopDateTimeBrt).AddMinutes(UserBrtOffsetMinutes));
 		}
 
 		private int ToBrtHHmmss(DateTime t)
@@ -6204,6 +6226,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				lastCalendarDayBrt = calDay.Date;
 				isLockedForDay = false;
+				stopHHmmss = GetStopNewTradesHhmmss(calDay.Date);
 				_lockedAtUtc = DateTime.MinValue;
 				realizedPnlDay = 0;
 				_unrealizedPnlManual = 0;
