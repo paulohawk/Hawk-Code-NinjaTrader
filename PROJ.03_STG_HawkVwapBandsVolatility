@@ -1690,6 +1690,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[NinjaScriptProperty, Display(Name = "Ignore Trading Window in Strategy Analyzer", GroupName = "Horas", Order = 99)]
 		public bool IgnoreWindowInAnalyzer { get; set; } = true;
 
+		[NinjaScriptProperty]
+		[Display(Name = "Enable Operational Log", Order = 1, GroupName = "Operational")]
+		public bool EnableOperationalLog { get; set; } = true;
+
 		[NinjaScriptProperty, Range(1, 5)]
 		[Display(Name = "Number of deviations", GroupName = "Bandas", Order = 10)]
 		public int NumDeviations { get; set; } = 5;
@@ -1972,6 +1976,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private const int BIP_AUTOCLOSE = 1;
 		private DateTime _autoCloseDayBrt = DateTime.MinValue;
 		private bool _autoCloseExitSentToday = false;
+		private DateTime _autoCloseLoggedDayBrt = DateTime.MinValue;
+		private DateTime _sessionStartLoggedDayBrt = DateTime.MinValue;
+		private DateTime _sessionEndLoggedDayBrt = DateTime.MinValue;
 
 		private int tradesClosedTodayTotal = 0;
 		private int tradesClosedTodayBuy = 0;
@@ -1995,6 +2002,16 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private bool panelInitialized = false;
 
 		private ExitMode? lastExitMode = null;
+
+		private bool _entryLoggedForPosition = false;
+		private bool _exitLoggedForPosition = false;
+		private double _entryPriceForLog = 0.0;
+		private MarketPosition _entrySideForLog = MarketPosition.Flat;
+		private bool _exitLogPending = false;
+		private double _exitPendingPrice = 0.0;
+		private DateTime _exitPendingTime = DateTime.MinValue;
+		private string _exitPendingType = string.Empty;
+		private int _exitPendingQty = 0;
 
 		private int[] _lastGridRepriceBarLong = new int[5];
 		private int[] _lastGridRepriceBarShort = new int[5];
@@ -2373,8 +2390,24 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (nowBrt < scheduled) return;
 			if (_autoCloseExitSentToday) return;
 
+			if (_sessionEndLoggedDayBrt != brtDay)
+			{
+				string endMessage = $"Session ended | date={FormatBrtDate(brtDay)} | time={FormatBrtTime(nowBrt)}";
+				OpLog("SESSION_END", endMessage);
+				_sessionEndLoggedDayBrt = brtDay;
+			}
 
 			bool isFlat = Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0;
+			if (_autoCloseLoggedDayBrt != brtDay)
+			{
+				string timeText = FormatBrtTime(nowBrt);
+				string message = isFlat
+					? $"No open position | time={timeText}"
+					: $"Position flattened by clock | time={timeText}";
+				OpLog("AUTOCLOSE", message);
+				_autoCloseLoggedDayBrt = brtDay;
+			}
+
 			if (isFlat)
 			{
 				_autoCloseExitSentToday = true;
@@ -2390,6 +2423,87 @@ namespace NinjaTrader.NinjaScript.Strategies
 			CancelStopLossForce();
 			RequestFlatten("AutoClose", allowAccountFallback: true);
 			_autoCloseExitSentToday = true;
+		}
+
+		private void OpLog(string eventName, string message)
+		{
+			if (!EnableOperationalLog) return;
+			Print($"[HVB][OPERATIONAL][{eventName}] {message}");
+		}
+
+		private string FormatBrtTime(DateTime brtTime)
+		{
+			return brtTime.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+		}
+
+		private string FormatBrtDate(DateTime brtDate)
+		{
+			return brtDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+		}
+
+		private string FormatPrice(double price)
+		{
+			return price.ToString("0.00", CultureInfo.InvariantCulture);
+		}
+
+		private void LogSessionStartIfNeeded(DateTime nowBrt, TimeSpan startTime, TimeSpan endTime)
+		{
+			if (_sessionStartLoggedDayBrt.Date == nowBrt.Date) return;
+			string message = $"Trading window started | date={FormatBrtDate(nowBrt)} | BRT {startTime:hh\\:mm} \u2192 {endTime:hh\\:mm}";
+			OpLog("SESSION_START", message);
+			_sessionStartLoggedDayBrt = nowBrt.Date;
+		}
+
+		private void LogExitIfPending()
+		{
+			if (!_exitLogPending) return;
+			LogExitEvent(_exitPendingType, _exitPendingPrice, _exitPendingTime, _exitPendingQty);
+			_exitLogPending = false;
+			_exitPendingPrice = 0.0;
+			_exitPendingTime = DateTime.MinValue;
+			_exitPendingType = string.Empty;
+			_exitPendingQty = 0;
+		}
+
+		private void LogExitEvent(string exitType, double price, DateTime time, int quantity)
+		{
+			if (_exitLoggedForPosition) return;
+
+			double tickSize = Instrument?.MasterInstrument?.TickSize ?? TickSize;
+			double entryRef = _entryPriceForLog > 0 ? _entryPriceForLog : entryPrice;
+			if (entryRef <= 0)
+				entryRef = price;
+			double rawTicks = 0.0;
+			if (tickSize > 0 && entryRef > 0)
+			{
+				rawTicks = _entrySideForLog == MarketPosition.Long
+					? (price - entryRef) / tickSize
+					: (entryRef - price) / tickSize;
+			}
+			string resultText = tickSize > 0 && entryRef > 0
+				? $"{Math.Round(rawTicks):+0;-0;0} ticks"
+				: $"{(price - entryRef):+0.00;-0.00;0.00} points";
+
+			string timeText = FormatBrtTime(ConvertToBrasilia(time).AddMinutes(UserBrtOffsetMinutes));
+			OpLog("EXIT", $"{exitType} | exit={FormatPrice(price)} | result={resultText} | time={timeText}");
+			_exitLoggedForPosition = true;
+		}
+
+		private string GetExitType(Order order)
+		{
+			string name = order?.Name ?? string.Empty;
+			if (name.IndexOf("Stop", StringComparison.OrdinalIgnoreCase) >= 0)
+				return "STOP";
+			if (name.IndexOf("Target", StringComparison.OrdinalIgnoreCase) >= 0 ||
+				name.StartsWith("VWAPExit", StringComparison.OrdinalIgnoreCase) ||
+				name.StartsWith("OppBandExit", StringComparison.OrdinalIgnoreCase) ||
+				name.StartsWith("FinTarget", StringComparison.OrdinalIgnoreCase))
+				return "TARGET";
+			if (name.StartsWith("FlattenMkt", StringComparison.OrdinalIgnoreCase))
+				return string.IsNullOrWhiteSpace(flattenReason) || flattenReason.Equals("Manual", StringComparison.OrdinalIgnoreCase)
+					? "MANUAL"
+					: "LOGIC";
+			return "LOGIC";
 		}
 
 		private string GetCacheKey()
@@ -5490,6 +5604,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 				{
 					breakEvenActivated = false;
 					entryPrice = 0.0;
+					_entryPriceForLog = 0.0;
+					_entrySideForLog = MarketPosition.Flat;
+					_entryLoggedForPosition = false;
+					_exitLoggedForPosition = false;
+					_exitLogPending = false;
+					_exitPendingPrice = 0.0;
+					_exitPendingTime = DateTime.MinValue;
+					_exitPendingType = string.Empty;
+					_exitPendingQty = 0;
 					dayBreakevenDollars = "-";
 					_lastEntrySignalName = string.Empty;
 					_entrySignalCycleId = 0;
@@ -5499,6 +5622,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (entryPrice == 0 && Position.MarketPosition != MarketPosition.Flat)
 				{
 					entryPrice = Position.AveragePrice;
+				}
+
+				if (_exitLogPending && (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0))
+				{
+					LogExitIfPending();
 				}
 
 				if (CurrentBar < 1)
@@ -5601,6 +5729,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (isAnalyzer && IgnoreWindowInAnalyzer)
 					inWindow = !isLockedForDay;
 
+				if (inWindow)
+					LogSessionStartIfNeeded(nowBrtDt, startAnalysisTime, GetAutoCloseTimeBrt(calDay));
+
 				if (!isLockedForDay)
 					dayStatus = inWindow ? "Trading" : (nowBrtInt < startAnalysisInt ? "BeforeStart" : "StopNewTrades");
 				else
@@ -5693,6 +5824,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 					bool inWindow = InTradingWindow(nowBrtInt, startAnalysisInt) && !isLockedForDay;
 					if (isAnalyzer && IgnoreWindowInAnalyzer)
 						inWindow = !isLockedForDay;
+
+					if (_exitLogPending && (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0))
+					{
+						LogExitIfPending();
+					}
+
+					if (inWindow)
+						LogSessionStartIfNeeded(nowBrtDt, startAnalysisTime, GetAutoCloseTimeBrt(calDay));
 
 					if (!isLockedForDay)
 						dayStatus = inWindow ? "Trading" : (nowBrtInt < startAnalysisInt ? "BeforeStart" : "StopNewTrades");
@@ -6136,6 +6275,26 @@ namespace NinjaTrader.NinjaScript.Strategies
 					_bracketValidationSuspensionLogged = false;
 					_lastBracketValidationSkipUtc = DateTime.MinValue;
 					PlaceInitialBracketAfterEntry();
+
+					if (!_entryLoggedForPosition)
+					{
+						_entryPriceForLog = price;
+						_entrySideForLog = execution.Order.OrderAction == OrderAction.Buy ? MarketPosition.Long : MarketPosition.Short;
+						_entryLoggedForPosition = true;
+
+						ExitMode mode = GetExitMode();
+						double stopPrice;
+						double targetPrice;
+						string stopReason;
+						string targetReason;
+						bool hasStop = TryGetBracketStopPrice(out stopPrice, out stopReason);
+						bool hasTarget = TryGetBracketTargetPrice(mode, out targetPrice, out targetReason);
+						string entryType = execution.Order.OrderAction == OrderAction.Buy ? "BUY" : "SELL";
+						string timeText = FormatBrtTime(ConvertToBrasilia(time).AddMinutes(UserBrtOffsetMinutes));
+						string stopText = hasStop ? FormatPrice(stopPrice) : "n/a";
+						string targetText = hasTarget ? FormatPrice(targetPrice) : "n/a";
+						OpLog("ENTRY", $"{entryType} | qty={quantity} | entry={FormatPrice(price)} | stop={stopText} | target={targetText} | time={timeText}");
+					}
 				}
 
 				_lastBracketFillUtc = time.ToUniversalTime();
@@ -6152,6 +6311,25 @@ namespace NinjaTrader.NinjaScript.Strategies
 					closeBarOrderActiveBar = -1;
 					closeBarOrderCancelBar = -1;
 					closeBarRearmAfterCancel = false;
+				}
+			}
+
+			if (!_exitLoggedForPosition &&
+				(execution.Order.OrderAction == OrderAction.Sell || execution.Order.OrderAction == OrderAction.BuyToCover))
+			{
+				bool isFlat = Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0;
+				if (isFlat)
+				{
+					string exitType = GetExitType(execution.Order);
+					LogExitEvent(exitType, price, time, quantity);
+				}
+				else
+				{
+					_exitLogPending = true;
+					_exitPendingPrice = price;
+					_exitPendingTime = time;
+					_exitPendingType = GetExitType(execution.Order);
+					_exitPendingQty = quantity;
 				}
 			}
 
