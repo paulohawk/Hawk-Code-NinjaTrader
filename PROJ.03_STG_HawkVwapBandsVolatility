@@ -5955,9 +5955,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (BarsInProgress == BIP_AUTOCLOSE)
 				{
 					var barTime = Times[BIP_AUTOCLOSE][0];
-					var nowBrtDt = ConvertToBrasilia(barTime).AddMinutes(UserBrtOffsetMinutes);
-					ApplyDailyResetIfNeeded(nowBrtDt.Date);
-					TryAutoCloseByClock(nowBrtDt, barTime);
+					var nowBrtAutoClose = ConvertToBrasilia(barTime).AddMinutes(UserBrtOffsetMinutes);
+					ApplyDailyResetIfNeeded(nowBrtAutoClose.Date);
+					TryAutoCloseByClock(nowBrtAutoClose, barTime);
 					return;
 				}
 
