@@ -649,7 +649,6 @@ namespace NinjaTrader.NinjaScript
 			_tbMainToggle.Text = _mainEnabled ? "On" : "Off";
 			_tbMainToggle.Foreground = _mainEnabled ? BronzeBrush : Brushes.Gray;
 			_mainStateBullet.Fill = _mainEnabled ? MainOnBrush : InactiveBulletBrush;
-			_parent.SafePrint($"Main toggled {(_mainEnabled ? "On" : "Off")}");
 			if (!_mainEnabled) ResetAllToDefaults();
 			UpdateBulletsAfterStateChange();
 		}
@@ -685,7 +684,6 @@ namespace NinjaTrader.NinjaScript
 			_beEnabled = !_beEnabled;
 			if (_bulletBe != null) _bulletBe.Fill = _beEnabled ? BronzeBrush : InactiveBulletBrush;
 			if (_beStateText != null) { _beStateText.Text = _beEnabled ? "On" : "Off"; _beStateText.Foreground = _beEnabled ? BronzeBrush : Brushes.Gray; }
-			_parent.SafePrint($"BE toggled {(_beEnabled ? "On" : "Off")}");
 			UpdateBulletsAfterStateChange();
 		}
 
@@ -881,10 +879,10 @@ namespace NinjaTrader.NinjaScript
 		{
 			try
 			{
-				string inst = chartControl?.Instrument?.FullName ?? "unknown";
-				_parent.SafePrint($"Embedded: UpdateForChart instrument={inst}");
+				var inst = chartControl?.Instrument?.FullName ?? "unknown";
+				_ = inst;
 			}
-			catch (Exception ex) { _parent.SafePrint("Embedded UpdateForChart ex: " + ex.Message); }
+			catch { }
 		}
 	}
 
@@ -924,13 +922,8 @@ namespace NinjaTrader.NinjaScript
 		// CHANGED: tag is now stable (derived from CacheKey), not Guid, to avoid orphan panels.
 		private string embeddedTag = "HVB_Panel_UI_UNSET";
 
-		private readonly bool enableDiagnosticLogging;
-		private readonly string logPath;
-
 		private string instrumentName;
 		private string cacheKey;
-
-		public Action<string> LogAction { get; set; }
 
 		// CHANGED: when CacheKey is set, also set deterministic embeddedTag
 		public string CacheKey
@@ -943,10 +936,8 @@ namespace NinjaTrader.NinjaScript
 			}
 		}
 
-		public HVB_PanelHelper(bool enableDiagLog = false)
+		public HVB_PanelHelper()
 		{
-			enableDiagnosticLogging = enableDiagLog;
-			logPath = IOPath.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "NinjaTrader 8", "logs", "hvb_panel_module.log");
 		}
 
 		// CHANGED: internal helper to build stable tag from CacheKey
@@ -964,31 +955,11 @@ namespace NinjaTrader.NinjaScript
 			catch { return "null"; }
 		}
 
-		public void SafePrint(string message)
-		{
-			try
-			{
-				if (LogAction != null) LogAction($"[HVB_PanelHelper] {message}");
-				else System.Diagnostics.Debug.WriteLine($"[HVB_PanelHelper] {message}");
-
-				if (!enableDiagnosticLogging) return;
-				try
-				{
-					string line = $"[HVB_PanelHelper] {DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} - {message}";
-					Directory.CreateDirectory(IOPath.GetDirectoryName(logPath));
-					System.IO.File.AppendAllText(logPath, line + Environment.NewLine);
-				}
-				catch { }
-			}
-			catch { }
-		}
-
 		public void Init(ChartControl cc)
 		{
 			chartControl = cc;
 			if (chartControl == null)
 			{
-				SafePrint("Init: ChartControl is null; UI not created (headless/backtest).");
 				return;
 			}
 
@@ -1004,7 +975,6 @@ namespace NinjaTrader.NinjaScript
 			StartAttachTimer();
 			StartRefreshTimer();
 			ForceRefreshOnce();
-			SafePrint($"Init: timers started. cacheKey={(cacheKey ?? "null")} embeddedTag={embeddedTag}");
 		}
 
 		public void Dispose()
@@ -1036,7 +1006,7 @@ namespace NinjaTrader.NinjaScript
 			attachTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(AttachPollMs) };
 			attachTimer.Tick += (s, e) =>
 			{
-				try { HookChartTraderAndInsert(); } catch (Exception ex) { SafePrint("attachTimer tick ex: " + ex.Message); }
+				try { HookChartTraderAndInsert(); } catch { }
 			};
 			attachTimer.Start();
 		}
@@ -1050,10 +1020,10 @@ namespace NinjaTrader.NinjaScript
 		{
 			try
 			{
-				if (chartControl == null) { SafePrint("Hook: ChartControl null"); return; }
+				if (chartControl == null) { return; }
 
 				chartWindow = Window.GetWindow(chartControl.Parent) as NinjaTrader.Gui.Chart.Chart;
-				if (chartWindow == null) { SafePrint("Hook: chartWindow null"); return; }
+				if (chartWindow == null) { return; }
 
 				chartTrader = FindVisualChildren<NinjaTrader.Gui.Chart.ChartTrader>(chartWindow).FirstOrDefault();
 
@@ -1072,7 +1042,7 @@ namespace NinjaTrader.NinjaScript
 				else
 					EnsureEmbeddedHidden();
 			}
-			catch (Exception ex) { SafePrint("HookChartTraderAndInsert ex: " + ex.Message); }
+			catch { }
 		}
 
 		private bool TabSelected()
@@ -1101,12 +1071,12 @@ namespace NinjaTrader.NinjaScript
 							if (TabSelected()) { EnsureEmbeddedVisible(); }
 							else { EnsureEmbeddedHidden(); }
 						}
-						catch (Exception ex) { SafePrint("TabHandler ex: " + ex.Message); }
+						catch { }
 					};
 					chartWindow.MainTabControl.SelectionChanged += tabHandler;
 				}
 			}
-			catch (Exception ex) { SafePrint("RegisterTabHandler ex: " + ex.Message); }
+			catch { }
 		}
 
 		private void EnsureEmbeddedVisible()
@@ -1125,7 +1095,7 @@ namespace NinjaTrader.NinjaScript
 					embeddedControl.UpdateBulletsAfterStateChange();
 				}
 			}
-			catch (Exception ex) { SafePrint("EnsureEmbeddedVisible ex: " + ex.Message); }
+			catch { }
 		}
 
 		private void EnsureEmbeddedHidden()
@@ -1138,7 +1108,7 @@ namespace NinjaTrader.NinjaScript
 					panelActive = false;
 				}
 			}
-			catch (Exception ex) { SafePrint("EnsureEmbeddedHidden ex: " + ex.Message); }
+			catch { }
 		}
 
 		private void InsertEmbedded()
@@ -1258,11 +1228,11 @@ namespace NinjaTrader.NinjaScript
 
 				RegisterTabHandler();
 				UpdateEmbeddedForSelectedTab();
-				try { if (attachTimer != null) { attachTimer.Stop(); attachTimer = null; SafePrint("Stopped attach timer after attach."); } } catch { }
+				try { if (attachTimer != null) { attachTimer.Stop(); attachTimer = null; } } catch { }
 
 				ForceRefreshOnce();
 			}
-			catch (Exception ex) { SafePrint("InsertEmbedded ex: " + ex.Message); }
+			catch { }
 		}
 
 		private void RemoveEmbedded()
@@ -1284,7 +1254,6 @@ namespace NinjaTrader.NinjaScript
 			embeddedWrapper = null;
 			addedRow = null;
 			panelActive = false;
-			SafePrint("RemoveEmbedded: removed embedded UI and frame (cleanup attempted).");
 		}
 
 		private void tryRemoveTaggedFromParents()
@@ -1440,7 +1409,7 @@ namespace NinjaTrader.NinjaScript
 				embeddedControl.UpdateBulletsAfterStateChange();
 				RepositionEmbedded();
 			}
-			catch (Exception ex) { SafePrint("UpdateEmbeddedForSelectedTab ex: " + ex.Message); }
+			catch { }
 		}
 
 		public void ApplySnapshot(HVB_PanelStateHub.PanelSnapshot snap)
@@ -1453,7 +1422,7 @@ namespace NinjaTrader.NinjaScript
 					ApplySnapshotToUi(snap);
 				});
 			}
-			catch (Exception ex) { SafePrint("ApplySnapshot ex: " + ex.Message); }
+			catch { }
 		}
 
 		private void ApplySnapshotToUi(HVB_PanelStateHub.PanelSnapshot snap)
@@ -1525,7 +1494,7 @@ namespace NinjaTrader.NinjaScript
 
 				embeddedControl.UpdateBulletsAfterStateChange();
 			}
-			catch (Exception ex) { SafePrint("ApplySnapshotToUi ex: " + ex.Message); }
+			catch { }
 		}
 
 		private string SanitizeStrategyName(string raw)
@@ -1557,7 +1526,7 @@ namespace NinjaTrader.NinjaScript
 						});
 					}
 				}
-				catch (Exception ex) { SafePrint("refreshTimer tick ex: " + ex.Message); }
+				catch { }
 			};
 			refreshTimer.Start();
 		}
@@ -1577,7 +1546,7 @@ namespace NinjaTrader.NinjaScript
 					ChartControlDispatcher(() => ApplySnapshotToUi(snap));
 				}
 			}
-			catch (Exception ex) { SafePrint("ForceRefreshOnce ex: " + ex.Message); }
+			catch { }
 		}
 
 		private void RepositionEmbedded()
@@ -1632,10 +1601,7 @@ namespace NinjaTrader.NinjaScript
 
 				try { embeddedControl?.ApplyResponsiveLayout(finalWidth); } catch { }
 			}
-			catch (Exception ex)
-			{
-				SafePrint("RepositionEmbedded ex: " + ex.Message);
-			}
+			catch { }
 		}
 
 		private void HookResizeHandlersForEmbedded()
@@ -1711,8 +1677,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 	public class HawkVwapBandsVolatility : Strategy
 	{
-		public enum HawkLogLevel { Off, Error, Info, Display, Debug, Trace }
-
 		#region Inputs (public)
 		[NinjaScriptProperty, Display(Name = "Start Time BRT (HH:mm[:ss])", GroupName = "Horas", Order = 1)]
 		public string StartTimeBrt { get; set; } = "10:00:00";
@@ -1836,24 +1800,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[Display(Name="BreakEven Offset (ticks)", Order=3, GroupName="Risk Management")]
 		public int BreakEvenOffsetTicks { get; set; } = 1;
 
-		[NinjaScriptProperty]
-		[Display(Name = "Log Level", Order = 9001, GroupName = "Diagnostics")]
-		public HawkLogLevel LogLevel { get; set; } = HawkLogLevel.Info;
-
-		[NinjaScriptProperty]
-		[Display(Name = "Support Mode", Order = 9002, GroupName = "Diagnostics")]
-		public bool SupportMode { get; set; } = false;
-
-		[NinjaScriptProperty]
-		[Display(Name = "Support Dump Every N Bars", Order = 9003, GroupName = "Diagnostics")]
-		public int SupportDumpEveryNBars { get; set; } = 0;
-
 		[NinjaScriptProperty, Display(Name = "Panel Title", GroupName = "Painel", Order = 1)]
 		public string PanelTitle { get; set; } = "HawkVwapBandsVolatility";
 		[NinjaScriptProperty, Display(Name = "InstanceTag (opcional)", GroupName = "Painel", Order = 2)]
 		public string InstanceTag { get; set; } = "";
-		[NinjaScriptProperty, Display(Name = "Enable Panel Diagnostics", GroupName = "Painel", Order = 3)]
-		public bool EnablePanelDiagnostics { get; set; } = false;
 		[NinjaScriptProperty, Display(Name = "Panel Publish Interval (s)", GroupName = "Painel", Order = 4)]
 		public int PanelPublishIntervalSeconds { get; set; } = 1;
 
@@ -1882,18 +1832,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		#endregion
 
 		#region Internals
-		private struct StrategySnapshot
-		{
-			public DateTime Time;
-			public State State;
-			public MarketPosition Position;
-			public double AvgPrice;
-			public double UnrealizedPnL;
-			public string LastSignal;
-			public string LastBlockReason;
-			public string LastAction;
-		}
-
 		private struct SignalDecision
 		{
 			public bool RegimeChanged;
@@ -1937,7 +1875,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private DateTime _lastBracketConfirmedUtc = DateTime.MinValue;
 		private DateTime _lastEntryFillUtc = DateTime.MinValue;
 		private DateTime _lastBracketValidationSkipUtc = DateTime.MinValue;
-		private DateTime _lastProtectionLogUtc = DateTime.MinValue;
 		private int _bracketRebuildCount = 0;
 		private int _lastBracketQty = 0;
 		private bool _bracketFailSafeActive = false;
@@ -1957,7 +1894,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private bool _protectionReady = false;
 		private int _unprotectedPositionCount = 0;
 		private bool _executionCycleLocked = false;
-		private string _executionLockReason = "";
 		private double entryPrice = 0.0;
 		private bool closeBarOrderPending = false;
 		private Order closeBarOrder = null;
@@ -2030,12 +1966,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private int _histLosingTrades = 0;
 
 		private double unrealizedTicks = 0;
-		private string _lockReason = "";
 		private DateTime _lockedAtUtc = DateTime.MinValue;
-		private StrategySnapshot _snap;
-		private string _lastBlockReason = "";
-		private string _lastSignal = "";
-		private string _lastAction = "";
 		private int _lastActionBar = -1;
 
 		private const int BIP_AUTOCLOSE = 1;
@@ -2116,7 +2047,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 					DisableExitOnSessionCloseSafely();
 					try { IsExitOnSessionCloseStrategy = false; } catch { }
-					LogMsg("Config", "ExitOnSessionClose disabled (SetDefaults)", 2);
 				}
 				else if (State == State.Configure)
 				{
@@ -2133,18 +2063,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 					if (UseFiboBands && UseFixedBands)
 					{
 						UseFixedBands = false;
-						LogMsg("ConfigFix", "UseFiboBands and UseFixedBands were both true; forcing UseFixedBands=false.", 2);
 					}
 
 					if (ExitAtOppositeBandEnabled && ExitAtVwapEnabled)
 					{
 						ExitAtVwapEnabled = false;
-						LogMsg("ConfigFix", "OppBand enabled; forcing ExitAtVwapEnabled=false (exclusive mode).", 2);
 					}
 				}
 				else if (State == State.DataLoaded)
 				{
-					Log(HawkLogLevel.Info, "DataLoaded", "state=entered");
 					hvb = HawkVwapBands(
 						Input,
 						NumDeviations,
@@ -2163,13 +2090,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 					cacheKey = "";
 					isAnalyzerMode = (ChartControl == null);
 				}
-				else if (State == State.Historical)
-				{
-					Log(HawkLogLevel.Info, "Historical", "state=entered");
-				}
 				else if (State == State.Realtime)
 				{
-					Log(HawkLogLevel.Info, "Realtime", "state=entered");
 					if (string.IsNullOrWhiteSpace(cacheKey))
 						cacheKey = GetCacheKey();
 
@@ -2226,7 +2148,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 					flattenOrder = null;
 					flattenInProgress = false;
 					_executionCycleLocked = false;
-					_executionLockReason = "";
 					ResetExecutionCycleGuard("state_realtime");
 
 					EnsurePanelInitializedOnce();
@@ -2237,7 +2158,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				{
 					if (terminatedHandled) return;
 					terminatedHandled = true;
-					Log(HawkLogLevel.Info, "Terminated", "state=entered");
 					PublishPanelOffSnapshot("Terminated");
 					try { HVB_PanelStateHub.Remove(cacheKey); } catch { }
 					try { StopFlattenTimer(); } catch { }
@@ -2246,7 +2166,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 			catch (Exception ex)
 			{
-				Print($"[HawkVwapBandsVolatility] OnStateChange exception: {ex}");
 			}
 		}
 		#endregion
@@ -2266,9 +2185,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			if (panelHelper == null)
 			{
-				panelHelper = new HVB_PanelHelper(EnablePanelDiagnostics)
+				panelHelper = new HVB_PanelHelper
 				{
-					LogAction = msg => Print(msg),
 					CacheKey = cacheKey
 				};
 				panelHelper.Init(ChartControl);
@@ -2285,127 +2203,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 			try { dynamic self = this; self.ExitOnSessionCloseSeconds = 0; } catch { }
 		}
 
-		private bool ShouldLog(HawkLogLevel level)
-		{
-			if (LogLevel == HawkLogLevel.Off) return false;
-			return (int)level <= (int)LogLevel;
-		}
-
-		private void Log(HawkLogLevel level, string tag, string msg)
-		{
-			if (!ShouldLog(level)) return;
-			string levelText = level.ToString().ToUpperInvariant();
-			string body = string.IsNullOrWhiteSpace(msg) ? "msg=" : msg;
-			try { Print($"[{Name}][{levelText}][{tag}] {body}"); }
-			catch { Print($"[{Name}][{levelText}][{tag}] {body}"); }
-			lastEvent = tag;
-		}
-
-		private void LogDisplayPanel(string tag, string msg)
-		{
-			if (!ShouldLog(HawkLogLevel.Display)) return;
-			Log(HawkLogLevel.Display, tag, msg);
-		}
-
-		private void LogDisplay(string tag, string msg)
-		{
-			if (!ShouldLog(HawkLogLevel.Display)) return;
-			Log(HawkLogLevel.Display, tag, msg);
-		}
-
-		private HawkLogLevel MapLogLevel(int level)
-		{
-			switch (level)
-			{
-				case 1: return HawkLogLevel.Error;
-				case 2: return HawkLogLevel.Info;
-				case 3: return HawkLogLevel.Debug;
-				default: return HawkLogLevel.Trace;
-			}
-		}
-
-		private void LogMsg(string tag, string msg, int level = 2)
-		{
-			Log(MapLogLevel(level), tag, msg);
-		}
-
-		private void HawkLog(string level, string area, string eventName, string reason, Dictionary<string, string> data = null)
-		{
-			var builder = new StringBuilder();
-			builder.Append("[HVB]");
-			builder.Append($"[lvl={level}]");
-			builder.Append($"[area={area}]");
-			builder.Append($"[event={eventName}]");
-			if (!string.IsNullOrWhiteSpace(reason))
-				builder.Append($" reason={reason}");
-			if (data != null)
-			{
-				foreach (var kvp in data)
-				{
-					if (string.IsNullOrWhiteSpace(kvp.Key)) continue;
-					builder.Append($" {kvp.Key}={kvp.Value}");
-				}
-			}
-			try { Print(builder.ToString()); }
-			catch { Print(builder.ToString()); }
-		}
-
-		private void SupportDump(string reason)
-		{
-			UpdateSnapshot(reason);
-			if (!SupportMode) return;
-
-			try
-			{
-				var snap = _snap;
-				Log(HawkLogLevel.Info, "Support",
-					$"reason={reason} bar={CurrentBar} time={snap.Time:O} state={snap.State} pos={snap.Position} " +
-					$"avg={snap.AvgPrice:0.00} pnl={snap.UnrealizedPnL:0.00} signal={snap.LastSignal} " +
-					$"block={snap.LastBlockReason} action={snap.LastAction}");
-			}
-			catch { }
-		}
-
-		private void UpdateSnapshot(string action = null)
-		{
-			try
-			{
-				if (!string.IsNullOrEmpty(action))
-					_lastAction = action;
-
-				DateTime stamp = DateTime.UtcNow;
-				try
-				{
-					if (BarsInProgress == 1 && Times != null && Times.Length > 1)
-						stamp = Times[1][0];
-					else if (Time != null && CurrentBar >= 0)
-						stamp = Time[0];
-				}
-				catch { }
-
-				_snap = new StrategySnapshot
-				{
-					Time = stamp,
-					State = State,
-					Position = Position?.MarketPosition ?? MarketPosition.Flat,
-					AvgPrice = Position?.AveragePrice ?? 0,
-					UnrealizedPnL = _unrealizedPnlManual,
-					LastSignal = _lastSignal,
-					LastBlockReason = _lastBlockReason,
-					LastAction = _lastAction
-				};
-			}
-			catch { }
-		}
-
 		private bool BlockIfSameBar(string actionTag)
 		{
 			if (CurrentBar < 0) return false;
 			if (_lastActionBar == CurrentBar)
 			{
-				_lastBlockReason = $"block_same_bar:{actionTag}";
-				SupportDump("trade_blocked");
-				LogMsg("OrderBlock", $"blocked same bar action={actionTag} bar={CurrentBar}", 3);
 				return true;
 			}
 			return false;
@@ -2571,7 +2373,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (nowBrt < scheduled) return;
 			if (_autoCloseExitSentToday) return;
 
-			LogMsg("AutoClose", $"trigger nowBrt={nowBrt:HH:mm:ss} scheduled={scheduled:HH:mm:ss} pos={Position.MarketPosition} qty={Position.Quantity}", 2);
 
 			bool isFlat = Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0;
 			if (isFlat)
@@ -2698,13 +2499,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 					HVB_PanelStateHub.Set(cacheKey, state.Snapshot);
 					try { panelHelper?.ApplySnapshot(state.Snapshot); } catch { }
-					LogMsg("PanelCacheLoad", $"Loaded panel cache from {path}", 2);
 					return true;
 				}
 			}
 			catch (Exception ex)
 			{
-				LogMsg("PanelCacheLoadErr", ex.Message, 1);
 				return false;
 			}
 		}
@@ -2747,11 +2546,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 				}
 
 				_lastPanelCacheSaveUtc = now;
-				LogMsg("PanelCacheSave", $"Saved panel cache to {path}", 2);
 			}
 			catch (Exception ex)
 			{
-				LogMsg("PanelCacheSaveErr", ex.Message, 1);
 			}
 		}
 		#endregion
@@ -3076,7 +2873,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 			catch (Exception ex)
 			{
-				LogMsg("PnLCalcError", "RecalcPnLIfNeeded ex: " + ex.Message, 1);
 			}
 			finally
 			{
@@ -3159,7 +2955,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 			catch (Exception ex)
 			{
-				LogMsg("StreakCalcError", "UpdateStreaks ex: " + ex.Message, 1);
 			}
 		}
 		#endregion
@@ -3419,11 +3214,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 			_targetConfirmed = false;
 			_protectionReady = false;
 			_unprotectedPositionCount = 0;
-			_lastProtectionLogUtc = DateTime.MinValue;
-			LogMsg("ExecCycleGuardReset", $"reason={reason}", 3);
 		}
 
-		private void UpdateProtectionState(ExitMode mode, string sourceTag, bool logChanges)
+		private void UpdateProtectionState(ExitMode mode)
 		{
 			if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
 			{
@@ -3439,18 +3232,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			bool targetConfirmed = targetActive && targetOrder.Quantity == qty;
 			bool protectionReady = _entryFilled && stopConfirmed && targetConfirmed;
 
-			if (logChanges && (stopConfirmed != _stopConfirmed || targetConfirmed != _targetConfirmed || protectionReady != _protectionReady))
-			{
-				HawkLog("INFO", "EXEC_GUARD", "PROTECTION_STATE", sourceTag,
-					new Dictionary<string, string>
-					{
-						{ "entryFilled", _entryFilled.ToString() },
-						{ "stopConfirmed", stopConfirmed.ToString() },
-						{ "targetConfirmed", targetConfirmed.ToString() },
-						{ "protectionReady", protectionReady.ToString() }
-					});
-			}
-
 			_stopConfirmed = stopConfirmed;
 			_targetConfirmed = targetConfirmed;
 			_protectionReady = protectionReady;
@@ -3463,15 +3244,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 			if (_executionCycleLocked) return;
 			_executionCycleLocked = true;
-			_executionLockReason = reason;
 			_bracketFailSafeActive = true;
 
-			HawkLog("ERROR", "FAILSAFE", "EXECUTION_LOCKED", reason,
-				new Dictionary<string, string>
-				{
-					{ "source", sourceTag },
-					{ "cycleId", _currentCycleId.ToString(CultureInfo.InvariantCulture) }
-				});
 
 			RequestFlatten(reason, allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
 		}
@@ -3488,7 +3262,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 
 			ExitMode mode = GetExitMode();
-			UpdateProtectionState(mode, sourceTag, logChanges: false);
+			UpdateProtectionState(mode);
 
 			if (_protectionReady)
 				return true;
@@ -3499,28 +3273,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (allowRepair && ShouldRepairBracket())
 				BracketWatchdog($"{sourceTag}_guard");
 
-			if (requireProtectionReady)
-				LogMsg("ExecCycleGuard", $"{sourceTag} blocked: protection_not_ready stop={_stopConfirmed} target={_targetConfirmed} entry={_entryFilled}", 2);
-
 			return false;
 		}
 
 		private void RegisterUnprotectedState(string sourceTag, string reason)
 		{
-			if (DateTime.UtcNow - _lastProtectionLogUtc > TimeSpan.FromSeconds(1))
-			{
-				_lastProtectionLogUtc = DateTime.UtcNow;
-				HawkLog("WARN", "EXEC_GUARD", "UNPROTECTED_STATE", reason,
-					new Dictionary<string, string>
-					{
-						{ "source", sourceTag },
-						{ "count", _unprotectedPositionCount.ToString(CultureInfo.InvariantCulture) },
-						{ "entryFilled", _entryFilled.ToString() },
-						{ "stopConfirmed", _stopConfirmed.ToString() },
-						{ "targetConfirmed", _targetConfirmed.ToString() }
-					});
-			}
-
 			_unprotectedPositionCount++;
 
 			if (_unprotectedPositionCount >= UnprotectedPositionLimit)
@@ -3601,23 +3358,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 				_bracketRebuildCount = 0;
 				_lastBracketConfirmedUtc = DateTime.UtcNow;
 				_entryBracketPlacedCycleId = _currentCycleId;
-				HawkLog("INFO", "BRACKET", "BRACKET_CONFIRMED", "initial_bracket_created",
-					new Dictionary<string, string>
-					{
-						{ "stop", createdStop?.OrderState.ToString() ?? "null" },
-						{ "target", createdTarget?.OrderState.ToString() ?? "null" },
-						{ "mode", mode.ToString() }
-					});
 			}
 			else
 			{
-				HawkLog("ERROR", "BRACKET", "BRACKET_PARTIAL", "initial_creation_failed",
-					new Dictionary<string, string>
-					{
-						{ "stopValid", stopValid.ToString() },
-						{ "targetValid", targetValid.ToString() },
-						{ "mode", mode.ToString() }
-					});
 				_bracketRebuildCount++;
 			}
 		}
@@ -3660,7 +3403,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				price = Instrument.MasterInstrument.RoundToTickSize(price);
 
 			if (adjusted)
-				LogMsg("BRACKET_PRICE_ADJUST", $"{sourceTag} stop side={side} original={original:0.00} adjusted={price:0.00} bid={bid:0.00} ask={ask:0.00}", 2);
 
 			return price;
 		}
@@ -3690,7 +3432,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				price = Instrument.MasterInstrument.RoundToTickSize(price);
 
 			if (adjusted)
-				LogMsg("BRACKET_PRICE_ADJUST", $"{sourceTag} target side={side} original={original:0.00} adjusted={price:0.00} bid={bid:0.00} ask={ask:0.00}", 2);
 
 			return price;
 		}
@@ -3872,8 +3613,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			Order targetOrder = GetActiveTargetOrder(mode);
 			if (IsBracketOrderCancelling(stopLossOrder) || IsBracketOrderCancelling(targetOrder))
 			{
-				LogMsg("BRACKET_REBUILD", $"{reasonTag} block=cancel_pending stopState={stopLossOrder?.OrderState} targetState={targetOrder?.OrderState}", 2);
-				_lastBlockReason = "bracket_cancel_pending";
 				return false;
 			}
 
@@ -3889,8 +3628,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (IsBracketOrderActive(stopLossOrder) || IsBracketOrderActive(targetOrder) ||
 				IsBracketOrderCancelling(stopLossOrder) || IsBracketOrderCancelling(targetOrder))
 			{
-				LogMsg("BRACKET_REBUILD", $"{reasonTag} block=cancel_incomplete stopState={stopLossOrder?.OrderState} targetState={targetOrder?.OrderState}", 2);
-				_lastBlockReason = "bracket_cancel_incomplete";
 				return false;
 			}
 
@@ -3928,11 +3665,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				{
 					_bracketValidationSuspended = false;
 					_bracketValidationSuspensionLogged = false;
-					HawkLog("WARN", "BRACKET", "VALIDATION_FORCED", "grace_timeout",
-						new Dictionary<string, string>
-						{
-							{ "elapsedMs", ((int)elapsedMs).ToString(CultureInfo.InvariantCulture) }
-						});
 				}
 			}
 
@@ -3947,13 +3679,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 					_bracketValidationSuspended = false;
 					_bracketValidationSuspensionLogged = false;
 					_lastBracketConfirmedUtc = DateTime.UtcNow;
-					HawkLog("INFO", "BRACKET", "BRACKET_STABILIZED", "orders_active",
-						new Dictionary<string, string>
-						{
-							{ "elapsedMs", ((int)elapsedMs).ToString(CultureInfo.InvariantCulture) },
-							{ "stopState", stopLossOrder?.OrderState.ToString() ?? "null" },
-							{ "targetState", targetOrder?.OrderState.ToString() ?? "null" }
-						});
 				}
 				else
 				{
@@ -3964,19 +3689,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 					{
 						_bracketValidationSuspensionLogged = true;
 						_lastBracketValidationSkipUtc = DateTime.UtcNow;
-						HawkLog("WARN", "FAILSAFE", "VALIDATION_SKIPPED", skipReason,
-							new Dictionary<string, string>
-							{
-								{ "elapsedMs", ((int)elapsedMs).ToString(CultureInfo.InvariantCulture) },
-								{ "stopState", stopLossOrder?.OrderState.ToString() ?? "null" },
-								{ "targetState", targetOrder?.OrderState.ToString() ?? "null" }
-							});
 					}
 					return;
 				}
 			}
 
-			UpdateProtectionState(mode, sourceTag, logChanges: true);
+			UpdateProtectionState(mode);
 
 			if (IsBracketValid(mode, out reason))
 			{
@@ -3986,15 +3704,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 
 			if (reason.IndexOf("qty_mismatch", StringComparison.OrdinalIgnoreCase) >= 0)
-				LogMsg("BRACKET_QTY_MISMATCH", $"{sourceTag} {reason}", 1);
 
-			HawkLog("WARN", "BRACKET", "BRACKET_MISSING", reason,
-				new Dictionary<string, string>
-				{
-					{ "source", sourceTag },
-					{ "pos", Position.MarketPosition.ToString() },
-					{ "qty", Math.Abs(Position.Quantity).ToString(CultureInfo.InvariantCulture) }
-				});
 
 			if (!_bracketValidationSuspended)
 				RegisterUnprotectedState(sourceTag, reason);
@@ -4004,7 +3714,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			if (!ShouldRepairBracket())
 			{
-				LogMsg("BRACKET_CHECK", $"{sourceTag} action=validate_only state={State} analyzer={isAnalyzerMode} failSafe={IsFailSafeBlocking()}", 3);
 				return;
 			}
 
@@ -4024,14 +3733,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			if ((DateTime.UtcNow - _lastBracketRebuildUtc) < _bracketRebuildCooldown)
 			{
-				LogMsg("BRACKET_REBUILD", $"{sourceTag} skipped=cooldown last={_lastBracketRebuildUtc:O}", 2);
 				return;
 			}
 
 			if (IsBracketOrderCancelling(stopLossOrder) || IsBracketOrderCancelling(GetActiveTargetOrder(mode)))
 			{
-				LogMsg("BRACKET_REBUILD", $"{sourceTag} skipped=cancel_pending stopState={stopLossOrder?.OrderState} targetState={GetActiveTargetOrder(mode)?.OrderState}", 2);
-				_lastBlockReason = "bracket_cancel_pending";
 				return;
 			}
 
@@ -4040,15 +3746,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (_lastBracketConfirmedUtc != DateTime.MinValue &&
 					(DateTime.UtcNow - _lastBracketConfirmedUtc).TotalSeconds < 10)
 				{
-					HawkLog("WARN", "BRACKET", "REBUILD_IGNORED", "recently_confirmed");
 					return;
 				}
-				HawkLog("ERROR", "FAILSAFE", "FLATTEN_TRIGGERED", "rebuild_limit",
-					new Dictionary<string, string>
-					{
-						{ "source", sourceTag },
-						{ "count", _bracketRebuildCount.ToString(CultureInfo.InvariantCulture) }
-					});
 				TriggerExecutionFailSafe("BracketRebuildLimit", sourceTag);
 				return;
 			}
@@ -4063,7 +3762,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				_bracketRebuildCount++;
 				_lastBracketRebuildUtc = DateTime.UtcNow;
-				LogMsg("BRACKET_REBUILD", $"{sourceTag} failed stopReason={stopReason} targetReason={targetReason} count={_bracketRebuildCount}", 1);
 				return;
 			}
 
@@ -4097,7 +3795,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				_bracketRebuildCount++;
 				_lastBracketQty = qty;
 				MarkActionExecuted();
-				LogMsg("BRACKET_REBUILD", $"{sourceTag} stop={stopPrice:0.00} target={targetPrice:0.00} mode={mode} qty={qty} count={_bracketRebuildCount} stopOrder={newStop?.Name} targetOrder={newTarget?.Name}", 1);
 			}
 		#endregion
 
@@ -4147,7 +3844,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				if (IsBracketOrderActive(oppositeBandExitOrder) && !IsBracketOrderActive(stopLossOrder))
 				{
-					LogMsg("ExecCycleGuard", "CancelOppBandExit blocked: stop_missing", 2);
 					return;
 				}
 			}
@@ -4214,7 +3910,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				oppositeBandExitOrderReplace = null;
 				rep = null;
-				LogMsg("OppBandExitHeal", $"rep==ord cleared name={ord.Name} lim={ord.LimitPrice:0.00}", 2);
 			}
 
 			// promote replace->main if main is dead/missing
@@ -4224,7 +3919,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				oppositeBandExitOrderReplace = null;
 				ord = oppositeBandExitOrder;
 				rep = null;
-				LogMsg("OppBandExitHeal", $"promoted replace->main name={ord?.Name} lim={ord?.LimitPrice:0.00}", 2);
 			}
 
 			string ordInfo = ord == null ? "null" : $"{ord.Name} {ord.OrderState} lim={ord.LimitPrice:0.00} qty={ord.Quantity}";
@@ -4232,9 +3926,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			double diff = (ord != null && ord.LimitPrice > 0) ? Math.Abs(ord.LimitPrice - target) : double.NaN;
 			double diffTicks = (!double.IsNaN(diff) && ts > 0) ? diff / ts : double.NaN;
 
-			LogMsg("OppBandExitCheck",
-				$"pos={Position.MarketPosition} qty={qty} idx={idxBand + 1} target={target:0.00} thr={repricingThreshold:0.0000} diffTicks={diffTicks:0.00} ord={ordInfo} rep={repInfo}",
-				2);
 
 			// only block if replace is active AND main is active
 			if (rep != null && IsActiveOrSubmitted(rep) && ord != null && IsActiveOrSubmitted(ord))
@@ -4243,7 +3934,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			// If main is cancelling, don't submit a new replace
 			if (ord != null && IsCancelling(ord))
 			{
-				LogMsg("OppBandSkipReprice", $"reason=main_cancelling state={ord.OrderState}", 3);
 				return;
 			}
 
@@ -4256,9 +3946,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 					if (BlockIfSameBar("OppBandExitReplace")) return;
 					if (HasWorkingOrders(oppositeBandExitOrderReplace))
 					{
-						_lastBlockReason = "block_working_exit:OppBandExitReplace";
-						SupportDump("trade_blocked");
-						LogMsg("OrderBlock", "blocked working exit order for OppBandExitReplace", 3);
 						return;
 					}
 					string fromEntry = GetFromEntrySignal();
@@ -4270,9 +3957,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					if (oppositeBandExitOrderReplace != null)
 					{
 						MarkActionExecuted();
-						SupportDump($"order_sent:{oppositeBandExitOrderReplace.Name}");
 					}
-					LogMsg("OppBandExitReplaceSubmit", $"pos={Position.MarketPosition} old={ord.LimitPrice:0.00} new={target:0.00}", 2);
 				}
 				return;
 			}
@@ -4283,9 +3968,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (BlockIfSameBar("OppBandExitNew")) return;
 				if (HasWorkingOrders(oppositeBandExitOrder))
 				{
-					_lastBlockReason = "block_working_exit:OppBandExitNew";
-					SupportDump("trade_blocked");
-					LogMsg("OrderBlock", "blocked working exit order for OppBandExitNew", 3);
 					return;
 				}
 				string fromEntry = GetFromEntrySignal();
@@ -4293,18 +3975,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (oppositeBandExitOrder != null)
 				{
 					MarkActionExecuted();
-					SupportDump($"order_sent:{oppositeBandExitOrder.Name}");
 				}
-				LogMsg("OppBandExitPlaced", $"L target={target:0.00}", 2);
 			}
 			else if (Position.MarketPosition == MarketPosition.Short)
 			{
 				if (BlockIfSameBar("OppBandExitNew")) return;
 				if (HasWorkingOrders(oppositeBandExitOrder))
 				{
-					_lastBlockReason = "block_working_exit:OppBandExitNew";
-					SupportDump("trade_blocked");
-					LogMsg("OrderBlock", "blocked working exit order for OppBandExitNew", 3);
 					return;
 				}
 				string fromEntry = GetFromEntrySignal();
@@ -4312,9 +3989,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (oppositeBandExitOrder != null)
 				{
 					MarkActionExecuted();
-					SupportDump($"order_sent:{oppositeBandExitOrder.Name}");
 				}
-				LogMsg("OppBandExitPlaced", $"S target={target:0.00}", 2);
 			}
 		}
 
@@ -4338,13 +4013,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			if (hasTarget && pnl >= TradeProfitTargetUsd)
 			{
-				LogMsg("TradeCycleTargetHit", $"pnl={pnl:0.00} target={TradeProfitTargetUsd:0.00}", 2);
 				RequestFlatten("TradeProfitTarget", allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
 				return;
 			}
 			if (hasStop && pnl <= -TradeStopLossUsd)
 			{
-				LogMsg("TradeCycleStopHit", $"pnl={pnl:0.00} stop={-TradeStopLossUsd:0.00}", 2);
 				RequestFlatten("TradeStopLoss", allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
 				return;
 			}
@@ -4361,7 +4034,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				if (IsBracketOrderActive(financialTargetOrder) && !IsBracketOrderActive(stopLossOrder))
 				{
-					LogMsg("ExecCycleGuard", "CancelFinancialTarget blocked: stop_missing", 2);
 					return;
 				}
 			}
@@ -4439,9 +4111,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (BlockIfSameBar("FinTargetReplace")) return;
 			if (HasWorkingOrders(financialTargetOrderReplace))
 			{
-				_lastBlockReason = "block_working_exit:FinTargetReplace";
-				SupportDump("trade_blocked");
-				LogMsg("OrderBlock", "blocked working exit order for FinTargetReplace", 3);
 				return;
 			}
 			string fromEntry = GetFromEntrySignal();
@@ -4453,9 +4122,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (financialTargetOrderReplace != null)
 			{
 				MarkActionExecuted();
-				SupportDump($"order_sent:{financialTargetOrderReplace.Name}");
 			}
-			LogMsg("FinTargetUpdated", $"side={Position.MarketPosition} qty={qty} avg={Position.AveragePrice:0.00} tgt={target:0.00} usd={TradeProfitTargetUsd:0.00}", 2);
 		}
 		#endregion
 
@@ -4525,9 +4192,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (BlockIfSameBar("FinStop")) return;
 			if (HasWorkingOrders(stopLossOrder))
 			{
-				_lastBlockReason = "block_working_exit:FinStop";
-				SupportDump("trade_blocked");
-				LogMsg("OrderBlock", "blocked working exit order for FinStop", 3);
 				return;
 			}
 			string fromEntry = GetFromEntrySignal();
@@ -4539,9 +4203,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (stopLossOrder != null)
 			{
 				MarkActionExecuted();
-				SupportDump($"order_sent:{stopLossOrder.Name}");
 			}
-			LogMsg("FinStopUpdated", $"side={Position.MarketPosition} qty={qty} avg={Position.AveragePrice:0.00} stop={stopPrice:0.00} usd={FinancialStopUsd:0.00}", 2);
 		}
 		#endregion
 
@@ -4590,12 +4252,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (isBuy)
 			{
 				_bandFilledBuy[idx] = true;
-				LogMsg("BandFillGuard", $"BUY Grid{idx + 1} marked filled; AggressiveGridMode={AggressiveGridMode}", 2);
 			}
 			else if (isSell)
 			{
 				_bandFilledSell[idx] = true;
-				LogMsg("BandFillGuard", $"SELL Grid{idx + 1} marked filled; AggressiveGridMode={AggressiveGridMode}", 2);
 			}
 		}
 
@@ -4619,8 +4279,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				// Default behavior: do not re-arm same band after it filled once in this cycle.
 				if (IsBandBlockedForNewOrder(i, currentRegime))
 				{
-					_lastBlockReason = $"band_filled_guard:Grid{i + 1}";
-					SupportDump("trade_blocked");
 					CancelGridIndex(i, "band_filled_guard");
 					continue;
 				}
@@ -4658,11 +4316,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 					string repInfo = repL != null ? $"L_R:{repL.Name} {repL.OrderState} lim={repL.LimitPrice:0.00}" :
 									   repS != null ? $"S_R:{repS.Name} {repS.OrderState} lim={repS.LimitPrice:0.00}" : "none";
 
-					LogMsg("Grid2Diag_Pre",
-						$"pos={Position.MarketPosition} qty={Position.Quantity} regime={currentRegime} bands={bands} enabled={enabled[i]} " +
-						$"lo={lo:0.00} up={up:0.00} calc={price:0.00} thr={repricingThreshold:0.0000} tick={ts:0.0000} " +
-						$"ord={ordInfo} rep={repInfo}",
-						3);
 				}
 				// ===== end DIAG =====
 
@@ -4714,8 +4367,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			// Extra guard at placement layer (covers cases where calls happen outside RepriceOrPlaceGrid)
 			if (IsBandBlockedForNewOrder(idx, Regime.Buy))
 			{
-				_lastBlockReason = $"band_filled_guard:Grid{idx + 1}";
-				SupportDump("trade_blocked");
 				CancelGridIndex(idx, "band_filled_guard");
 				return;
 			}
@@ -4728,7 +4379,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				gridLongReplace[idx] = null;
 				rep = null;
-				LogMsg("GridReplaceHeal", $"Grid{idx + 1} BUY detected rep==ord; cleared replace ref name={ord.Name} lim={ord.LimitPrice:0.00}", 2);
 			}
 
 			// ===== DIAG: Grid2 only =====
@@ -4739,9 +4389,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				double diff = ord != null ? Math.Abs(ord.LimitPrice - price) : double.NaN;
 				double diffTicks = (!double.IsNaN(diff) && Instrument?.MasterInstrument?.TickSize > 0) ? diff / Instrument.MasterInstrument.TickSize : double.NaN;
 
-				LogMsg("Grid2Diag_Long_Entry",
-					$"calc={price:0.00} thr={repricingThreshold:0.0000} diff={diff:0.0000} diffTicks={diffTicks:0.00} ord={ordS} rep={repS} lastBar={_lastGridRepriceBarLong[idx]} curBar={CurrentBar}",
-					3);
 			}
 			// ===== end DIAG =====
 
@@ -4752,23 +4399,19 @@ namespace NinjaTrader.NinjaScript.Strategies
 				gridLongReplace[idx] = null;
 				ord = gridLong[idx];
 				rep = null;
-				LogMsg("GridReplaceHeal", $"Grid{idx + 1} BUY promoted replace->main name={ord?.Name} lim={ord?.LimitPrice:0.00}", 2);
 			}
 
 			// Only block if we truly have a replacement pending AND the main is still active (handshake in progress)
 			if (rep != null && IsActiveOrSubmitted(rep) && ord != null && IsActiveOrSubmitted(ord))
 			{
 				if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
-					LogMsg("Grid2Diag_Long_Return", "reason=rep_active_and_main_active", 3);
 				return;
 			}
 
 			if (ord != null && IsCancelling(ord))
 			{
 				if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
-					LogMsg("Grid2Diag_Long_Return", $"reason=main_cancelling state={ord.OrderState}", 3);
 
-				LogMsg("GridSkipRecreate", $"Grid{idx + 1} BUY reason=cancel_in_progress state={ord.OrderState}", 3);
 				return;
 			}
 
@@ -4777,14 +4420,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (DisableRepriceWhenFlat && (Position == null || Position.MarketPosition == MarketPosition.Flat))
 				{
 					if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
-						LogMsg("Grid2Diag_Long_Return", "reason=DisableRepriceWhenFlat (unexpected while pos!=flat)", 3);
 					return;
 				}
 
 				if (Math.Abs(ord.LimitPrice - price) < repricingThreshold)
 				{
 					if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
-						LogMsg("Grid2Diag_Long_Return", $"reason=below_threshold diff={Math.Abs(ord.LimitPrice - price):0.0000} thr={repricingThreshold:0.0000}", 3);
 					return;
 				}
 
@@ -4792,60 +4433,44 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (_lastGridRepriceBarLong[idx] >= 0 && (CurrentBar - _lastGridRepriceBarLong[idx]) < minBars)
 				{
 					if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
-						LogMsg("Grid2Diag_Long_Return", $"reason=throttle barsSinceLast={CurrentBar - _lastGridRepriceBarLong[idx]} < {minBars}", 3);
 
-					LogMsg("GridRepriceThrottle", $"Grid{idx + 1} BUY skip; barsSinceLast={CurrentBar - _lastGridRepriceBarLong[idx]} < {RepriceEveryNBars}", 3);
 					return;
 				}
 
 				if (BlockIfSameBar($"Grid{idx + 1}_Buy_R")) return;
 				if (HasWorkingOrders(gridLongReplace[idx]))
 				{
-					_lastBlockReason = $"block_working_entry:Grid{idx + 1}_Buy_R";
-					SupportDump("trade_blocked");
-					LogMsg("OrderBlock", $"blocked working entry order for Grid{idx + 1} Buy replace", 3);
 					return;
 				}
 				var o = EnterLongLimit(0, true, qty, price, $"Grid{idx + 1}_Buy_R");
 				if (o == null)
 				{
-					LogMsg("GridReplaceFailed", $"Grid{idx + 1} BUY replacement returned null qty={qty} price={price:0.00}", 1);
 					return;
 				}
 				gridLongReplace[idx] = o;
 				_lastGridRepriceBarLong[idx] = CurrentBar;
 				MarkActionExecuted();
-				SupportDump($"order_sent:{o.Name}");
 
 				if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
-					LogMsg("Grid2Diag_Long_Action", $"action=submit_replace old={ord.LimitPrice:0.00} new={price:0.00}", 2);
 
-				LogMsg("GridReplaceSubmit", $"Grid{idx + 1} BUY old={ord.LimitPrice:0.00} new={price:0.00}", 3);
 				return;
 			}
 
 			if (BlockIfSameBar($"Grid{idx + 1}_Buy")) return;
 			if (HasWorkingOrders(gridLong[idx]))
 			{
-				_lastBlockReason = $"block_working_entry:Grid{idx + 1}_Buy";
-				SupportDump("trade_blocked");
-				LogMsg("OrderBlock", $"blocked working entry order for Grid{idx + 1} Buy", 3);
 				return;
 			}
 			var newOrd = EnterLongLimit(0, true, qty, price, $"Grid{idx + 1}_Buy");
 			if (newOrd == null)
 			{
-				LogMsg("GridOrderNull", $"Grid{idx + 1} BUY returned null qty={qty} price={price:0.00}", 1);
 				return;
 			}
 			gridLong[idx] = newOrd;
 			MarkActionExecuted();
-			SupportDump($"order_sent:{newOrd.Name}");
 
 			if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
-				LogMsg("Grid2Diag_Long_Action", $"action=create_new name={newOrd.Name} lim={price:0.00}", 2);
 
-			LogMsg("GridSubmit", $"Grid{idx + 1} BUY name={newOrd.Name} qty={qty} lim={price:0.00}", 2);
 		}
 
 		private void PlaceOrRepriceShort(int idx, double price, int qty, double repricingThreshold)
@@ -4853,8 +4478,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			// Extra guard at placement layer
 			if (IsBandBlockedForNewOrder(idx, Regime.Sell))
 			{
-				_lastBlockReason = $"band_filled_guard:Grid{idx + 1}";
-				SupportDump("trade_blocked");
 				CancelGridIndex(idx, "band_filled_guard");
 				return;
 			}
@@ -4867,7 +4490,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				gridShortReplace[idx] = null;
 				rep = null;
-				LogMsg("GridReplaceHeal", $"Grid{idx + 1} SELL detected rep==ord; cleared replace ref name={ord.Name} lim={ord.LimitPrice:0.00}", 2);
 			}
 
 			// ===== DIAG: Grid2 only =====
@@ -4878,9 +4500,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				double diff = ord != null ? Math.Abs(ord.LimitPrice - price) : double.NaN;
 				double diffTicks = (!double.IsNaN(diff) && Instrument?.MasterInstrument?.TickSize > 0) ? diff / Instrument.MasterInstrument.TickSize : double.NaN;
 
-				LogMsg("Grid2Diag_Short_Entry",
-					$"calc={price:0.00} thr={repricingThreshold:0.0000} diff={diff:0.0000} diffTicks={diffTicks:0.00} ord={ordS} rep={repS} lastBar={_lastGridRepriceBarShort[idx]} curBar={CurrentBar}",
-					3);
 			}
 			// ===== end DIAG =====
 
@@ -4891,23 +4510,19 @@ namespace NinjaTrader.NinjaScript.Strategies
 				gridShortReplace[idx] = null;
 				ord = gridShort[idx];
 				rep = null;
-				LogMsg("GridReplaceHeal", $"Grid{idx + 1} SELL promoted replace->main name={ord?.Name} lim={ord?.LimitPrice:0.00}", 2);
 			}
 
 			// Only block if we truly have a replacement pending AND the main is still active (handshake in progress)
 			if (rep != null && IsActiveOrSubmitted(rep) && ord != null && IsActiveOrSubmitted(ord))
 			{
 				if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
-					LogMsg("Grid2Diag_Short_Return", "reason=rep_active_and_main_active", 3);
 				return;
 			}
 
 			if (ord != null && IsCancelling(ord))
 			{
 				if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
-					LogMsg("Grid2Diag_Short_Return", $"reason=main_cancelling state={ord.OrderState}", 3);
 
-				LogMsg("GridSkipRecreate", $"Grid{idx + 1} SELL reason=cancel_in_progress state={ord.OrderState}", 3);
 				return;
 			}
 
@@ -4916,14 +4531,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (DisableRepriceWhenFlat && (Position == null || Position.MarketPosition == MarketPosition.Flat))
 				{
 					if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
-						LogMsg("Grid2Diag_Short_Return", "reason=DisableRepriceWhenFlat (unexpected while pos!=flat)", 3);
 					return;
 				}
 
 				if (Math.Abs(ord.LimitPrice - price) < repricingThreshold)
 				{
 					if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
-						LogMsg("Grid2Diag_Short_Return", $"reason=below_threshold diff={Math.Abs(ord.LimitPrice - price):0.0000} thr={repricingThreshold:0.0000}", 3);
 					return;
 				}
 
@@ -4931,60 +4544,44 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (_lastGridRepriceBarShort[idx] >= 0 && (CurrentBar - _lastGridRepriceBarShort[idx]) < minBars)
 				{
 					if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
-						LogMsg("Grid2Diag_Short_Return", $"reason=throttle barsSinceLast={CurrentBar - _lastGridRepriceBarShort[idx]} < {minBars}", 3);
 
-					LogMsg("GridRepriceThrottle", $"Grid{idx + 1} SELL skip; barsSinceLast={CurrentBar - _lastGridRepriceBarShort[idx]} < {RepriceEveryNBars}", 3);
 					return;
 				}
 
 				if (BlockIfSameBar($"Grid{idx + 1}_Sell_R")) return;
 				if (HasWorkingOrders(gridShortReplace[idx]))
 				{
-					_lastBlockReason = $"block_working_entry:Grid{idx + 1}_Sell_R";
-					SupportDump("trade_blocked");
-					LogMsg("OrderBlock", $"blocked working entry order for Grid{idx + 1} Sell replace", 3);
 					return;
 				}
 				var o = EnterShortLimit(0, true, qty, price, $"Grid{idx + 1}_Sell_R");
 				if (o == null)
 				{
-					LogMsg("GridReplaceFailed", $"Grid{idx + 1} SELL replacement returned null qty={qty} price={price:0.00}", 1);
 					return;
 				}
 				gridShortReplace[idx] = o;
 				_lastGridRepriceBarShort[idx] = CurrentBar;
 				MarkActionExecuted();
-				SupportDump($"order_sent:{o.Name}");
 
 				if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
-					LogMsg("Grid2Diag_Short_Action", $"action=submit_replace old={ord.LimitPrice:0.00} new={price:0.00}", 2);
 
-				LogMsg("GridReplaceSubmit", $"Grid{idx + 1} SELL old={ord.LimitPrice:0.00} new={price:0.00}", 3);
 				return;
 			}
 
 			if (BlockIfSameBar($"Grid{idx + 1}_Sell")) return;
 			if (HasWorkingOrders(gridShort[idx]))
 			{
-				_lastBlockReason = $"block_working_entry:Grid{idx + 1}_Sell";
-				SupportDump("trade_blocked");
-				LogMsg("OrderBlock", $"blocked working entry order for Grid{idx + 1} Sell", 3);
 				return;
 			}
 			var newOrd = EnterShortLimit(0, true, qty, price, $"Grid{idx + 1}_Sell");
 			if (newOrd == null)
 			{
-				LogMsg("GridOrderNull", $"Grid{idx + 1} SELL returned null qty={qty} price={price:0.00}", 1);
 				return;
 			}
 			gridShort[idx] = newOrd;
 			MarkActionExecuted();
-			SupportDump($"order_sent:{newOrd.Name}");
 
 			if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
-				LogMsg("Grid2Diag_Short_Action", $"action=create_new name={newOrd.Name} lim={price:0.00}", 2);
 
-			LogMsg("GridSubmit", $"Grid{idx + 1} SELL name={newOrd.Name} qty={qty} lim={price:0.00}", 2);
 		}
 
 		private void CancelGridIndex(int idx, string reason = "cancel")
@@ -4999,7 +4596,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				_lastGridRepriceBarShort[idx] = -1;
 				gridLongReplace[idx] = null;
 				gridShortReplace[idx] = null;
-				LogMsg("GridCancel", $"Grid{idx + 1} reason={reason}", 3);
 			}
 			catch { }
 			gridLong[idx] = null;
@@ -5032,7 +4628,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 					_lastGridRepriceBarShort[i] = -1;
 				}
 			}
-			LogMsg("GridCancelSide", $"side={side} reason={reason}", 2);
 		}
 		#endregion
 
@@ -5059,7 +4654,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			if (exitVwapOrder != null && (exitVwapOrder.OrderState == OrderState.CancelPending || exitVwapOrder.OrderState == OrderState.CancelSubmitted))
 			{
-				LogMsg("VWAPExitSkipReprice", $"state={exitVwapOrder.OrderState} reason=cancel_in_progress", 3);
 				return;
 			}
 
@@ -5074,9 +4668,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 						if (BlockIfSameBar("VWAPExitReplace")) return;
 						if (HasWorkingOrders(exitVwapOrderReplace))
 						{
-							_lastBlockReason = "block_working_exit:VWAPExitReplace";
-							SupportDump("trade_blocked");
-							LogMsg("OrderBlock", "blocked working exit order for VWAPExitReplace", 3);
 							return;
 						}
 						fromEntry = GetFromEntrySignal();
@@ -5084,9 +4675,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 						if (exitVwapOrderReplace != null)
 						{
 							MarkActionExecuted();
-							SupportDump($"order_sent:{exitVwapOrderReplace.Name}");
 						}
-						LogMsg("VWAPExitReplaceSubmit", $"old={exitVwapOrder.LimitPrice:0.00} new={vwap:0.00}", 2);
 					}
 					return;
 				}
@@ -5094,9 +4683,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (BlockIfSameBar("VWAPExitNew")) return;
 				if (HasWorkingOrders(exitVwapOrder))
 				{
-					_lastBlockReason = "block_working_exit:VWAPExitNew";
-					SupportDump("trade_blocked");
-					LogMsg("OrderBlock", "blocked working exit order for VWAPExitNew", 3);
 					return;
 				}
 				fromEntry = GetFromEntrySignal();
@@ -5104,7 +4690,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (exitVwapOrder != null)
 				{
 					MarkActionExecuted();
-					SupportDump($"order_sent:{exitVwapOrder.Name}");
 				}
 			}
 			else if (Position.MarketPosition == MarketPosition.Short)
@@ -5118,9 +4703,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 						if (BlockIfSameBar("VWAPExitReplace")) return;
 						if (HasWorkingOrders(exitVwapOrderReplace))
 						{
-							_lastBlockReason = "block_working_exit:VWAPExitReplace";
-							SupportDump("trade_blocked");
-							LogMsg("OrderBlock", "blocked working exit order for VWAPExitReplace", 3);
 							return;
 						}
 						fromEntry = GetFromEntrySignal();
@@ -5128,9 +4710,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 						if (exitVwapOrderReplace != null)
 						{
 							MarkActionExecuted();
-							SupportDump($"order_sent:{exitVwapOrderReplace.Name}");
 						}
-						LogMsg("VWAPExitReplaceSubmit", $"old={exitVwapOrder.LimitPrice:0.00} new={vwap:0.00}", 2);
 					}
 					return;
 				}
@@ -5138,9 +4718,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (BlockIfSameBar("VWAPExitNew")) return;
 				if (HasWorkingOrders(exitVwapOrder))
 				{
-					_lastBlockReason = "block_working_exit:VWAPExitNew";
-					SupportDump("trade_blocked");
-					LogMsg("OrderBlock", "blocked working exit order for VWAPExitNew", 3);
 					return;
 				}
 				fromEntry = GetFromEntrySignal();
@@ -5148,7 +4725,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (exitVwapOrder != null)
 				{
 					MarkActionExecuted();
-					SupportDump($"order_sent:{exitVwapOrder.Name}");
 				}
 			}
 		}
@@ -5159,7 +4735,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				if (IsBracketOrderActive(exitVwapOrder) && !IsBracketOrderActive(stopLossOrder))
 				{
-					LogMsg("ExecCycleGuard", "CancelExitVwap blocked: stop_missing", 2);
 					return;
 				}
 			}
@@ -5183,13 +4758,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 			if (flattenInProgress)
 			{
-				HawkLog("WARN", "FAILSAFE", "FLATTEN_BLOCKED", "already_in_progress",
-					new Dictionary<string, string>
-					{
-						{ "reason", reason },
-						{ "currentReason", flattenReason },
-						{ "attempt", flattenAttemptCount.ToString(CultureInfo.InvariantCulture) }
-					});
 				return;
 			}
 
@@ -5198,8 +4766,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
 			{
-				HawkLog("WARN", "FAILSAFE", "FLATTEN_BLOCKED", "already_flat",
-					new Dictionary<string, string> { { "reason", reason } });
 				flattenInProgress = false;
 				flattenOrder = null;
 				return;
@@ -5213,26 +4779,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			if (_lastFlattenSubmitBar == CurrentBar)
 			{
-				_lastBlockReason = "block_same_bar:FlattenSubmit";
-				SupportDump("trade_blocked");
-				HawkLog("WARN", "FAILSAFE", "FLATTEN_BLOCKED", "same_bar",
-					new Dictionary<string, string>
-					{
-						{ "reason", reason },
-						{ "bar", CurrentBar.ToString(CultureInfo.InvariantCulture) }
-					});
 				return;
 			}
 
 			if (_lastFlattenSubmitUtc != DateTime.MinValue &&
 				(DateTime.UtcNow - _lastFlattenSubmitUtc).TotalSeconds < 2)
 			{
-				HawkLog("WARN", "FAILSAFE", "FLATTEN_BLOCKED", "recent_submit",
-					new Dictionary<string, string>
-					{
-						{ "reason", reason },
-						{ "elapsedMs", ((int)(DateTime.UtcNow - _lastFlattenSubmitUtc).TotalMilliseconds).ToString(CultureInfo.InvariantCulture) }
-					});
 				return;
 			}
 
@@ -5248,7 +4800,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			int qty = Math.Abs(Position?.Quantity ?? 0);
 			if (qty <= 0)
 			{
-				LogMsg("Flatten", $"{reason} qty=0 (skip submit)", 2);
 				flattenInProgress = false;
 				flattenOrder = null;
 				return;
@@ -5257,7 +4808,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			// If we already have a live flatten order working/accepted/submitted, do not re-submit.
 			if (flattenOrder != null && IsActiveOrSubmitted(flattenOrder))
 			{
-				LogMsg("FlattenSkip", $"reason={reason} skip=order_live name={flattenOrder.Name} state={flattenOrder.OrderState}", 3);
 				return;
 			}
 
@@ -5265,9 +4815,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (BlockIfSameBar("FlattenSubmit")) return;
 			if (_lastFlattenSubmitBar == CurrentBar)
 			{
-				_lastBlockReason = "block_same_bar:FlattenSubmit";
-				SupportDump("trade_blocked");
-				LogMsg("FlattenSkip", $"reason={reason} skip=same_bar curBar={CurrentBar}", 2);
 				return;
 			}
 
@@ -5292,15 +4839,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 			catch (Exception ex)
 			{
 				flattenOrder = null;
-				LogMsg("FlattenSubmitErr", $"reason={reason} ex={ex.Message}", 1);
 			}
 
 			if (flattenOrder == null)
-				LogMsg("FlattenSubmitNull", $"reason={reason} pos={Position.MarketPosition} qty={qty} attempt={flattenAttemptCount}", 1);
 			else
 				MarkActionExecuted();
 
-			LogMsg("FlattenRequest", $"reason={reason} pos={Position.MarketPosition} qty={qty} attempt={flattenAttemptCount} allowFallback={flattenAllowFallback}", 2);
 		}
 
 		private void CheckFlattenProgress()
@@ -5314,7 +4858,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
 			{
-				LogMsg("FlattenSuccess", $"reason={flattenReason} attempts={flattenAttemptCount}", 2);
 				flattenInProgress = false;
 				flattenOrder = null;
 				return;
@@ -5333,7 +4876,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 
 			// After max attempts, continue re-submitting at the same cadence, but do not increase attempts further.
-			LogMsg("FlattenRetryAfterMax", $"reason={flattenReason} attempts={flattenAttemptCount} (continuing retries; no Account.Flatten)", 1);
 
 			// Do not increment attempt count anymore; submit directly using the same submit helper but with a temporary decrement.
 			int savedAttempts = flattenAttemptCount;
@@ -5384,7 +4926,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			string bracketReason;
 			if (!IsBracketValid(GetExitMode(), out bracketReason))
 			{
-				LogMsg("BRACKET_CHECK", $"BreakEven blocked reason={bracketReason}", 3);
 				return;
 			}
 
@@ -5413,7 +4954,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 					dayBreakevenDollars = "ON";
 					if (GetExitMode() == ExitMode.Financial && !isLockedForDay && !flattenInProgress)
 						MaintainFinancialTargetLimit();
-					LogDisplayPanel("BreakEvenTriggered", $"side=Long entry={entryPrice:0.00} newStop={newStop:0.00} riskUsd={riskTriggerUsd:0.00} unrealUsd={unrealizedUsd:0.00} qty={qty}");
 					PublishPanelSnapshot("BreakEvenTriggered");
 				}
 			}
@@ -5437,7 +4977,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 					dayBreakevenDollars = "ON";
 					if (GetExitMode() == ExitMode.Financial && !isLockedForDay && !flattenInProgress)
 						MaintainFinancialTargetLimit();
-					LogDisplayPanel("BreakEvenTriggered", $"side=Short entry={entryPrice:0.00} newStop={newStop:0.00} riskUsd={riskTriggerUsd:0.00} unrealUsd={unrealizedUsd:0.00} qty={qty}");
 					PublishPanelSnapshot("BreakEvenTriggered");
 				}
 			}
@@ -5473,7 +5012,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			double stopPrice;
 			if (!TryGetBracketStopPrice(out stopPrice, out reason))
 			{
-				LogMsg("BRACKET_MISSING", $"MaintainStopLoss reason={reason}", 1);
 				return;
 			}
 
@@ -5501,9 +5039,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (BlockIfSameBar("BracketStop")) return;
 			if (HasWorkingOrders(stopLossOrder))
 			{
-				_lastBlockReason = "block_working_exit:BracketStop";
-				SupportDump("trade_blocked");
-				LogMsg("OrderBlock", "blocked working exit order for BracketStop", 3);
 				return;
 			}
 
@@ -5516,9 +5051,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (stopLossOrder != null)
 			{
 				MarkActionExecuted();
-				SupportDump($"order_sent:{stopLossOrder.Name}");
 			}
-			LogMsg("FinStopUpdated", $"side={Position.MarketPosition} qty={qty} avg={Position.AveragePrice:0.00} stop={stopPrice:0.00}", 2);
 		}
 
 		private void MaintainStopLoss()
@@ -5555,7 +5088,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				Order targetOrder = GetActiveTargetOrder(GetExitMode());
 				if (IsBracketOrderActive(stopLossOrder) && !IsBracketOrderActive(targetOrder))
 				{
-					LogMsg("ExecCycleGuard", "CancelStopLoss blocked: target_missing", 2);
 					return;
 				}
 			}
@@ -5580,14 +5112,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (isLockedForDay) return;
 			isLockedForDay = true;
 			dayStatus = "Locked";
-			_lockReason = reason;
-			_lastBlockReason = reason;
-			SupportDump("trade_blocked");
 
 			DateTime fallbackUtc = (Time != null && CurrentBar >= 0) ? Time[0].ToUniversalTime() : DateTime.UtcNow;
 			_lockedAtUtc = utcOverride ?? fallbackUtc;
 
-			LogMsg("DayLock", $"LOCKED reason={reason} utc={_lockedAtUtc:O} brt={ConvertToBrasilia(Time[0]).AddMinutes(UserBrtOffsetMinutes):yyyy-MM-dd HH:mm:ss}", 2);
 		}
 		#endregion
 
@@ -5678,14 +5206,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (cycleDirection == Regime.Buy) tradesClosedTodayBuy++;
 				else if (cycleDirection == Regime.Sell) tradesClosedTodaySell++;
 
-				LogMsg("TradeCycleClosed", $"total={tradesClosedTodayTotal} buy={tradesClosedTodayBuy} sell={tradesClosedTodaySell}", 2);
 
 				try { CancelAllGrid("cycle_closed"); } catch { }
 				try { CancelExitVwap(); } catch { }
 				try { CancelOppositeBandExit(); } catch { }
 				try { CancelFinancialTarget(); } catch { }
 				try { CancelStopLoss(); } catch { }
-				LogMsg("CycleCleanup", "Cancelled all grids/exits after cycle close (flat)", 2);
 
 				// Reset per-band fill guards for next cycle
 				try { ResetBandFillGuards(); } catch { }
@@ -5849,7 +5375,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				CancelAllGrid("execution_lock");
 				CheckFlattenProgress();
-				HawkLog("WARN", "FAILSAFE", "EXECUTION_LOCKED", _executionLockReason);
 				return;
 			}
 
@@ -5857,7 +5382,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				CancelAllGrid("failsafe");
 				CheckFlattenProgress();
-				HawkLog("WARN", "FAILSAFE", "FAILSAFE_ACTIVE", "blocking_trade_flow");
 				return;
 			}
 
@@ -5865,30 +5389,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				lastRegime = currentRegime;
 				currentRegime = decision.NextRegime;
-				_lastSignal = decision.SignalName;
-				SupportDump("signal_detected");
 
 				CancelAllGrid("regime_flip_price_vs_vwap");
-				LogMsg("RegimeChanged",
-					$"Regime={currentRegime} byPrice close={Close[0]:0.00} vwap={vwap:0.00} touched={touched}",
-					2);
 			}
 			else
 			{
 				currentRegime = decision.NextRegime;
 			}
 
-			LogMsg("DBG",
-			  $"time={Time[0]:O} brt={nowBrtDt:HH:mm:ss} nowBrt={nowBrtInt} inWindow={inWindow} " +
-			  $"locked={isLockedForDay} lockReason={_lockReason} pos={Position.MarketPosition} qty={Position.Quantity} " +
-			  $"close={Close[0]:0.00} regime={currentRegime} vwap={vwap:0.00} " +
-			  $"pnlT={_totalPnlDay:0.00} pnlR={realizedPnlDay:0.00} pnlU={_unrealizedPnlManual:0.00} pnlM={_monthPnl:0.00} pnlAll={_overallPnl:0.00} " +
-			  $"tradesClosed={tradesClosedTodayTotal} buyClosed={tradesClosedTodayBuy} sellClosed={tradesClosedTodaySell}",
-			  3);
 
 			if (decision.ExitModeChanged)
 			{
-				LogMsg("ExitModeChanged", $"from={(lastExitMode.HasValue ? lastExitMode.ToString() : "None")} to={decision.ExitMode}", 3);
 				lastExitMode = decision.ExitMode;
 			}
 
@@ -5927,8 +5438,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 					CancelSideGrid(currentRegime, "trade_limit_cycle");
 					dayStatus = "TradeLimitHit";
 					lastEvent = "TradeLimitHit";
-					_lastBlockReason = "trade_limit_cycle";
-					SupportDump("trade_blocked");
 				}
 				else
 				{
@@ -5949,7 +5458,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 			try
 			{
-				UpdateSnapshot("bar");
 				EnsurePanelInitializedOnce();
 
 				if (BarsInProgress == BIP_AUTOCLOSE)
@@ -5975,24 +5483,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 					_lastEntrySignalName = string.Empty;
 					_entrySignalCycleId = 0;
 					_bracketFailSafeActive = false;
-					HawkLog("INFO", "CYCLE", "CYCLE_RESET", "position_flat");
 				}
 
 				if (entryPrice == 0 && Position.MarketPosition != MarketPosition.Flat)
 				{
 					entryPrice = Position.AveragePrice;
-					HawkLog("INFO", "ENTRY", "ENTRY_PRICE_SET", "position_opened",
-						new Dictionary<string, string>
-						{
-							{ "pos", Position.MarketPosition.ToString() },
-							{ "entry", entryPrice.ToString("0.00") }
-						});
-				}
-
-				if (SupportMode && SupportDumpEveryNBars > 0 && CurrentBar >= 0 &&
-					(CurrentBar % SupportDumpEveryNBars) == 0)
-				{
-					SupportDump($"bar_every_{SupportDumpEveryNBars}");
 				}
 
 				if (CurrentBar < 1)
@@ -6007,7 +5502,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 					CancelAllGrid("failsafe");
 					CheckFlattenProgress();
 					PublishPanelSnapshot("FailSafe");
-					HawkLog("WARN", "FAILSAFE", "FAILSAFE_ACTIVE", "blocking_trade_flow");
 					return;
 				}
 
@@ -6078,7 +5572,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 					{
 						if (_totalPnlDay >= DailyProfitLimitUsd)
 						{
-							LogMsg("DailyLimitHitProfit", $"TotalPnL={_totalPnlDay:0.00} (R={realizedPnlDay:0.00} U={_unrealizedPnlManual:0.00}) >= {DailyProfitLimitUsd:0.00}", 2);
 							RequestFlatten("DailyProfitLimit", allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
 							LockDay("DailyProfitLimit");
 							PublishPanelSnapshot("DailyLimit");
@@ -6086,7 +5579,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 						}
 						else if (_totalPnlDay <= -DailyLossLimitUsd)
 						{
-							LogMsg("DailyLimitHitLoss", $"TotalPnL={_totalPnlDay:0.00} (R={realizedPnlDay:0.00} U={_unrealizedPnlManual:0.00}) <= -{DailyLossLimitUsd:0.00}", 2);
 							RequestFlatten("DailyLossLimit", allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
 							LockDay("DailyLossLimit");
 							PublishPanelSnapshot("DailyLimit");
@@ -6173,7 +5665,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 					{
 						if (_totalPnlDay >= DailyProfitLimitUsd)
 						{
-							LogMsg("DailyLimitHitProfit", $"TotalPnL={_totalPnlDay:0.00} (R={realizedPnlDay:0.00} U={_unrealizedPnlManual:0.00}) >= {DailyProfitLimitUsd:0.00}", 2);
 							RequestFlatten("DailyProfitLimit", allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
 							LockDay("DailyProfitLimit");
 							PublishPanelSnapshot("DailyLimit");
@@ -6181,7 +5672,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 						}
 						else if (_totalPnlDay <= -DailyLossLimitUsd)
 						{
-							LogMsg("DailyLimitHitLoss", $"TotalPnL={_totalPnlDay:0.00} (R={realizedPnlDay:0.00} U={_unrealizedPnlManual:0.00}) <= -{DailyLossLimitUsd:0.00}", 2);
 							RequestFlatten("DailyLossLimit", allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
 							LockDay("DailyLossLimit");
 							PublishPanelSnapshot("DailyLimit");
@@ -6205,12 +5695,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					{
 						lastRegime = currentRegime;
 						currentRegime = newRegime;
-						_lastSignal = $"RegimeChanged:{newRegime}";
-						SupportDump("signal_detected");
 						CancelAllGrid("regime_flip_price_vs_vwap");
-						LogMsg("RegimeChanged",
-							$"Regime={currentRegime} byPrice close={Close[0]:0.00} vwap={vwap:0.00}",
-							2);
 					}
 					else
 					{
@@ -6274,7 +5759,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 						if (shouldCancel && !shouldKeep)
 						{
-							LogMsg("CloseBarCancel", $"dir={closeBarOrderActiveDirection} candle={Close[0]:0.00}/{Open[0]:0.00} bar={CurrentBar}", 2);
 							closeBarRearmAfterCancel = true;
 							closeBarOrderPending = true;
 							closeBarOrderDirection = closeBarOrderActiveDirection;
@@ -6291,10 +5775,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 							(closeBarOrderDirection == Regime.Sell && candleNegative);
 						bool canSubmitCloseBarOrder = inWindow && !isLockedForDay && isFlat && !hasWorkingOrders && canStartCycle && canSubmitAfterCancel &&
 							stochReady && closeBarDirectionConfirmed;
-						if (canSubmitCloseBarOrder && !closeInsideSecondBand)
-						{
-							_lastBlockReason = "closebar_outside_second_band";
-						}
 						if (canSubmitCloseBarOrder && closeInsideSecondBand)
 						{
 							double offset = CloseBarLimitOffsetTicks * TickSize;
@@ -6309,8 +5789,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 								closeBarOrderActiveBar = CurrentBar;
 								closeBarOrderCancelBar = -1;
 								closeBarRearmAfterCancel = false;
-								_lastSignal = "CloseBar_Long_Limit";
-								_lastAction = "EnterLongLimitCloseBar";
 								MarkActionExecuted();
 							}
 							else if (closeBarOrderDirection == Regime.Sell)
@@ -6324,8 +5802,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 								closeBarOrderActiveBar = CurrentBar;
 								closeBarOrderCancelBar = -1;
 								closeBarRearmAfterCancel = false;
-								_lastSignal = "CloseBar_Short_Limit";
-								_lastAction = "EnterShortLimitCloseBar";
 								MarkActionExecuted();
 							}
 						}
@@ -6344,15 +5820,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 										closeBarOrderPending = true;
 										closeBarOrderDirection = Regime.Buy;
 										closeBarOrderSignalClose = Close[0];
-										_lastSignal = "SlowStoch_Long_CloseBarPending";
-										_lastAction = "MarkCloseBarPendingLong";
 										MarkActionExecuted();
 									}
 								}
 								else
 								{
 									EnterLong(0, QuantityPerGridOrder, "SlowStoch_Long");
-									_lastAction = "EnterLongMarket";
 									MarkActionExecuted();
 								}
 							}
@@ -6365,15 +5838,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 										closeBarOrderPending = true;
 										closeBarOrderDirection = Regime.Sell;
 										closeBarOrderSignalClose = Close[0];
-										_lastSignal = "SlowStoch_Short_CloseBarPending";
-										_lastAction = "MarkCloseBarPendingShort";
 										MarkActionExecuted();
 									}
 								}
 								else
 								{
 									EnterShort(0, QuantityPerGridOrder, "SlowStoch_Short");
-									_lastAction = "EnterShortMarket";
 									MarkActionExecuted();
 								}
 							}
@@ -6389,7 +5859,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 			catch (Exception ex)
 			{
-				Print($"[HawkVwapBandsVolatility] OnBarUpdate exception: {ex}");
 			}
 		}
 
@@ -6424,7 +5893,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (IsDeadOrder(closeBarOrder))
 				closeBarOrder = null;
 
-			LogMsg("CloseBarReset", $"reason={reason}", 3);
 		}
 
 		private void ApplyDailyResetIfNeeded(DateTime calDay)
@@ -6433,7 +5901,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				lastCalendarDayBrt = calDay.Date;
 				isLockedForDay = false;
-				_lockReason = "";
 				_lockedAtUtc = DateTime.MinValue;
 				realizedPnlDay = 0;
 				_unrealizedPnlManual = 0;
@@ -6467,7 +5934,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 					_rtRealizedDay = 0;
 				}
 
-				LogMsg("DayReset", $"Novo dia calendário BRT {lastCalendarDayBrt:yyyy-MM-dd} (unlock; pnl reset; trade counters reset)", 2);
 			}
 		}
 		#endregion
@@ -6477,7 +5943,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 			if (order == null) return;
 
-			bool isGrid2 = order.Name != null && (order.Name.Contains("Grid2_Buy") || order.Name.Contains("Grid2_Sell"));
 			bool isGrid = order.Name != null && order.Name.StartsWith("Grid", StringComparison.OrdinalIgnoreCase);
 			bool isReplace = order.Name != null && order.Name.IndexOf("_R", StringComparison.OrdinalIgnoreCase) >= 0;
 			bool isOppBand = order.Name != null && order.Name.StartsWith("OppBandExit", StringComparison.OrdinalIgnoreCase);
@@ -6491,18 +5956,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 				(order.Name.StartsWith(CloseBarEntryLongName, StringComparison.OrdinalIgnoreCase) ||
 				 order.Name.StartsWith(CloseBarEntryShortName, StringComparison.OrdinalIgnoreCase));
 
-			if (isGrid2)
-				LogMsg("Grid2State", $"state={orderState} name={order.Name} lim={limitPrice:0.00} stop={stopPrice:0.00} filled={filled}/{quantity} err={error} native={nativeError}", 3);
-			else
-				LogMsg("OrderUpdate", $"{order.Name} state={orderState} qty={quantity} filled={filled} lim={limitPrice:0.00} stop={stopPrice:0.00} avg={averageFillPrice:0.00} err={error} native={nativeError}", error != ErrorCode.NoError ? 1 : 3);
-
 			if (isOppBand && isReplace)
 			{
 				if (orderState == OrderState.Rejected || orderState == OrderState.Cancelled)
 				{
 					if (oppositeBandExitOrderReplace == order) oppositeBandExitOrderReplace = null;
-					if (orderState == OrderState.Rejected)
-						LogMsg("OppBandExitReplaceFailed", $"name={order.Name} err={error} native={nativeError} lim={limitPrice:0.00}", 1);
 					if (shouldRunBracketWatchdog) BracketWatchdog("OnOrderUpdate");
 					return;
 				}
@@ -6515,7 +5973,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 					}
 					oppositeBandExitOrder = order;
 					oppositeBandExitOrderReplace = null;
-					LogMsg("OppBandExitReplaced", $"name={order.Name} newLim={limitPrice:0.00}", 2);
 					if (shouldRunBracketWatchdog) BracketWatchdog("OnOrderUpdate");
 					return;
 				}
@@ -6526,8 +5983,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (orderState == OrderState.Rejected || orderState == OrderState.Cancelled)
 				{
 					if (exitVwapOrderReplace == order) exitVwapOrderReplace = null;
-					if (orderState == OrderState.Rejected)
-						LogMsg("VWAPExitReplaceFailed", $"name={order.Name} err={error} native={nativeError} lim={limitPrice:0.00}", 1);
 					if (shouldRunBracketWatchdog) BracketWatchdog("OnOrderUpdate");
 					return;
 				}
@@ -6540,7 +5995,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 					}
 					exitVwapOrder = order;
 					exitVwapOrderReplace = null;
-					LogMsg("VWAPExitReplaced", $"name={order.Name} newLim={limitPrice:0.00}", 2);
 					if (shouldRunBracketWatchdog) BracketWatchdog("OnOrderUpdate");
 					return;
 				}
@@ -6551,8 +6005,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (orderState == OrderState.Rejected || orderState == OrderState.Cancelled)
 				{
 					if (financialTargetOrderReplace == order) financialTargetOrderReplace = null;
-					if (orderState == OrderState.Rejected)
-						LogMsg("FinTargetReplaceFailed", $"name={order.Name} err={error} native={nativeError} lim={limitPrice:0.00}", 1);
 					if (shouldRunBracketWatchdog) BracketWatchdog("OnOrderUpdate");
 					return;
 				}
@@ -6565,7 +6017,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 					}
 					financialTargetOrder = order;
 					financialTargetOrderReplace = null;
-					LogMsg("FinTargetReplaced", $"name={order.Name} newLim={limitPrice:0.00}", 2);
 					if (shouldRunBracketWatchdog) BracketWatchdog("OnOrderUpdate");
 					return;
 				}
@@ -6588,8 +6039,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 					{
 						if (isBuy && gridLongReplace[idx] == order) gridLongReplace[idx] = null;
 						if (!isBuy && gridShortReplace[idx] == order) gridShortReplace[idx] = null;
-						if (orderState == OrderState.Rejected)
-							LogMsg("GridReplaceFailed", $"Grid{idx + 1} {order.OrderAction} rejected lim={limitPrice:0.00} err={error} native={nativeError}", 1);
 						if (shouldRunBracketWatchdog) BracketWatchdog("OnOrderUpdate");
 						return;
 					}
@@ -6614,16 +6063,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 							gridShort[idx] = order;
 							gridShortReplace[idx] = null;
 						}
-						LogMsg("GridReplaced", $"Grid{idx + 1} action={order.OrderAction} newLim={limitPrice:0.00}", 3);
 						if (shouldRunBracketWatchdog) BracketWatchdog("OnOrderUpdate");
 						return;
 					}
 				}
-			}
-
-			if (isGrid && orderState == OrderState.Rejected)
-			{
-				LogMsg("GridRejected", $"name={order.Name} err={error} native={nativeError} lim={limitPrice:0.00} stop={stopPrice:0.00}", 1);
 			}
 
 			if (orderState == OrderState.Rejected || orderState == OrderState.Cancelled)
@@ -6656,7 +6099,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (isStopOrder || isTargetOrder)
 			{
 				if (orderState == OrderState.Accepted || orderState == OrderState.Working || orderState == OrderState.Submitted)
-					UpdateProtectionState(GetExitMode(), "OnOrderUpdate", logChanges: true);
+					UpdateProtectionState(GetExitMode());
 			}
 		}
 
@@ -6665,7 +6108,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (execution?.Order == null) return;
 			if (execution.Order.OrderState == OrderState.Filled)
 			{
-				LogMsg("OrderFill", $"{execution.Order.Name} {execution.Order.OrderAction} qty={quantity} price={price:0.00}", 2);
 
 				MarkBandFilledFromOrderName(execution.Order.Name);
 
@@ -6682,12 +6124,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 					_bracketValidationSuspended = true;
 					_bracketValidationSuspensionLogged = false;
 					_lastBracketValidationSkipUtc = DateTime.MinValue;
-					HawkLog("INFO", "BRACKET", "VALIDATION_SUSPENDED", "post_fill_grace_period",
-						new Dictionary<string, string>
-						{
-							{ "entry", price.ToString("0.00") },
-							{ "qty", quantity.ToString(CultureInfo.InvariantCulture) }
-						});
 					PlaceInitialBracketAfterEntry();
 				}
 
@@ -6714,7 +6150,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				// Treat the flatten order fill as success immediately. Depending on connection timing,
 				// the Position object may still report the pre-fill state for a short moment.
-				LogMsg("FlattenSuccess", $"reason={flattenReason} byExecution attempt={flattenAttemptCount}", 2);
 				flattenInProgress = false;
 				flattenOrder = null;
 			}
@@ -6729,7 +6164,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private void OnCycleClosed_ResetBandGuards()
 		{
 			ResetBandFillGuards();
-			LogMsg("BandFillGuardReset", "Cycle closed -> reset per-band fill guards", 2);
 		}
 
 	}   // fecha a classe HawkVwapBandsVolatility
