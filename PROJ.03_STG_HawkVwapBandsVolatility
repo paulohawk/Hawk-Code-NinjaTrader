@@ -1984,6 +1984,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private int _autoCloseAttempts = 0;
 		private DateTime _autoCloseLastAttemptUtc = DateTime.MinValue;
 		private int _autoCloseLastAttemptBar = -1;
+		private bool _autoCloseFallbackEscalated = false;
 		private const int AutoCloseMaxAttempts = 4;
 		private static readonly TimeSpan AutoCloseCooldownRt = TimeSpan.FromSeconds(10);
 		private const int AutoCloseRetryEveryBarsHist = 1;
@@ -2387,6 +2388,72 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private bool InTradingWindow(int nowBrt, int startAnalysisHhmmss) => nowBrt >= startAnalysisHhmmss && nowBrt < stopHHmmss;
 		private bool IsFlattenWindow(int nowBrt) => nowBrt >= flattenHHmmss;
 
+		private bool CanAutoCloseAttempt()
+		{
+			if (State == State.Realtime && !isAnalyzerMode)
+			{
+				return _autoCloseLastAttemptUtc == DateTime.MinValue ||
+					(DateTime.UtcNow - _autoCloseLastAttemptUtc) >= AutoCloseCooldownRt;
+			}
+
+			return _autoCloseLastAttemptBar < 0 ||
+				(CurrentBar - _autoCloseLastAttemptBar) >= AutoCloseRetryEveryBarsHist;
+		}
+
+		private void AutoCloseAttempt(DateTime nowBrt, string callerTag)
+		{
+			if (flattenInProgress) return;
+
+			CancelAllGrid("autoclose");
+			CancelExitVwap();
+			CancelOppositeBandExit();
+			CancelFinancialTarget();
+			CancelStopLossForce();
+
+			int bip = BarsInProgress;
+			if (Position != null && Position.Quantity > 0)
+			{
+				if (Position.MarketPosition == MarketPosition.Long)
+				{
+					ExitLong(
+						barsInProgressIndex: bip,
+						quantity: Position.Quantity,
+						signalName: "AutoClose_MKT",
+						fromEntrySignal: string.Empty
+					);
+				}
+				else if (Position.MarketPosition == MarketPosition.Short)
+				{
+					ExitShort(
+						barsInProgressIndex: bip,
+						quantity: Position.Quantity,
+						signalName: "AutoClose_MKT",
+						fromEntrySignal: string.Empty
+					);
+				}
+			}
+
+			_autoCloseAttempts++;
+			_autoCloseLastAttemptUtc = DateTime.UtcNow;
+			_autoCloseLastAttemptBar = CurrentBar;
+
+			string attemptTime = FormatBrtTime(nowBrt);
+			OpLog("AUTOCLOSE_RETRY", $"attempt={_autoCloseAttempts} | caller={callerTag} | bip={bip} | time={attemptTime}");
+
+			bool useRequestFlatten = _autoCloseAttempts >= 2;
+			bool allowFallback = EnableAutoCloseAccountFallback && _autoCloseAttempts >= AutoCloseMaxAttempts;
+			if (useRequestFlatten)
+			{
+				if (allowFallback && !_autoCloseFallbackEscalated)
+				{
+					OpLog("AUTOCLOSE_ESCALATE", $"attempt={_autoCloseAttempts} | caller={callerTag} | time={attemptTime}");
+					_autoCloseFallbackEscalated = true;
+				}
+
+				RequestFlatten("AutoClose", allowAccountFallback: allowFallback);
+			}
+		}
+
 		private void TryAutoCloseByClock(DateTime nowBrt, DateTime barTime)
 		{
 			DateTime brtDay = nowBrt.Date;
@@ -2398,6 +2465,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				_autoCloseAttempts = 0;
 				_autoCloseLastAttemptUtc = DateTime.MinValue;
 				_autoCloseLastAttemptBar = -1;
+				_autoCloseFallbackEscalated = false;
 			}
 			TimeSpan scheduledTime = GetAutoCloseTimeBrt(brtDay);
 			DateTime scheduled = new DateTime(brtDay.Year, brtDay.Month, brtDay.Day, scheduledTime.Hours, scheduledTime.Minutes, scheduledTime.Seconds);
@@ -2439,44 +2507,74 @@ namespace NinjaTrader.NinjaScript.Strategies
 				return;
 			}
 
-			if (_autoCloseAttempts >= AutoCloseMaxAttempts)
+			if (State != State.Realtime && _autoCloseAttempts >= AutoCloseMaxAttempts)
 			{
-				string timeText = FormatBrtTime(nowBrt);
-				OpLog("AUTOCLOSE_GIVEUP", $"attempts={_autoCloseAttempts} | time={timeText}");
+				OpLog("AUTOCLOSE_GIVEUP", $"attempts={_autoCloseAttempts} | mode=HISTORICAL");
 				_autoCloseActive = false;
 				_autoCloseExitSentToday = true;
 				return;
 			}
 
-			if (flattenInProgress) return;
+			if (!CanAutoCloseAttempt()) return;
 
-			bool canAttempt;
-			if (State == State.Realtime && !isAnalyzerMode)
+			AutoCloseAttempt(nowBrt, "BIP_AUTOCLOSE");
+		}
+
+		private void TryAutoCloseWatchdog(DateTime nowBrt)
+		{
+			DateTime brtDay = nowBrt.Date;
+			TimeSpan scheduledTime = GetAutoCloseTimeBrt(brtDay);
+			DateTime scheduled = new DateTime(brtDay.Year, brtDay.Month, brtDay.Day, scheduledTime.Hours, scheduledTime.Minutes, scheduledTime.Seconds);
+
+			if (nowBrt < scheduled) return;
+			if (_autoCloseExitSentToday) return;
+
+			if (_sessionEndLoggedDayBrt != brtDay)
 			{
-				canAttempt = _autoCloseLastAttemptUtc == DateTime.MinValue ||
-					(DateTime.UtcNow - _autoCloseLastAttemptUtc) >= AutoCloseCooldownRt;
+				string endMessage = $"Session ended | date={FormatBrtDate(brtDay)} | time={FormatBrtTime(nowBrt)}";
+				OpLog("SESSION_END", endMessage);
+				_sessionEndLoggedDayBrt = brtDay;
 			}
-			else
+
+			if (!_autoCloseActive)
 			{
-				canAttempt = _autoCloseLastAttemptBar < 0 ||
-					(CurrentBar - _autoCloseLastAttemptBar) >= AutoCloseRetryEveryBarsHist;
+				string timeText = FormatBrtTime(nowBrt);
+				OpLog("AUTOCLOSE_START", $"AutoClose started | time={timeText}");
+				_autoCloseActive = true;
+				_autoCloseAttempts = 0;
+				_autoCloseLastAttemptUtc = DateTime.MinValue;
+				_autoCloseLastAttemptBar = -1;
+				_autoCloseFallbackEscalated = false;
 			}
 
-			if (!canAttempt) return;
+			bool isFlat = Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0;
+			if (isFlat)
+			{
+				if (_autoCloseLoggedDayBrt != brtDay)
+				{
+					string timeText = FormatBrtTime(nowBrt);
+					string message = _autoCloseAttempts == 0
+						? $"No open position | time={timeText}"
+						: $"Position flat confirmed | attempts={_autoCloseAttempts} | time={timeText}";
+					OpLog("AUTOCLOSE_SUCCESS", message);
+					_autoCloseLoggedDayBrt = brtDay;
+				}
+				_autoCloseActive = false;
+				_autoCloseExitSentToday = true;
+				return;
+			}
 
-			CancelAllGrid("autoclose");
-			CancelExitVwap();
-			CancelOppositeBandExit();
-			CancelFinancialTarget();
-			CancelStopLossForce();
+			if (State != State.Realtime && _autoCloseAttempts >= AutoCloseMaxAttempts)
+			{
+				OpLog("AUTOCLOSE_GIVEUP", $"attempts={_autoCloseAttempts} | mode=HISTORICAL");
+				_autoCloseActive = false;
+				_autoCloseExitSentToday = true;
+				return;
+			}
 
-			_autoCloseAttempts++;
-			_autoCloseLastAttemptUtc = DateTime.UtcNow;
-			_autoCloseLastAttemptBar = CurrentBar;
-			string attemptTime = FormatBrtTime(nowBrt);
-			OpLog("AUTOCLOSE_RETRY", $"attempt={_autoCloseAttempts} | time={attemptTime}");
-			bool allowFallback = EnableAutoCloseAccountFallback && _autoCloseAttempts >= 3;
-			RequestFlatten("AutoClose", allowAccountFallback: allowFallback);
+			if (!CanAutoCloseAttempt()) return;
+
+			AutoCloseAttempt(nowBrt, "BIP0");
 		}
 
 		private void OpLog(string eventName, string message)
@@ -5653,6 +5751,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				var nowBrtDt = ConvertToBrasilia(Time[0]).AddMinutes(UserBrtOffsetMinutes);
 				DateTime calDay = nowBrtDt.Date;
 				ApplyDailyResetIfNeeded(calDay);
+				TryAutoCloseWatchdog(nowBrtDt);
 
 				if (Position.MarketPosition == MarketPosition.Flat)
 				{
@@ -6127,6 +6226,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				_autoCloseAttempts = 0;
 				_autoCloseLastAttemptUtc = DateTime.MinValue;
 				_autoCloseLastAttemptBar = -1;
+				_autoCloseFallbackEscalated = false;
 
 				ResetTradeCounters(calDay);
 
