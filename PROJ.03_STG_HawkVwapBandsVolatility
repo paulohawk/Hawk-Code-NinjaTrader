@@ -3402,8 +3402,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (Instrument?.MasterInstrument != null)
 				price = Instrument.MasterInstrument.RoundToTickSize(price);
 
-			if (adjusted)
-
 			return price;
 		}
 
@@ -3430,8 +3428,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			if (Instrument?.MasterInstrument != null)
 				price = Instrument.MasterInstrument.RoundToTickSize(price);
-
-			if (adjusted)
 
 			return price;
 		}
@@ -4405,14 +4401,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (rep != null && IsActiveOrSubmitted(rep) && ord != null && IsActiveOrSubmitted(ord))
 			{
 				if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
-				return;
+				{
+					return;
+				}
 			}
 
 			if (ord != null && IsCancelling(ord))
 			{
 				if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
-
-				return;
+				{
+					return;
+				}
 			}
 
 			if (ord != null && IsActiveOrSubmitted(ord))
@@ -4420,21 +4419,26 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (DisableRepriceWhenFlat && (Position == null || Position.MarketPosition == MarketPosition.Flat))
 				{
 					if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
-					return;
+					{
+						return;
+					}
 				}
 
 				if (Math.Abs(ord.LimitPrice - price) < repricingThreshold)
 				{
 					if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
-					return;
+					{
+						return;
+					}
 				}
 
 				int minBars = Math.Max(1, RepriceEveryNBars);
 				if (_lastGridRepriceBarLong[idx] >= 0 && (CurrentBar - _lastGridRepriceBarLong[idx]) < minBars)
 				{
 					if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
-
-					return;
+					{
+						return;
+					}
 				}
 
 				if (BlockIfSameBar($"Grid{idx + 1}_Buy_R")) return;
@@ -4452,8 +4456,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 				MarkActionExecuted();
 
 				if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
-
-				return;
+				{
+					return;
+				}
 			}
 
 			if (BlockIfSameBar($"Grid{idx + 1}_Buy")) return;
@@ -4468,8 +4473,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 			gridLong[idx] = newOrd;
 			MarkActionExecuted();
-
-			if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
 
 		}
 
@@ -4516,14 +4519,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (rep != null && IsActiveOrSubmitted(rep) && ord != null && IsActiveOrSubmitted(ord))
 			{
 				if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
-				return;
+				{
+					return;
+				}
 			}
 
 			if (ord != null && IsCancelling(ord))
 			{
 				if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
-
-				return;
+				{
+					return;
+				}
 			}
 
 			if (ord != null && IsActiveOrSubmitted(ord))
@@ -4531,21 +4537,26 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (DisableRepriceWhenFlat && (Position == null || Position.MarketPosition == MarketPosition.Flat))
 				{
 					if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
-					return;
+					{
+						return;
+					}
 				}
 
 				if (Math.Abs(ord.LimitPrice - price) < repricingThreshold)
 				{
 					if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
-					return;
+					{
+						return;
+					}
 				}
 
 				int minBars = Math.Max(1, RepriceEveryNBars);
 				if (_lastGridRepriceBarShort[idx] >= 0 && (CurrentBar - _lastGridRepriceBarShort[idx]) < minBars)
 				{
 					if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
-
-					return;
+					{
+						return;
+					}
 				}
 
 				if (BlockIfSameBar($"Grid{idx + 1}_Sell_R")) return;
@@ -4563,8 +4574,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 				MarkActionExecuted();
 
 				if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
-
-				return;
+				{
+					return;
+				}
 			}
 
 			if (BlockIfSameBar($"Grid{idx + 1}_Sell")) return;
@@ -4579,8 +4591,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 			gridShort[idx] = newOrd;
 			MarkActionExecuted();
-
-			if (idx == 1 && Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0)
 
 		}
 
@@ -4841,9 +4851,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 				flattenOrder = null;
 			}
 
-			if (flattenOrder == null)
-			else
+			if (flattenOrder != null)
+			{
 				MarkActionExecuted();
+			}
 
 		}
 
