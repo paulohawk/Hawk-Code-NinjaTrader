@@ -2056,6 +2056,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private bool flattenAllowFallback = false;
 		private System.Timers.Timer _flattenTimer = null;
 
+		// AutoClose por cronometro
+		private DateTime sessionStartBrt = DateTime.MinValue;
+		private readonly TimeSpan maxSessionDuration = TimeSpan.FromHours(7);
+		private bool autoCloseExecutedToday = false;
 
 		private bool isAnalyzerMode = false;
 		private bool panelInitialized = false;
@@ -2736,6 +2740,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 		#endregion
 
 		#region Panel snapshot helpers
+		private TimeSpan GetDisplayAutoCloseTime(DateTime brtDay)
+		{
+			bool usaDst = IsUsaDstForTradingDay(brtDay);
+			return usaDst ? new TimeSpan(16, 0, 0) : new TimeSpan(17, 0, 0);
+		}
+
 		private HVB_PanelStateHub.PanelSnapshot BuildSnapshot(bool offSnapshot, string statusOverride = null)
 		{
 			if (string.IsNullOrWhiteSpace(cacheKey))
@@ -2769,10 +2779,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 			snap.DayTargetDollar = dayTargetDollars;
 			snap.DayBreakevenDollar = dayBreakevenDollars;
 
-			DateTime endDayRef = (State == State.Historical && Time != null && CurrentBar >= 0) ? Time[0] : GetNowSource();
-			DateTime endDayBrt = GetNowBrt(endDayRef);
-			GetAutoCloseSchedule(endDayBrt.Date, out TimeSpan preCloseTime, out TimeSpan autoCloseTime, out bool usaDst);
-			snap.EndDayText = autoCloseTime.ToString(@"hh\:mm\:ss");
+			DateTime endDayRef = (Time != null && CurrentBar >= 0) ? Time[0] : DateTime.MinValue;
+			DateTime endDayBrt = endDayRef == DateTime.MinValue ? DateTime.MinValue : ConvertToBrasilia(endDayRef).AddMinutes(UserBrtOffsetMinutes);
+			if (endDayBrt == DateTime.MinValue)
+			{
+				snap.EndDayText = "-";
+			}
+			else
+			{
+				TimeSpan displayClose = GetDisplayAutoCloseTime(endDayBrt.Date);
+				snap.EndDayText = displayClose.ToString(@"hh\:mm");
+			}
 
 			snap.MainEnabled = (status == "Trading" || status == "StopNewTrades") && !isLockedForDay;
 
@@ -4072,12 +4089,19 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				try
 				{
-					if (State == State.Realtime)
-						TriggerCustomEvent(_ => HandleAutoCloseSimple("Timer"), null);
-					if (flattenInProgress && State == State.Realtime)
+					if (State != State.Realtime)
+						return;
+
+					DateTime nowBrt = ConvertToBrasilia(Core.Globals.Now)
+						.AddMinutes(UserBrtOffsetMinutes);
+
+					TriggerCustomEvent(_ =>
 					{
-						TriggerCustomEvent(_ => CheckFlattenProgress(), null);
-					}
+						CheckAutoCloseByTimer(nowBrt);
+
+						if (flattenInProgress)
+							CheckFlattenProgress();
+					}, null);
 				}
 				catch { }
 			};
@@ -5521,50 +5545,52 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			try { if (stopLossOrder != null && !IsCancelling(stopLossOrder)) CancelOrder(stopLossOrder); } catch { }
 		}
-		#endregion
 
-		#region AutoClose simple exit
-		private DateTime GetNowSource()
+		private void CancelStopLossForce()
 		{
 			try
 			{
-				return Core.Globals.Now;
+				if (stopLossOrder != null && !IsCancelling(stopLossOrder))
+					CancelOrder(stopLossOrder);
 			}
-			catch
+			catch { }
+		}
+		#endregion
+
+		#region AutoClose timer exit
+		private bool CheckAutoCloseByTimer(DateTime nowBrt)
+		{
+			if (sessionStartBrt == DateTime.MinValue || sessionStartBrt.Date != nowBrt.Date)
 			{
-				return DateTime.Now;
+				sessionStartBrt = new DateTime(
+					nowBrt.Year,
+					nowBrt.Month,
+					nowBrt.Day,
+					10, 0, 0);
 			}
-		}
 
-		private DateTime GetNowBrt(DateTime? nowOverride = null)
-		{
-			DateTime now = nowOverride ?? GetNowSource();
-			return ConvertToBrasilia(now).AddMinutes(UserBrtOffsetMinutes);
-		}
+			if (autoCloseExecutedToday)
+				return true;
 
-		private void GetAutoCloseSchedule(DateTime brtDay, out TimeSpan preCloseTime, out TimeSpan autoCloseTime, out bool usaDst)
-		{
-			usaDst = IsUsaDstForTradingDay(brtDay);
-			preCloseTime = usaDst ? new TimeSpan(15, 55, 0) : new TimeSpan(16, 55, 0);
-			autoCloseTime = usaDst ? new TimeSpan(16, 0, 0) : new TimeSpan(17, 0, 0);
-		}
+			if (nowBrt < sessionStartBrt.Add(maxSessionDuration))
+				return false;
 
-		private void HandleAutoCloseSimple(string sourceTag, DateTime? nowOverride = null)
-		{
-			if (State != State.Realtime)
-				return;
-
-			DateTime nowBrt = GetNowBrt(nowOverride);
-			GetAutoCloseSchedule(nowBrt.Date, out _, out TimeSpan autoCloseTime, out _);
-
-			if (nowBrt.TimeOfDay < autoCloseTime)
-				return;
-
-			if (Position != null && Position.MarketPosition != MarketPosition.Flat && Position.Quantity != 0 && !flattenInProgress)
+			if (Position != null &&
+				Position.MarketPosition != MarketPosition.Flat &&
+				Position.Quantity != 0 &&
+				!flattenInProgress)
 			{
-				LogMsg("AutoClose", $"closing position nowBrt={nowBrt:HH:mm:ss} src={sourceTag}", 2);
-				RequestFlatten("AutoClose", allowAccountFallback: true);
+				LogMsg("AutoCloseTimer", $"closing position by timer nowBrt={nowBrt:HH:mm:ss}", 2);
+				CancelAllGrid("autoclose_timer");
+				CancelExitVwap();
+				CancelOppositeBandExit();
+				CancelFinancialTarget();
+				CancelStopLossForce();
+				RequestFlatten("AutoCloseTimer", allowAccountFallback: true);
 			}
+
+			autoCloseExecutedToday = true;
+			return true;
 		}
 		#endregion
 
@@ -5946,13 +5972,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 				UpdateSnapshot("bar");
 				EnsurePanelInitializedOnce();
 
-				if (BarsInProgress == 1)
-				{
-					HandleAutoCloseSimple("Clock");
-					return;
-				}
-
 				if (BarsInProgress != 0) return;
+
+				var nowBrtDt = ConvertToBrasilia(Time[0]).AddMinutes(UserBrtOffsetMinutes);
+				DateTime calDay = nowBrtDt.Date;
+				ApplyDailyResetIfNeeded(calDay);
+
+				if (CheckAutoCloseByTimer(nowBrtDt))
+					return;
 
 				if (Position.MarketPosition == MarketPosition.Flat)
 				{
@@ -5998,14 +6025,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 					return;
 				}
 
-				var nowBrtDt = ConvertToBrasilia(Time[0]).AddMinutes(UserBrtOffsetMinutes);
 				int nowBrtInt = ToBrtHHmmss(Time[0]);
-				DateTime calDay = nowBrtDt.Date;
 				bool isAnalyzer = (ChartControl == null);
 				TimeSpan startAnalysisTime = GetStartAnalysisTimeBrt(calDay);
 				int startAnalysisInt = ToHhmmss(startAnalysisTime);
-
-				ApplyDailyResetIfNeeded(calDay);
 
 				// ---- rest of your original OnBarUpdate follows unchanged ----
 				if (!EnableSlowStochFilter)
@@ -6441,6 +6464,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 				closeBarOrderActiveBar = -1;
 				closeBarOrderCancelBar = -1;
 				closeBarRearmAfterCancel = false;
+
+				sessionStartBrt = new DateTime(
+					calDay.Year,
+					calDay.Month,
+					calDay.Day,
+					10, 0, 0);
+				autoCloseExecutedToday = false;
 
 				ResetTradeCounters(calDay);
 
