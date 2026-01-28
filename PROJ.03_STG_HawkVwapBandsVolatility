@@ -3050,6 +3050,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 			ResetHistoricalPanelStats();
 
 			DateTime today = nowLocalBrt.Date;
+			DateTime panelDay = _lastPanelPnlDayBrt == DateTime.MinValue ? today : _lastPanelPnlDayBrt;
+			bool allowDayRecalc = panelDay == today;
 			DateTime monthStart = new DateTime(nowLocalBrt.Year, nowLocalBrt.Month, 1);
 			DateTime nextMonthStart = monthStart.AddMonths(1);
 			realizedPnlDay = 0;
@@ -3094,7 +3096,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 				DateTime exitBrt = ConvertToBrasilia(trade.Exit.Time).AddMinutes(UserBrtOffsetMinutes);
 				DateTime exitDay = exitBrt.Date;
-				if (exitDay == today) realizedPnlDay += pnl;
+				if (allowDayRecalc && exitDay == panelDay) realizedPnlDay += pnl;
 				if (exitDay >= monthStart && exitDay < nextMonthStart) _monthPnl += pnl;
 			}
 
