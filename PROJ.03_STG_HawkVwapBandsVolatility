@@ -3319,9 +3319,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 				snap.EntryPrice = Position.AveragePrice;
 				snap.Qty = Math.Abs(Position.Quantity);
 
-				if (mode == ExitMode.Vwap)
+				var exitMode = GetExitMode();
+				if (exitMode == ExitMode.Vwap)
 					snap.ExitTarget = double.IsNaN(lastSnapVwap) ? (double?)null : lastSnapVwap;
-				else if (mode == ExitMode.OppositeBand)
+				else if (exitMode == ExitMode.OppositeBand)
 				{
 					int idx = Math.Max(1, Math.Min(5, OppBandExitDeviation)) - 1;
 					snap.ExitTarget = Position.MarketPosition == MarketPosition.Long ? upper[idx] : lower[idx];
