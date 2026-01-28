@@ -190,9 +190,9 @@ namespace NinjaTrader.NinjaScript
 		private double _baseTitleSize = (10.0 + 4) * 0.9;
 
 		private const double RiskWarningBulletSize = 14.0;
-		private const double RiskWarningLabelSize = 12.5;
-		private const double RiskWarningTextPrimarySize = 11.5;
-		private const double RiskWarningTextSecondarySize = 10.5;
+		private const double RiskWarningLabelSize = 10.5;
+		private const double RiskWarningTextPrimarySize = 9.5;
+		private const double RiskWarningTextSecondarySize = 9.0;
 
 		private double _lastResponsiveWidth = 0;
 		private DateTime _lastResponsiveUpdate = DateTime.MinValue;
@@ -435,7 +435,7 @@ namespace NinjaTrader.NinjaScript
 			main.Children.Add(streakRow);
 
 			// Row: Risk Warning
-			_riskWarningRow = new Grid { Margin = new Thickness(0, 4, 0, 2) };
+			_riskWarningRow = new Grid { Margin = new Thickness(0, 4, 0, 8) };
 			_riskWarningRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 			_riskWarningRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 			_riskWarningRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -1009,7 +1009,7 @@ namespace NinjaTrader.NinjaScript
 	public class HVB_PanelHelper
 	{
 		private const int AttachPollMs = 1000;
-		private const double EmbedHeightPx = 370.0;
+		private const double EmbedHeightPx = 388.5;
 
 		private ChartControl chartControl;
 		private NinjaTrader.Gui.Chart.Chart chartWindow;
