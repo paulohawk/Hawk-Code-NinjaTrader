@@ -2210,6 +2210,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 					ResetExecutionCycleGuard("state_realtime");
 
 					EnsurePanelInitializedOnce();
+					var nowBrt = ConvertToBrasilia(DateTime.UtcNow).AddMinutes(UserBrtOffsetMinutes);
+					ChartControl?.Dispatcher.BeginInvoke(new Action(() =>
+					{
+						EvaluateOverlayPenalty(nowBrt);
+					}));
 					StartFlattenTimerIfNeeded();
 					PublishPanelSnapshot("StateRealtime");
 				}
@@ -2265,6 +2270,38 @@ namespace NinjaTrader.NinjaScript.Strategies
 		#endregion
 
 		#region Helpers: overlay
+		private void EvaluateOverlayPenalty(DateTime nowBrt)
+		{
+			if (overlayPenaltyCaptured) return;
+			if (isAnalyzerMode) return;
+			if (State != State.Realtime) return;
+
+			DateTime tradingDay = nowBrt.Date;
+
+			if (overlayPenaltyTradingDay == tradingDay)
+				return;
+
+			TimeSpan startAnalysis = GetStartAnalysisTimeBrt(tradingDay);
+			TimeSpan recommendedCutoff = startAnalysis - OverlayRecommendedLead;
+
+			DateTime overlayCutoff = tradingDay + recommendedCutoff;
+			DateTime overlayEnd = tradingDay + GetOverlayPenaltyEndTimeBrt(tradingDay);
+
+			bool insideOperationalWindow = nowBrt >= overlayCutoff && nowBrt <= overlayEnd;
+
+			overlayPenaltyCaptured = true;
+			overlayPenaltyTradingDay = tradingDay;
+			overlayStartCached = overlayCutoff;
+			overlayEndCached = overlayEnd;
+			overlayCutoffCached = overlayCutoff;
+			overlayPenaltyOnEnable = nowBrt >= overlayCutoff;
+
+			if (insideOperationalWindow)
+			{
+				ShowRiskOverlay(recommendedCutoff);
+			}
+		}
+
 		private void ShowRiskOverlay(TimeSpan recommendedCutoff)
 		{
 			var chartControl = ChartControl;
@@ -6007,31 +6044,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				var nowBrtDt = ConvertToBrasilia(Time[0]).AddMinutes(UserBrtOffsetMinutes);
 				ResetDailyPanelPnLIfNewDay(nowBrtDt);
 				DateTime calDay = nowBrtDt.Date;
-				if (!overlayPenaltyCaptured && !isAnalyzerMode && State == State.Realtime)
-				{
-					DateTime overlayTradingDay = nowBrtDt.Date;
-					TimeSpan startAnalysis = GetStartAnalysisTimeBrt(overlayTradingDay);
-					TimeSpan recommendedCutoff = startAnalysis - OverlayRecommendedLead;
-
-					DateTime overlayCutoff = overlayTradingDay + recommendedCutoff;
-					DateTime overlayStart = overlayCutoff;
-					DateTime overlayEnd = overlayTradingDay + GetOverlayPenaltyEndTimeBrt(overlayTradingDay);
-
-					bool isInsideOperationalWindow = (nowBrtDt >= overlayStart && nowBrtDt <= overlayEnd);
-					bool penaltyNow = (nowBrtDt >= overlayCutoff);
-
-					overlayStartCached = overlayStart;
-					overlayEndCached = overlayEnd;
-					overlayCutoffCached = overlayCutoff;
-					overlayPenaltyOnEnable = penaltyNow;
-					overlayPenaltyCaptured = true;
-					overlayPenaltyTradingDay = overlayTradingDay;
-
-					if (isInsideOperationalWindow && penaltyNow)
-					{
-						ShowRiskOverlay(recommendedCutoff);
-					}
-				}
+				EvaluateOverlayPenalty(nowBrtDt);
 				if (!_panelPnLInitialized)
 				{
 					if (PanelPnlMode == PanelPnLMode.ChartHistorical)
