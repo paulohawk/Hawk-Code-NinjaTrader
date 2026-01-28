@@ -191,7 +191,7 @@ namespace NinjaTrader.NinjaScript
 
 		private const double RiskWarningBulletSize = 14.0;
 		private const double RiskWarningLabelSize = 10.5;
-		private const double RiskWarningTextPrimarySize = 9.5;
+		private const double RiskWarningTextPrimarySize = 8.5;
 		private const double RiskWarningTextSecondarySize = 9.0;
 
 		private double _lastResponsiveWidth = 0;
@@ -2412,6 +2412,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				overlayPenaltyCaptured = true;
 				overlayPenaltyTradingDay = tradingDay;
 				ShowRiskOverlay(recommendedCutoff);
+				PublishPanelSnapshot("OverlayPenaltyActivated", force: true);
 			}
 		}
 
