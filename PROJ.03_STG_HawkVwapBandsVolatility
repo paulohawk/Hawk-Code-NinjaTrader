@@ -353,7 +353,7 @@ namespace NinjaTrader.NinjaScript
 
 			var atrRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
 			_bulletAtr = CreateBullet();
-			var atrLbl = new TextBlock { Text = "STOCH", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.None };
+			var atrLbl = new TextBlock { Text = "Stoch", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.None };
 			atrRow.Children.Add(_bulletAtr);
 			atrRow.Children.Add(atrLbl);
 			main.Children.Add(atrRow);
@@ -3292,7 +3292,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 			snap.DayTargetDollar = dayTargetDollars;
 			snap.DayBreakevenDollar = dayBreakevenDollars;
 
-			snap.EndDayText = "-";
+			DateTime snapshotBrt = (State == State.Historical && CurrentBar >= 0)
+				? ConvertToBrasilia(Time[0]).AddMinutes(UserBrtOffsetMinutes)
+				: ConvertToBrasilia(DateTime.UtcNow).AddMinutes(UserBrtOffsetMinutes);
+			TimeSpan endSession = GetAutoCloseTimeBrt(snapshotBrt.Date);
+			snap.EndDayText = endSession.ToString(@"hh\:mm");
 
 			snap.MainEnabled = (status == "Trading" || status == "StopNewTrades") && !isLockedForDay;
 
