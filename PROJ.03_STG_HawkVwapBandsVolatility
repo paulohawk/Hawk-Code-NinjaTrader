@@ -3000,9 +3000,18 @@ namespace NinjaTrader.NinjaScript.Strategies
 			_totalPnlDay = 0;
 			_cachedPnlDay = "0.00";
 
+			if (PanelPnlMode == PanelPnLMode.RealtimeOnly && State == State.Realtime)
+			{
+				_rtRealizedDay = 0;
+				_rtBrtDay = today;
+				_rtBrtYearMonth = today.Year * 100 + today.Month;
+			}
+
 			_lastPanelPnlDayBrt = today;
 
 			PanelLog("PNL_DAY_RESET", $"day={today:yyyy-MM-dd}");
+
+			PublishPanelSnapshot("PnLDayReset", force: true);
 		}
 
 		private void ResetHistoricalPanelStats()
