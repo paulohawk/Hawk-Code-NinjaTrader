@@ -27,6 +27,7 @@ using NinjaTrader.NinjaScript.Indicators;
 using IOPath = System.IO.Path;
 using WpfEllipse = System.Windows.Shapes.Ellipse;
 using WpfPath = System.Windows.Shapes.Path;
+using WpfRectangle = System.Windows.Shapes.Rectangle;
 #endregion
 
 // ============================================================================
@@ -2030,6 +2031,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private ExitMode? lastExitMode = null;
 
+		private static readonly TimeSpan OverlayRecommendedLead = new TimeSpan(0, 30, 0);
+		private bool overlayPenaltyOnEnable = false;
+		private bool overlayPenaltyCaptured = false;
+		private DateTime overlayPenaltyTradingDay = Core.Globals.MinDate;
+		private DateTime overlayStartCached = Core.Globals.MinDate;
+		private DateTime overlayEndCached = Core.Globals.MinDate;
+		private DateTime overlayCutoffCached = Core.Globals.MinDate;
+		private Window riskOverlayWindow = null;
+		private DispatcherTimer riskOverlayTimer = null;
+		private SizeChangedEventHandler overlaySizeHandler = null;
+
 		private bool _entryLoggedForPosition = false;
 		private bool _exitLoggedForPosition = false;
 		private double _entryPriceForLog = 0.0;
@@ -2209,6 +2221,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 					try { HVB_PanelStateHub.Remove(cacheKey); } catch { }
 					try { StopFlattenTimer(); } catch { }
 					try { panelHelper?.Dispose(); panelHelper = null; } catch { }
+					RemoveRiskOverlay();
+					overlayPenaltyOnEnable = false;
+					overlayPenaltyCaptured = false;
+					overlayPenaltyTradingDay = Core.Globals.MinDate;
+					overlayStartCached = Core.Globals.MinDate;
+					overlayEndCached = Core.Globals.MinDate;
+					overlayCutoffCached = Core.Globals.MinDate;
 				}
 			}
 			catch (Exception ex)
@@ -2242,6 +2261,153 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 
 			panelInitialized = true;
+		}
+		#endregion
+
+		#region Helpers: overlay
+		private void ShowRiskOverlay(TimeSpan recommendedCutoff)
+		{
+			var chartControl = ChartControl;
+			if (chartControl == null) return;
+
+			chartControl.Dispatcher.BeginInvoke(new Action(() =>
+			{
+				try
+				{
+					RemoveRiskOverlay();
+
+					string cutoffTxt = recommendedCutoff.ToString(@"hh\:mm") + " (Brasília)";
+
+					var overlayGrid = new Grid();
+
+					var backgroundRect = new WpfRectangle
+					{
+						Fill = Brushes.Black,
+						Opacity = 0.75
+					};
+					overlayGrid.Children.Add(backgroundRect);
+
+					var stack = new StackPanel
+					{
+						VerticalAlignment = VerticalAlignment.Center,
+						HorizontalAlignment = HorizontalAlignment.Center,
+						Orientation = Orientation.Vertical
+					};
+
+					var titleText = new TextBlock
+					{
+						Text = "AVISO AO TRADER",
+						Foreground = Brushes.Red,
+						FontSize = 28,
+						FontWeight = FontWeights.Bold,
+						TextAlignment = TextAlignment.Center,
+						Margin = new Thickness(0, 0, 0, 20)
+					};
+
+					var bodyText = new TextBlock
+					{
+						Text = "Você ativou esta automação fora do horário operacional recomendado.\n\n" +
+							   $"Para máxima estabilidade, recomenda-se manter a estratégia ativa antes das {cutoffTxt} ou utilizar VPS dedicada.",
+						Foreground = Brushes.White,
+						FontSize = 18,
+						TextAlignment = TextAlignment.Center,
+						Margin = new Thickness(0, 0, 0, 30)
+					};
+
+					var footerText = new TextBlock
+					{
+						Text = "Ao prosseguir, você assume os riscos operacionais desta decisão.",
+						Foreground = Brushes.White,
+						FontSize = 14,
+						TextAlignment = TextAlignment.Center
+					};
+
+					stack.Children.Add(titleText);
+					stack.Children.Add(bodyText);
+					stack.Children.Add(footerText);
+
+					overlayGrid.Children.Add(stack);
+
+					riskOverlayWindow = new Window
+					{
+						Content = overlayGrid,
+						AllowsTransparency = true,
+						Background = Brushes.Transparent,
+						WindowStyle = WindowStyle.None,
+						ResizeMode = ResizeMode.NoResize,
+						ShowInTaskbar = false,
+						Topmost = true
+					};
+
+					var point = chartControl.PointToScreen(new Point(0, 0));
+					riskOverlayWindow.Left = point.X;
+					riskOverlayWindow.Top = point.Y;
+					riskOverlayWindow.Width = chartControl.ActualWidth;
+					riskOverlayWindow.Height = chartControl.ActualHeight;
+
+					riskOverlayWindow.Show();
+
+					if (overlaySizeHandler == null)
+					{
+						overlaySizeHandler = (s, e) => UpdateOverlayBounds();
+						chartControl.SizeChanged += overlaySizeHandler;
+					}
+
+					riskOverlayTimer = new DispatcherTimer();
+					riskOverlayTimer.Interval = TimeSpan.FromSeconds(20);
+					riskOverlayTimer.Tick += (s, e) =>
+					{
+						riskOverlayTimer.Stop();
+						RemoveRiskOverlay();
+					};
+					riskOverlayTimer.Start();
+				}
+				catch { }
+			}));
+		}
+
+		private void UpdateOverlayBounds()
+		{
+			var chartControl = ChartControl;
+			if (riskOverlayWindow == null || chartControl == null) return;
+
+			chartControl.Dispatcher.BeginInvoke(new Action(() =>
+			{
+				try
+				{
+					var point = chartControl.PointToScreen(new Point(0, 0));
+					riskOverlayWindow.Left = point.X;
+					riskOverlayWindow.Top = point.Y;
+					riskOverlayWindow.Width = chartControl.ActualWidth;
+					riskOverlayWindow.Height = chartControl.ActualHeight;
+				}
+				catch { }
+			}));
+		}
+
+		private void RemoveRiskOverlay()
+		{
+			try
+			{
+				if (riskOverlayWindow != null)
+				{
+					riskOverlayWindow.Close();
+					riskOverlayWindow = null;
+				}
+
+				if (riskOverlayTimer != null)
+				{
+					riskOverlayTimer.Stop();
+					riskOverlayTimer = null;
+				}
+
+				if (ChartControl != null && overlaySizeHandler != null)
+				{
+					try { ChartControl.SizeChanged -= overlaySizeHandler; } catch { }
+					overlaySizeHandler = null;
+				}
+			}
+			catch { }
 		}
 		#endregion
 
@@ -2389,6 +2555,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 			return usaDst
 				? new TimeSpan(9, 0, 0)
 				: new TimeSpan(10, 0, 0);
+		}
+
+		private TimeSpan GetOverlayPenaltyEndTimeBrt(DateTime tradingDayBrt)
+		{
+			var start = GetStartAnalysisTimeBrt(tradingDayBrt.Date);
+			if (start.Hours == 10) return new TimeSpan(20, 0, 0);
+			return new TimeSpan(19, 0, 0);
 		}
 
 		private TimeSpan GetAutoCloseTimeBrt(DateTime tradingDayBrt)
@@ -5834,6 +6007,31 @@ namespace NinjaTrader.NinjaScript.Strategies
 				var nowBrtDt = ConvertToBrasilia(Time[0]).AddMinutes(UserBrtOffsetMinutes);
 				ResetDailyPanelPnLIfNewDay(nowBrtDt);
 				DateTime calDay = nowBrtDt.Date;
+				if (!overlayPenaltyCaptured && !isAnalyzerMode && State == State.Realtime)
+				{
+					DateTime overlayTradingDay = nowBrtDt.Date;
+					TimeSpan startAnalysis = GetStartAnalysisTimeBrt(overlayTradingDay);
+					TimeSpan recommendedCutoff = startAnalysis - OverlayRecommendedLead;
+
+					DateTime overlayCutoff = overlayTradingDay + recommendedCutoff;
+					DateTime overlayStart = overlayCutoff;
+					DateTime overlayEnd = overlayTradingDay + GetOverlayPenaltyEndTimeBrt(overlayTradingDay);
+
+					bool isInsideOperationalWindow = (nowBrtDt >= overlayStart && nowBrtDt <= overlayEnd);
+					bool penaltyNow = (nowBrtDt >= overlayCutoff);
+
+					overlayStartCached = overlayStart;
+					overlayEndCached = overlayEnd;
+					overlayCutoffCached = overlayCutoff;
+					overlayPenaltyOnEnable = penaltyNow;
+					overlayPenaltyCaptured = true;
+					overlayPenaltyTradingDay = overlayTradingDay;
+
+					if (isInsideOperationalWindow && penaltyNow)
+					{
+						ShowRiskOverlay(recommendedCutoff);
+					}
+				}
 				if (!_panelPnLInitialized)
 				{
 					if (PanelPnlMode == PanelPnLMode.ChartHistorical)
