@@ -1861,6 +1861,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private enum Regime { None, Buy, Sell }
 		private enum ExitMode { Vwap, OppositeBand, Financial }
+		private enum PanelTradeStatus
+		{
+			Off,
+			OutsideHours,
+			Waiting,
+			Open,
+			StopNewTrades,
+			AutoClose,
+			Locked,
+			Error
+		}
 
 		private Regime currentRegime = Regime.None;
 		private Regime lastRegime = Regime.None;
@@ -1927,7 +1938,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private bool terminatedHandled = false;
 
 		private string lastEvent = "Init";
-		private string dayStatus = "Waiting";
+		private string dayStatus = "Off";
+		private PanelTradeStatus _lastPanelStatus = PanelTradeStatus.Off;
+		private DateTime _lastPanelStatusBrtDay = DateTime.MinValue;
 		private string dayStopDollars = "-";
 		private string dayTargetDollars = "-";
 		private string dayBreakevenDollars = "-";
@@ -2416,6 +2429,80 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private bool InTradingWindow(int nowBrt, int startAnalysisHhmmss) => nowBrt >= startAnalysisHhmmss && nowBrt < stopHHmmss;
 		private bool IsFlattenWindow(int nowBrt) => nowBrt >= flattenHHmmss;
+		private bool IsInAnalysisWindow(int nowBrtHhmmss, int startAnalysisHhmmss, int stopNewTradesHhmmss)
+			=> nowBrtHhmmss >= startAnalysisHhmmss && nowBrtHhmmss < stopNewTradesHhmmss;
+
+		private bool IsInStopNewTradesWindow(int nowBrtHhmmss, int stopNewTradesHhmmss, int flattenHhmmss)
+			=> nowBrtHhmmss >= stopNewTradesHhmmss && nowBrtHhmmss < flattenHhmmss;
+
+		private bool IsAfterFlatten(int nowBrtHhmmss, int flattenHhmmss)
+			=> nowBrtHhmmss >= flattenHhmmss;
+
+		private bool HasOpenPosition()
+			=> Position != null && Position.MarketPosition != MarketPosition.Flat && Math.Abs(Position.Quantity) > 0;
+
+		private bool IsAutoCloseInProgress()
+		{
+			if (flattenInProgress) return true;
+			if (_autoCloseActive) return true;
+			return false;
+		}
+
+		private PanelTradeStatus ComputePanelTradeStatus(DateTime nowBrt)
+		{
+			int nowH = ToTime(nowBrt);
+			int startAnalysisHhmmss = ToHhmmss(GetStartAnalysisTimeBrt(nowBrt.Date));
+
+			if (State == State.Terminated)
+				return PanelTradeStatus.Off;
+
+			if (IsAutoCloseInProgress())
+				return PanelTradeStatus.AutoClose;
+
+			if (isLockedForDay)
+				return PanelTradeStatus.Locked;
+
+			if (HasOpenPosition())
+				return PanelTradeStatus.Open;
+
+			if (IsInStopNewTradesWindow(nowH, stopHHmmss, flattenHHmmss))
+				return PanelTradeStatus.StopNewTrades;
+
+			if (IsInAnalysisWindow(nowH, startAnalysisHhmmss, stopHHmmss))
+				return PanelTradeStatus.Waiting;
+
+			if (IsAfterFlatten(nowH, flattenHHmmss))
+				return PanelTradeStatus.OutsideHours;
+
+			return PanelTradeStatus.OutsideHours;
+		}
+
+		private string PanelStatusToText(PanelTradeStatus s)
+		{
+			switch (s)
+			{
+				case PanelTradeStatus.Waiting: return "Waiting";
+				case PanelTradeStatus.Open: return "Open";
+				case PanelTradeStatus.StopNewTrades: return "StopNewTrades";
+				case PanelTradeStatus.AutoClose: return "AutoClose";
+				case PanelTradeStatus.Locked: return "Locked";
+				case PanelTradeStatus.OutsideHours: return "OutsideHours";
+				case PanelTradeStatus.Off: return "Off";
+				default: return "Waiting";
+			}
+		}
+
+		private void UpdatePanelStatusIfChanged(DateTime nowBrt, string contextTag)
+		{
+			var newStatus = ComputePanelTradeStatus(nowBrt);
+			if (newStatus == _lastPanelStatus && _lastPanelStatusBrtDay == nowBrt.Date)
+				return;
+
+			_lastPanelStatus = newStatus;
+			_lastPanelStatusBrtDay = nowBrt.Date;
+			dayStatus = PanelStatusToText(newStatus);
+			PublishPanelSnapshot($"StatusChange:{contextTag}", force: true);
+		}
 
 		private bool CanAutoCloseAttempt()
 		{
@@ -5373,10 +5460,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 			if (isLockedForDay) return;
 			isLockedForDay = true;
-			dayStatus = "Locked";
 
 			DateTime fallbackUtc = (Time != null && CurrentBar >= 0) ? Time[0].ToUniversalTime() : DateTime.UtcNow;
 			_lockedAtUtc = utcOverride ?? fallbackUtc;
+			DateTime nowBrt = ConvertToBrasilia(_lockedAtUtc).AddMinutes(UserBrtOffsetMinutes);
+			UpdatePanelStatusIfChanged(nowBrt, $"LockDay:{reason}");
 
 		}
 		#endregion
@@ -5708,7 +5796,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (decision.CancelSideGridForLimit)
 				{
 					CancelSideGrid(currentRegime, "trade_limit_cycle");
-					dayStatus = "TradeLimitHit";
 					lastEvent = "TradeLimitHit";
 				}
 				else
@@ -5737,6 +5824,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					var barTime = Times[BIP_AUTOCLOSE][0];
 					var nowBrtAutoClose = ConvertToBrasilia(barTime).AddMinutes(UserBrtOffsetMinutes);
 					ApplyDailyResetIfNeeded(nowBrtAutoClose.Date);
+					UpdatePanelStatusIfChanged(nowBrtAutoClose, "BIP_AUTOCLOSE");
 					TryAutoCloseByClock(nowBrtAutoClose, barTime);
 					return;
 				}
@@ -5764,6 +5852,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					}
 				}
 				ApplyDailyResetIfNeeded(calDay);
+				UpdatePanelStatusIfChanged(nowBrtDt, "BIP0");
 				TryAutoCloseWatchdog(nowBrtDt);
 
 				if (Position.MarketPosition == MarketPosition.Flat)
@@ -5797,7 +5886,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 				if (CurrentBar < 1)
 				{
-					dayStatus = "Warmup";
+					lastEvent = "Warmup";
 					PublishPanelSnapshot("Warmup");
 					return;
 				}
@@ -5820,7 +5909,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				{
 					if (hvb == null)
 					{
-						dayStatus = "Waiting";
+						lastEvent = "Waiting";
 						CancelAllGrid("hvb_null");
 						CancelStopLoss();
 						CancelExitVwap();
@@ -5833,7 +5922,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					double vwap = hvb.PlotVWAP[0];
 					if (double.IsNaN(vwap) || vwap <= 0)
 					{
-						dayStatus = "NoVwapYet";
+						lastEvent = "NoVwapYet";
 						CancelAllGrid("no_vwap");
 						CancelStopLoss();
 						CancelExitVwap();
@@ -5900,9 +5989,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 					LogSessionStartIfNeeded(nowBrtDt, startAnalysisTime, GetAutoCloseTimeBrt(calDay));
 
 				if (!isLockedForDay)
-					dayStatus = inWindow ? "Trading" : (nowBrtInt < startAnalysisInt ? "BeforeStart" : "StopNewTrades");
+					lastEvent = inWindow ? "Trading" : (nowBrtInt < startAnalysisInt ? "BeforeStart" : "StopNewTrades");
 				else
-					dayStatus = "Locked";
+					lastEvent = "Locked";
 
 					int touched = hvb.TouchedBandIndexSeries[0];
 					var decision = EvaluateSignals(vwap, inWindow);
@@ -5917,7 +6006,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				{
 					if (hvb == null)
 					{
-						dayStatus = "Waiting";
+						lastEvent = "Waiting";
 						CancelAllGrid("hvb_null");
 						CancelStopLoss();
 						CancelExitVwap();
@@ -5930,7 +6019,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					double vwap = hvb.PlotVWAP[0];
 					if (double.IsNaN(vwap) || vwap <= 0)
 					{
-						dayStatus = "NoVwapYet";
+						lastEvent = "NoVwapYet";
 						CancelAllGrid("no_vwap");
 						CancelStopLoss();
 						CancelExitVwap();
@@ -6002,9 +6091,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 						LogSessionStartIfNeeded(nowBrtDt, startAnalysisTime, GetAutoCloseTimeBrt(calDay));
 
 					if (!isLockedForDay)
-						dayStatus = inWindow ? "Trading" : (nowBrtInt < startAnalysisInt ? "BeforeStart" : "StopNewTrades");
+						lastEvent = inWindow ? "Trading" : (nowBrtInt < startAnalysisInt ? "BeforeStart" : "StopNewTrades");
 					else
-						dayStatus = "Locked";
+						lastEvent = "Locked";
 
 					Regime newRegime = GetEffectiveRegime(vwap);
 					bool canFlip = (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0) && !cycleOpen;
@@ -6225,7 +6314,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 				_unrealizedPnlManual = 0;
 				_totalPnlDay = 0;
 				_cachedPnlDay = "0.00";
-				dayStatus = "Waiting";
+				_lastPanelStatus = PanelTradeStatus.Off;
+				_lastPanelStatusBrtDay = DateTime.MinValue;
 				lastRegime = currentRegime;
 				currentRegime = Regime.None;
 				closeBarOrderPending = false;
