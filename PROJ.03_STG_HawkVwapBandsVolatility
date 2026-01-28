@@ -1950,6 +1950,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private string _cachedPnlDay = "-";
 		private string _cachedPnlMonth = "-";
 		private string _cachedPnlTotal = "-";
+		private bool _panelPnLInitialized = false;
 
 		private int _currentStreak = 0;
 		private int _maxGainStreak = 0;
@@ -2101,6 +2102,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				}
 				else if (State == State.DataLoaded)
 				{
+					_panelPnLInitialized = false;
 					hvb = HawkVwapBands(
 						Input,
 						NumDeviations,
@@ -2123,6 +2125,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 				{
 					if (string.IsNullOrWhiteSpace(cacheKey))
 						cacheKey = GetCacheKey();
+
+					_panelPnLInitialized = false;
 
 					bool cacheLoadedNow = false;
 					if (!_panelCacheLoaded)
@@ -2208,6 +2212,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			if (string.IsNullOrWhiteSpace(cacheKey))
 				cacheKey = GetCacheKey();
+
+			try { HVB_PanelStateHub.Remove(cacheKey); } catch { }
 
 			if (!_panelCacheLoaded)
 				TryLoadPanelCache();
@@ -2605,6 +2611,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 			Print($"[HVB][OPERATIONAL][{eventName}] {message}");
 		}
 
+		private void PanelLog(string eventName, string message)
+		{
+			if (!EnableOperationalLog) return;
+			Print($"[HVB][PANEL][{eventName}] {message}");
+		}
+
 		private string FormatBrtTime(DateTime brtTime)
 		{
 			return brtTime.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
@@ -2755,38 +2767,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 					if (Enum.TryParse(state.PanelPnLMode, out PanelPnLMode savedMode))
 						PanelPnlMode = savedMode;
 
-					if (PanelPnlMode == PanelPnLMode.ChartHistorical)
-					{
-						_cachedPnlDay = "0.00";
-						_cachedPnlMonth = "0.00";
-						_cachedPnlTotal = "0.00";
-					}
-					else
-					{
-						_cachedPnlDay = state.Snapshot.PnLDiaText ?? _cachedPnlDay;
-						_cachedPnlMonth = state.Snapshot.PnLMesText ?? _cachedPnlMonth;
-						_cachedPnlTotal = state.Snapshot.PnLTotalText ?? _cachedPnlTotal;
-					}
-
-					_maxGainStreak = state.MaxGainStreak;
-					_maxLossStreak = state.MaxLossStreak;
-
-					_lastSavedHistoricalTradesCount = state.TradesCountAtSave;
-
-					if (PanelPnlMode == PanelPnLMode.RealtimeOnly)
-					{
-						_rtRealizedTotal = ParseDoubleFlexible(state.Snapshot.PnLTotalText ?? _cachedPnlTotal);
-						_rtRealizedMonth = ParseDoubleFlexible(state.Snapshot.PnLMesText ?? _cachedPnlMonth);
-						_rtRealizedDay = ParseDoubleFlexible(state.Snapshot.PnLDiaText ?? _cachedPnlDay);
-						_rtLastProcessedTradeCount = state.TradesCountAtSave;
-					}
-					else
-					{
-						ClearRealtimePanelStats(resetProcessedCount: true);
-					}
-
-					HVB_PanelStateHub.Set(cacheKey, state.Snapshot);
-					try { panelHelper?.ApplySnapshot(state.Snapshot); } catch { }
+					_cachedPnlDay = "-";
+					_cachedPnlMonth = "-";
+					_cachedPnlTotal = "-";
+					_maxGainStreak = 0;
+					_maxLossStreak = 0;
+					_lastSavedHistoricalTradesCount = -1;
+					ClearRealtimePanelStats(resetProcessedCount: true);
 					return true;
 				}
 			}
@@ -2881,13 +2868,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			snap.DayTradeStatus = status;
 			snap.StatusText = $"{lastEvent} | Mode={mode} | PanelPnL={PanelPnlMode} | Persist={(ShouldPersistPanelCache() ? "On" : "Off")}";
 
-			if (PanelPnlMode == PanelPnLMode.ChartHistorical)
-			{
-				DateTime referenceTime = Time[0];
-				DateTime nowLocalBrt = ConvertToBrasilia(referenceTime).AddMinutes(UserBrtOffsetMinutes);
-				RecalcPnLIfNeeded(nowLocalBrt);
-			}
-
 			snap.PnLDiaText = _cachedPnlDay;
 			snap.PnLMesText = _cachedPnlMonth;
 			snap.PnLTotalText = _cachedPnlTotal;
@@ -2968,7 +2948,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			return snap;
 		}
 
-		private void PublishPanelSnapshot(string context = "")
+		private void PublishPanelSnapshot(string context = "", bool force = false)
 		{
 			if (string.IsNullOrWhiteSpace(cacheKey))
 				return;
@@ -2979,10 +2959,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (panelHelper != null)
 			{
 				var now = DateTime.UtcNow;
-				if ((now - lastPanelPub).TotalSeconds >= Math.Max(1, PanelPublishIntervalSeconds))
+				if (force || (now - lastPanelPub).TotalSeconds >= Math.Max(1, PanelPublishIntervalSeconds))
 				{
 					lastPanelPub = now;
 					panelHelper.ApplySnapshot(snap);
+					PanelLog("PNL_PUBLISH", $"total={_cachedPnlTotal} month={_cachedPnlMonth} day={_cachedPnlDay} source=SystemPerformance context={context}");
 				}
 			}
 
@@ -3037,26 +3018,20 @@ namespace NinjaTrader.NinjaScript.Strategies
 			_lastSavedHistoricalTradesCount = -1;
 		}
 
-		private void RebuildHistoricalStats()
+		private void RebuildPanelPnLFromSystemPerformance(DateTime nowLocalBrt)
 		{
-			if (PanelPnlMode != PanelPnLMode.ChartHistorical) return;
-
 			ResetHistoricalPanelStats();
 
-			var trades = SystemPerformance.AllTrades;
-			if (trades == null) return;
-
-			DateTime nowLocalBrt;
-			try
+			var trades = SystemPerformance?.AllTrades;
+			if (trades == null)
 			{
-				nowLocalBrt = ConvertToBrasilia(Time[0]).AddMinutes(UserBrtOffsetMinutes);
-			}
-			catch
-			{
-				nowLocalBrt = ConvertToBrasilia(DateTime.UtcNow).AddMinutes(UserBrtOffsetMinutes);
+				PanelLog("PNL_REBUILD", "no trades collection available");
+				return;
 			}
 
 			DateTime today = nowLocalBrt.Date;
+			DateTime monthStart = new DateTime(nowLocalBrt.Year, nowLocalBrt.Month, 1);
+			DateTime nextMonthStart = monthStart.AddMonths(1);
 			double cumulative = 0;
 			double peak = 0;
 			int currentWinStreak = 0;
@@ -3064,8 +3039,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			foreach (Trade trade in trades)
 			{
-				if (trade == null) continue;
-				if (trade.Exit == null) continue;
+				if (trade?.Exit == null) continue;
 
 				double pnl = trade.ProfitCurrency;
 				_histTotalTrades++;
@@ -3100,7 +3074,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				DateTime exitBrt = ConvertToBrasilia(trade.Exit.Time).AddMinutes(UserBrtOffsetMinutes);
 				DateTime exitDay = exitBrt.Date;
 				if (exitDay == today) realizedPnlDay += pnl;
-				if (exitDay.Year == today.Year && exitDay.Month == today.Month) _monthPnl += pnl;
+				if (exitDay >= monthStart && exitDay < nextMonthStart) _monthPnl += pnl;
 			}
 
 			_histNetProfit = _histGrossProfit + _histGrossLoss;
@@ -3118,56 +3092,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			_maxGainStreak = _histMaxConsecutiveWins;
 			_maxLossStreak = _histMaxConsecutiveLosses;
+			_lastPnlCalcCount = trades.Count;
+			_lastPnlCalcUtc = DateTime.UtcNow;
 
-			if (trades.Count != _lastSavedHistoricalTradesCount)
-			{
-				_lastSavedHistoricalTradesCount = trades.Count;
-				_panelCacheSaveRequested = true;
-			}
-		}
-
-		private void RecalcPnLIfNeeded(DateTime nowLocalBrt)
-		{
-			try
-			{
-				var all = SystemPerformance.AllTrades;
-				int count = all.Count;
-				DateTime referenceLocal = nowLocalBrt;
-				if (State == State.Historical && CurrentBar >= 0)
-					referenceLocal = ConvertToBrasilia(Time[0]).AddMinutes(UserBrtOffsetMinutes);
-				double total = all.TradesPerformance.Currency.CumProfit;
-				double day = 0;
-				double month = 0;
-				DateTime todayLocal = referenceLocal.Date;
-				DateTime monthStartLocal = new DateTime(referenceLocal.Year, referenceLocal.Month, 1);
-				DateTime nextMonthStartLocal = monthStartLocal.AddMonths(1);
-
-				for (int i = 0; i < count; i++)
-				{
-					var tr = all[i];
-					if (tr?.Exit == null) continue;
-					DateTime exitBrt = ConvertToBrasilia(tr.Exit.Time).AddMinutes(UserBrtOffsetMinutes);
-					DateTime exitDay = exitBrt.Date;
-					if (exitDay == todayLocal) day += tr.ProfitCurrency;
-					if (exitDay >= monthStartLocal && exitDay < nextMonthStartLocal) month += tr.ProfitCurrency;
-				}
-
-				_totalPnlDay = day;
-				_overallPnl = total;
-				_monthPnl = month;
-				realizedPnlDay = day;
-				_lastPnlCalcCount = count;
-				_lastPnlCalcUtc = DateTime.UtcNow;
-			}
-			catch (Exception ex)
-			{
-			}
-			finally
-			{
-				_cachedPnlDay = _totalPnlDay.ToString("0.00");
-				_cachedPnlMonth = _monthPnl.ToString("0.00");
-				_cachedPnlTotal = _overallPnl.ToString("0.00");
-			}
+			string runtimeMode = (State == State.Realtime) ? "Realtime" : "Historical";
+			PanelLog("PNL_REBUILD", $"total={_overallPnl:0.00} month={_monthPnl:0.00} day={_totalPnlDay:0.00} trades={trades.Count} mode={runtimeMode}");
 		}
 
 			private void UpdateUnrealizedAndTotalPnL()
@@ -5529,9 +5458,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		#region Realtime ledger helpers
 
-		// Realtime panel must NEVER inherit cached/historical PnL. It starts blank and only
-		// accumulates executions that happen while this strategy instance is running in realtime
-		// on an eligible account (non-Playback and not Sim101).
+		// Realtime panel must NEVER inherit cached/snapshot PnL. It starts blank, then gets a
+		// deterministic rebuild from SystemPerformance, and only then accumulates executions that
+		// happen while this strategy instance is running in realtime on an eligible account.
 		private void ClearRealtimePanelStats(bool resetProcessedCount)
 		{
 			_rtRealizedTotal = 0;
@@ -5551,6 +5480,16 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				try { _rtLastProcessedTradeCount = SystemPerformance?.AllTrades?.Count ?? 0; } catch { _rtLastProcessedTradeCount = 0; }
 			}
+		}
+
+		private void SyncRealtimeLedgerFromRebuild(DateTime nowLocalBrt)
+		{
+			_rtRealizedTotal = _overallPnl;
+			_rtRealizedMonth = _monthPnl;
+			_rtRealizedDay = realizedPnlDay;
+			_rtBrtDay = nowLocalBrt.Date;
+			_rtBrtYearMonth = _rtBrtDay.Year * 100 + _rtBrtDay.Month;
+			try { _rtLastProcessedTradeCount = SystemPerformance?.AllTrades?.Count ?? 0; } catch { _rtLastProcessedTradeCount = 0; }
 		}
 
 		private bool IsEligibleRealtimeAccount()
@@ -5772,6 +5711,22 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 				var nowBrtDt = ConvertToBrasilia(Time[0]).AddMinutes(UserBrtOffsetMinutes);
 				DateTime calDay = nowBrtDt.Date;
+				if (!_panelPnLInitialized)
+				{
+					if (PanelPnlMode == PanelPnLMode.ChartHistorical)
+					{
+						RebuildPanelPnLFromSystemPerformance(nowBrtDt);
+						PublishPanelSnapshot("PnLInit", force: true);
+						_panelPnLInitialized = true;
+					}
+					else if (PanelPnlMode == PanelPnLMode.RealtimeOnly && State == State.Realtime)
+					{
+						RebuildPanelPnLFromSystemPerformance(nowBrtDt);
+						SyncRealtimeLedgerFromRebuild(nowBrtDt);
+						PublishPanelSnapshot("PnLInit", force: true);
+						_panelPnLInitialized = true;
+					}
+				}
 				ApplyDailyResetIfNeeded(calDay);
 				TryAutoCloseWatchdog(nowBrtDt);
 
@@ -5864,7 +5819,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 					if (PanelPnlMode == PanelPnLMode.ChartHistorical)
 					{
-						RebuildHistoricalStats();
+						RebuildPanelPnLFromSystemPerformance(nowBrtDt);
 					}
 					else
 					{
@@ -5960,7 +5915,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 					if (PanelPnlMode == PanelPnLMode.ChartHistorical)
 					{
-						RebuildHistoricalStats();
+						RebuildPanelPnLFromSystemPerformance(nowBrtDt);
 					}
 					else
 					{
