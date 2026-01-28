@@ -1951,6 +1951,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private string _cachedPnlMonth = "-";
 		private string _cachedPnlTotal = "-";
 		private bool _panelPnLInitialized = false;
+		private DateTime _lastPanelPnlDayBrt = DateTime.MinValue;
 
 		private int _currentStreak = 0;
 		private int _maxGainStreak = 0;
@@ -2988,6 +2989,22 @@ namespace NinjaTrader.NinjaScript.Strategies
 		#endregion
 
 		#region PnL + streak recalc
+		private void ResetDailyPanelPnLIfNewDay(DateTime nowLocalBrt)
+		{
+			DateTime today = nowLocalBrt.Date;
+
+			if (_lastPanelPnlDayBrt == today)
+				return;
+
+			realizedPnlDay = 0;
+			_totalPnlDay = 0;
+			_cachedPnlDay = "0.00";
+
+			_lastPanelPnlDayBrt = today;
+
+			PanelLog("PNL_DAY_RESET", $"day={today:yyyy-MM-dd}");
+		}
+
 		private void ResetHistoricalPanelStats()
 		{
 			_overallPnl = 0;
@@ -3035,6 +3052,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			DateTime today = nowLocalBrt.Date;
 			DateTime monthStart = new DateTime(nowLocalBrt.Year, nowLocalBrt.Month, 1);
 			DateTime nextMonthStart = monthStart.AddMonths(1);
+			realizedPnlDay = 0;
 			double cumulative = 0;
 			double peak = 0;
 			int currentWinStreak = 0;
@@ -3086,6 +3104,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			_cachedPnlDay = realizedPnlDay.ToString("0.00");
 			_cachedPnlMonth = _monthPnl.ToString("0.00");
 			_cachedPnlTotal = _overallPnl.ToString("0.00");
+			_lastPanelPnlDayBrt = today;
 
 			if (_histTotalTrades > 0)
 			{
@@ -5714,6 +5733,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (BarsInProgress != 0) return;
 
 				var nowBrtDt = ConvertToBrasilia(Time[0]).AddMinutes(UserBrtOffsetMinutes);
+				ResetDailyPanelPnLIfNewDay(nowBrtDt);
 				DateTime calDay = nowBrtDt.Date;
 				if (!_panelPnLInitialized)
 				{
