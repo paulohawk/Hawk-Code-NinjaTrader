@@ -74,7 +74,9 @@ namespace NinjaTrader.NinjaScript
 			public double? PendingStopPrice { get; set; }
 			public double? PendingTargetPrice { get; set; }
 			public int? PendingQty { get; set; }
+			public bool? OverlayPenalty { get; set; }
 			public string StatusText { get; set; }
+			public string AttentionText { get; set; }
 		}
 
 		private static readonly object _lock = new object();
@@ -130,6 +132,7 @@ namespace NinjaTrader.NinjaScript
 		private readonly Brush LightGrayBrush = Brushes.LightGray;
 		private readonly Brush InactiveBulletBrush = new SolidColorBrush(Color.FromRgb(150, 150, 150));
 		private readonly Brush MainOnBrush = new SolidColorBrush(Color.FromRgb(60, 200, 120));
+		private readonly Brush StopLossBrush = new SolidColorBrush(Color.FromRgb(220, 80, 80));
 
 		public string PanelTitle { get; set; } = "Hawk";
 
@@ -171,6 +174,12 @@ namespace NinjaTrader.NinjaScript
 		private TextBlock _txtMaxGain;
 		private TextBlock _txtMaxLoss;
 
+		private Grid _riskWarningRow;
+		private WpfEllipse _riskWarningBullet;
+		private TextBlock _riskWarningLabel;
+		private TextBlock _riskWarningLinePrimary;
+		private TextBlock _riskWarningLineSecondary;
+
 		private TextBlock _lblDayResum;
 		private WpfEllipse _bulletDayResum;
 		private TextBlock _drSentence;
@@ -179,6 +188,11 @@ namespace NinjaTrader.NinjaScript
 		private bool _beEnabled = false;
 		private bool _mainEnabled = false;
 		private double _baseTitleSize = (10.0 + 4) * 0.9;
+
+		private const double RiskWarningBulletSize = 16;
+		private const double RiskWarningLabelSize = 16;
+		private const double RiskWarningTextPrimarySize = 11;
+		private const double RiskWarningTextSecondarySize = 10;
 
 		private double _lastResponsiveWidth = 0;
 		private DateTime _lastResponsiveUpdate = DateTime.MinValue;
@@ -194,6 +208,17 @@ namespace NinjaTrader.NinjaScript
 		}
 
 		private WpfEllipse CreateBullet(double size = 8) => new WpfEllipse { Width = size, Height = size, Fill = InactiveBulletBrush, Margin = new Thickness(0, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center };
+		private WpfEllipse CreateRiskWarningBullet(double size)
+		{
+			return new WpfEllipse
+			{
+				Width = size,
+				Height = size,
+				Fill = Brushes.Gray,
+				Margin = new Thickness(0, 0, 6, 0),
+				VerticalAlignment = VerticalAlignment.Center
+			};
+		}
 
 		private void BuildUi()
 		{
@@ -409,6 +434,57 @@ namespace NinjaTrader.NinjaScript
 			endDayRow.Children.Add(endDayLeft); Grid.SetColumn(endDayLeft, 0);
 			main.Children.Add(endDayRow);
 
+			// Row: Risk Warning
+			_riskWarningRow = new Grid { Margin = new Thickness(0, 8, 0, 2) };
+			_riskWarningRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+			_riskWarningRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+			_riskWarningRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+			var wrap = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Center };
+			var head = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
+
+			_riskWarningBullet = CreateRiskWarningBullet(RiskWarningBulletSize);
+			_riskWarningLabel = new TextBlock
+			{
+				Text = "Atenção",
+				FontSize = RiskWarningLabelSize,
+				FontWeight = FontWeights.Bold,
+				Foreground = StopLossBrush,
+				VerticalAlignment = VerticalAlignment.Center
+			};
+			head.Children.Add(_riskWarningBullet);
+			head.Children.Add(_riskWarningLabel);
+
+			_riskWarningLinePrimary = new TextBlock
+			{
+				Text = "automação ligada fora do horário operacional.",
+				FontSize = RiskWarningTextPrimarySize,
+				Foreground = StopLossBrush,
+				TextAlignment = TextAlignment.Center,
+				HorizontalAlignment = HorizontalAlignment.Center,
+				Margin = new Thickness(0, 2, 0, 0)
+			};
+
+			_riskWarningLineSecondary = new TextBlock
+			{
+				Text = "monitore possíveis falhas de stop e alvo.",
+				FontSize = RiskWarningTextSecondarySize,
+				Foreground = StopLossBrush,
+				FontStyle = FontStyles.Italic,
+				TextAlignment = TextAlignment.Center,
+				HorizontalAlignment = HorizontalAlignment.Center,
+				Margin = new Thickness(0, 2, 0, 0)
+			};
+
+			wrap.Children.Add(head);
+			wrap.Children.Add(_riskWarningLinePrimary);
+			wrap.Children.Add(_riskWarningLineSecondary);
+
+			Grid.SetColumn(wrap, 0);
+			Grid.SetColumnSpan(wrap, 3);
+			_riskWarningRow.Children.Add(wrap);
+			main.Children.Add(_riskWarningRow);
+
 			var dayTitleRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, RowSpacing) };
 			_bulletDayResum = CreateBullet(8);
 			_lblDayResum = new TextBlock
@@ -447,6 +523,7 @@ namespace NinjaTrader.NinjaScript
 			Children.Add(main);
 
 			SetEndDayLabel(null);
+			SetRiskWarningText(false, "sistema ativo e monitorando condições de mercado.", "");
 			UpdateBulletsAfterStateChange();
 		}
 
@@ -605,6 +682,28 @@ namespace NinjaTrader.NinjaScript
 			if (_lblDayResum != null) _lblDayResum.Foreground = color;
 		}
 
+		public void SetRiskWarningText(bool isPenalty, string statusText, string attentionText)
+		{
+			bool isAttention = isPenalty;
+
+			_riskWarningLabel.Text = isAttention ? "Atenção" : "Status";
+
+			string line1 = isAttention ? attentionText : statusText;
+			string line2 = isAttention ? "monitore possíveis falhas de stop e alvo." : "";
+
+			_riskWarningLinePrimary.Text = string.IsNullOrWhiteSpace(line1) ? "" : "- " + line1;
+			_riskWarningLineSecondary.Text = string.IsNullOrWhiteSpace(line2) ? "" : "- " + line2;
+
+			_riskWarningLabel.Foreground = isAttention ? StopLossBrush : Brushes.LightGreen;
+			_riskWarningLinePrimary.Foreground = isAttention ? StopLossBrush : Brushes.LightGreen;
+			_riskWarningLineSecondary.Foreground = isAttention ? StopLossBrush : Brushes.LightGreen;
+
+			if (_riskWarningBullet != null)
+				_riskWarningBullet.Fill = isAttention ? StopLossBrush : Brushes.LightGreen;
+
+			_riskWarningLineSecondary.Visibility = isAttention ? Visibility.Visible : Visibility.Collapsed;
+		}
+
 		public void SetDayResum(
 			string status,
 			int? qty,
@@ -676,6 +775,7 @@ namespace NinjaTrader.NinjaScript
 				_txtMaxLoss.Text = "Max loss: -";
 
 				SetDayResum(null, null, null, null, null, null, null);
+				SetRiskWarningText(false, "sistema ativo e monitorando condições de mercado.", "");
 			}
 			catch { }
 		}
@@ -1487,6 +1587,13 @@ namespace NinjaTrader.NinjaScript
 					maxLoss
 				);
 
+				bool isPenalty = snap.OverlayPenalty == true;
+				embeddedControl.SetRiskWarningText(
+					isPenalty,
+					snap.StatusText ?? "",
+					snap.AttentionText ?? ""
+				);
+
 				embeddedControl.SetStreaks(maxGain, maxLoss);
 
 				embeddedControl.ForceSetBEEnabled(snap.BEEnabled ?? false);
@@ -2210,6 +2317,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					ResetExecutionCycleGuard("state_realtime");
 
 					EnsurePanelInitializedOnce();
+					PublishPanelSnapshot("OverlayMsgInit", force: true);
 					var nowBrt = ConvertToBrasilia(DateTime.UtcNow).AddMinutes(UserBrtOffsetMinutes);
 					ChartControl?.Dispatcher.BeginInvoke(new Action(() =>
 					{
@@ -3162,9 +3270,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 			snap.StrategyKey = cacheKey;
 
 			string status = statusOverride ?? dayStatus;
-			var mode = GetExitMode();
 			snap.DayTradeStatus = status;
-			snap.StatusText = $"{lastEvent} | Mode={mode} | PanelPnL={PanelPnlMode} | Persist={(ShouldPersistPanelCache() ? "On" : "Off")}";
+			snap.OverlayPenalty = overlayPenaltyOnEnable;
+			snap.StatusText = "sistema ativo e monitorando condições de mercado.";
+			snap.AttentionText = "automação ligada fora do horário operacional.";
 
 			snap.PnLDiaText = _cachedPnlDay;
 			snap.PnLMesText = _cachedPnlMonth;
