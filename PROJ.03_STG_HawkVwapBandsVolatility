@@ -2289,8 +2289,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			bool insideOperationalWindow = nowBrt >= overlayCutoff && nowBrt <= overlayEnd;
 
-			overlayPenaltyCaptured = true;
-			overlayPenaltyTradingDay = tradingDay;
 			overlayStartCached = overlayCutoff;
 			overlayEndCached = overlayEnd;
 			overlayCutoffCached = overlayCutoff;
@@ -2298,6 +2296,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			if (insideOperationalWindow)
 			{
+				overlayPenaltyCaptured = true;
+				overlayPenaltyTradingDay = tradingDay;
 				ShowRiskOverlay(recommendedCutoff);
 			}
 		}
