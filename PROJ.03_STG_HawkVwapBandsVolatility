@@ -189,10 +189,10 @@ namespace NinjaTrader.NinjaScript
 		private bool _mainEnabled = false;
 		private double _baseTitleSize = (10.0 + 4) * 0.9;
 
-		private const double RiskWarningBulletSize = 16;
-		private const double RiskWarningLabelSize = 16;
-		private const double RiskWarningTextPrimarySize = 11;
-		private const double RiskWarningTextSecondarySize = 10;
+		private const double RiskWarningBulletSize = 14.0;
+		private const double RiskWarningLabelSize = 12.5;
+		private const double RiskWarningTextPrimarySize = 11.5;
+		private const double RiskWarningTextSecondarySize = 10.5;
 
 		private double _lastResponsiveWidth = 0;
 		private DateTime _lastResponsiveUpdate = DateTime.MinValue;
@@ -401,6 +401,22 @@ namespace NinjaTrader.NinjaScript
 
 			main.Children.Add(pnlRow);
 
+			var endDayRow = new Grid { Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 1.5) };
+			endDayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+			endDayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+			endDayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+			var endDayLeft = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Left };
+			var endDayLabelWithBullet = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
+			_bulletEndDay = CreateBullet();
+			var endTxt = new TextBlock { Text = "EndDay", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center };
+			endDayLabelWithBullet.Children.Add(_bulletEndDay); endDayLabelWithBullet.Children.Add(endTxt);
+			endDayLeft.Children.Add(endDayLabelWithBullet);
+			_tbEndDayValue = new TextBlock { Text = "-", Foreground = Brushes.Gray, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 6, 0) };
+			endDayLeft.Children.Add(_tbEndDayValue);
+			endDayRow.Children.Add(endDayLeft); Grid.SetColumn(endDayLeft, 0);
+			main.Children.Add(endDayRow);
+
 			var streakRow = new Grid { Margin = new Thickness(0, RowSpacing, 0, RowSpacing) };
 			streakRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 			streakRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -418,29 +434,18 @@ namespace NinjaTrader.NinjaScript
 
 			main.Children.Add(streakRow);
 
-			var endDayRow = new Grid { Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 1.5) };
-			endDayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-			endDayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-			endDayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-			var endDayLeft = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Left };
-			var endDayLabelWithBullet = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
-			_bulletEndDay = CreateBullet();
-			var endTxt = new TextBlock { Text = "EndDay", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center };
-			endDayLabelWithBullet.Children.Add(_bulletEndDay); endDayLabelWithBullet.Children.Add(endTxt);
-			endDayLeft.Children.Add(endDayLabelWithBullet);
-			_tbEndDayValue = new TextBlock { Text = "-", Foreground = Brushes.Gray, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 6, 0) };
-			endDayLeft.Children.Add(_tbEndDayValue);
-			endDayRow.Children.Add(endDayLeft); Grid.SetColumn(endDayLeft, 0);
-			main.Children.Add(endDayRow);
-
 			// Row: Risk Warning
-			_riskWarningRow = new Grid { Margin = new Thickness(0, 8, 0, 2) };
+			_riskWarningRow = new Grid { Margin = new Thickness(0, 4, 0, 2) };
 			_riskWarningRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 			_riskWarningRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 			_riskWarningRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-			var wrap = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Center };
+			var wrap = new StackPanel
+			{
+				Orientation = Orientation.Vertical,
+				HorizontalAlignment = HorizontalAlignment.Center,
+				VerticalAlignment = VerticalAlignment.Center
+			};
 			var head = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
 
 			_riskWarningBullet = CreateRiskWarningBullet(RiskWarningBulletSize);
@@ -448,7 +453,7 @@ namespace NinjaTrader.NinjaScript
 			{
 				Text = "Atenção",
 				FontSize = RiskWarningLabelSize,
-				FontWeight = FontWeights.Bold,
+				FontWeight = FontWeights.SemiBold,
 				Foreground = StopLossBrush,
 				VerticalAlignment = VerticalAlignment.Center
 			};
