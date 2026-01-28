@@ -3018,16 +3018,19 @@ namespace NinjaTrader.NinjaScript.Strategies
 			_lastSavedHistoricalTradesCount = -1;
 		}
 
-		private void RebuildPanelPnLFromSystemPerformance(DateTime nowLocalBrt)
+		private bool RebuildPanelPnLFromSystemPerformance(DateTime nowLocalBrt)
 		{
-			ResetHistoricalPanelStats();
-
 			var trades = SystemPerformance?.AllTrades;
 			if (trades == null)
 			{
 				PanelLog("PNL_REBUILD", "no trades collection available");
-				return;
+				return false;
 			}
+
+			if (State == State.Historical && _lastPnlCalcCount == trades.Count)
+				return false;
+
+			ResetHistoricalPanelStats();
 
 			DateTime today = nowLocalBrt.Date;
 			DateTime monthStart = new DateTime(nowLocalBrt.Year, nowLocalBrt.Month, 1);
@@ -3097,6 +3100,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			string runtimeMode = (State == State.Realtime) ? "Realtime" : "Historical";
 			PanelLog("PNL_REBUILD", $"total={_overallPnl:0.00} month={_monthPnl:0.00} day={_totalPnlDay:0.00} trades={trades.Count} mode={runtimeMode}");
+			return true;
 		}
 
 			private void UpdateUnrealizedAndTotalPnL()
@@ -5715,7 +5719,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 				{
 					if (PanelPnlMode == PanelPnLMode.ChartHistorical)
 					{
-						RebuildPanelPnLFromSystemPerformance(nowBrtDt);
+						if (RebuildPanelPnLFromSystemPerformance(nowBrtDt))
+							PublishPanelSnapshot("PnLRecalc", force: true);
 						PublishPanelSnapshot("PnLInit", force: true);
 						_panelPnLInitialized = true;
 					}
@@ -5819,7 +5824,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 					if (PanelPnlMode == PanelPnLMode.ChartHistorical)
 					{
-						RebuildPanelPnLFromSystemPerformance(nowBrtDt);
+						if (RebuildPanelPnLFromSystemPerformance(nowBrtDt))
+							PublishPanelSnapshot("PnLRecalc", force: true);
 					}
 					else
 					{
@@ -5915,7 +5921,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 					if (PanelPnlMode == PanelPnLMode.ChartHistorical)
 					{
-						RebuildPanelPnLFromSystemPerformance(nowBrtDt);
+						if (RebuildPanelPnLFromSystemPerformance(nowBrtDt))
+							PublishPanelSnapshot("PnLRecalc", force: true);
 					}
 					else
 					{
