@@ -2056,10 +2056,75 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private void ApplyPresetSettings()
 		{
-			if (!EnableV4)
-				return;
+			switch (GetActivePreset())
+			{
+				case PresetProfile.V1:
+					ApplyV1Defaults();
+					break;
+				case PresetProfile.V2:
+					ApplyV2Defaults();
+					break;
+				case PresetProfile.V3:
+					ApplyV3Defaults();
+					break;
+				case PresetProfile.V4:
+					ApplyV4Settings();
+					break;
+			}
+		}
 
-			_barsPeriodMinutes = 5;
+		private void ApplyV1Defaults()
+		{
+			NumDeviations = 5;
+			QuantityPerGridOrder = 2;
+			EnableSlowStochFilter = true;
+			EnableCloseBarFilter = false;
+			CloseBarLimitOffsetTicks = 5;
+			StochPeriodK = 14;
+			StochPeriodD = 3;
+			StochLowerThreshold = 10;
+			StochUpperThreshold = 90;
+			EnableGrid1 = true;
+			EnableGrid2 = true;
+			EnableGrid3 = false;
+			EnableGrid4 = false;
+			EnableGrid5 = false;
+			EntryOffsetTicks = 10;
+			RepriceEveryNBars = 1;
+			DisableRepriceWhenFlat = false;
+			RepriceThresholdTicks = 5;
+			AggressiveGridMode = false;
+			DailyProfitLimitUsd = 600;
+			DailyLossLimitUsd = 600;
+			TradeProfitTargetUsd = 600;
+			TradeStopLossUsd = 300;
+			EnableStopLoss = false;
+			EnableFinancialStop = true;
+			FinancialStopUsd = 300;
+			ExitAtVwapEnabled = false;
+			ExitAtOppositeBandEnabled = false;
+			UseFixedBands = false;
+			UseFiboBands = false;
+		}
+
+		private void ApplyV2Defaults()
+		{
+			ApplyV1Defaults();
+		}
+
+		private void ApplyV3Defaults()
+		{
+			ApplyV1Defaults();
+			QuantityPerGridOrder = 3;
+			DailyProfitLimitUsd = 900;
+			DailyLossLimitUsd = 900;
+			TradeProfitTargetUsd = 900;
+			TradeStopLossUsd = 450;
+			FinancialStopUsd = 450;
+		}
+
+		private void ApplyV4Settings()
+		{
 			NumDeviations = 2;
 			QuantityPerGridOrder = 1;
 			EnableSlowStochFilter = false;
@@ -2293,7 +2358,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private int tradesClosedTodayBuy = 0;
 		private int tradesClosedTodaySell = 0;
 		private DateTime tradeCountersBrtDate = DateTime.MinValue;
-		private int _barsPeriodMinutes = 30;
 		private bool cycleOpen = false;
 		private Regime cycleDirection = Regime.None;
 		private double _cycleRealizedAtEntry = 0;
@@ -2394,7 +2458,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					_brtTimeZone = GetBrasiliaTimeZone();
 					_usEasternTimeZone = GetUsEasternTimeZone();
 
-					AddDataSeries(BarsPeriodType.Minute, EnableV4 ? Math.Max(1, _barsPeriodMinutes) : 1);
+					AddDataSeries(BarsPeriodType.Minute, 1);
 
 					stopHHmmss = GetStopNewTradesHhmmss(ConvertToBrasilia(DateTime.UtcNow).Date);
 					flattenHHmmss = ParseHms(FlattenTimeBrt);
