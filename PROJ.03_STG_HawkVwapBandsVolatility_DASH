@@ -1791,15 +1791,50 @@ namespace NinjaTrader.NinjaScript.Strategies
 	public class HawkVwapBandsVolatility : Strategy
 	{
 		#region Inputs (public)
+		[NinjaScriptProperty, Display(Name = "Enable V1", GroupName = "Presets", Order = 1)]
+		public bool EnableV1 { get; set; } = true;
+
+		[NinjaScriptProperty, Display(Name = "Enable V2", GroupName = "Presets", Order = 2)]
+		public bool EnableV2 { get; set; } = false;
+
+		[NinjaScriptProperty, Display(Name = "Enable V3", GroupName = "Presets", Order = 3)]
+		public bool EnableV3 { get; set; } = false;
+
+		[NinjaScriptProperty, Display(Name = "Enable V4", GroupName = "Presets", Order = 4)]
+		public bool EnableV4 { get; set; } = false;
+
+		[NinjaScriptProperty, Display(Name = "Alvo Financeiro (USD)", GroupName = "V4", Order = 1)]
+		public double V4TradeProfitTargetUsd { get; set; } = 500;
+
+		[NinjaScriptProperty, Display(Name = "Stop Financeiro (USD)", GroupName = "V4", Order = 2)]
+		public double V4FinancialStopUsd { get; set; } = 500;
+
+		[NinjaScriptProperty, Display(Name = "Saída na VWAP Central", GroupName = "V4", Order = 3)]
+		public bool V4ExitAtVwapEnabled { get; set; } = true;
+
+		[NinjaScriptProperty, Display(Name = "Saída na Banda Oposta", GroupName = "V4", Order = 4)]
+		public bool V4ExitAtOppositeBandEnabled { get; set; } = false;
+
+		[NinjaScriptProperty, Display(Name = "VWAP Fixed", GroupName = "V4", Order = 5)]
+		public bool V4UseFixedBands { get; set; } = false;
+
+		[NinjaScriptProperty, Display(Name = "VWAP Fibo", GroupName = "V4", Order = 6)]
+		public bool V4UseFiboBands { get; set; } = false;
+
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Start Time BRT (HH:mm[:ss])", GroupName = "Horas", Order = 1)]
 		public string StartTimeBrt { get; set; } = "10:00:00";
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Stop New Trades Time BRT (HH:mm[:ss])", GroupName = "Horas", Order = 2)]
 		public string StopNewTradesTimeBrt { get; set; } = "16:30:00";
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Flatten Time BRT (HH:mm[:ss])", GroupName = "Horas", Order = 3)]
 		public string FlattenTimeBrt { get; set; } = "17:00:00";
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "User BRT Offset Minutes", GroupName = "Horas", Order = 4)]
 		public int UserBrtOffsetMinutes { get; set; } = 0;
 
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Ignore Trading Window in Strategy Analyzer", GroupName = "Horas", Order = 99)]
 		public bool IgnoreWindowInAnalyzer { get; set; } = true;
 
@@ -1807,70 +1842,97 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[Display(Name = "Enable Operational Log", Order = 1, GroupName = "Operational")]
 		public bool EnableOperationalLog { get; set; } = true;
 
+		[Browsable(false)]
 		[NinjaScriptProperty]
 		[Display(Name = "Enable AutoClose Account Flatten Fallback", Order = 2, GroupName = "Operational")]
 		public bool EnableAutoCloseAccountFallback { get; set; } = false;
 
+		[Browsable(false)]
 		[NinjaScriptProperty, Range(1, 5)]
 		[Display(Name = "Number of deviations", GroupName = "Bandas", Order = 10)]
 		public int NumDeviations { get; set; } = 5;
 
-		[NinjaScriptProperty, Display(Name = "Use Fibo Bands", GroupName = "Bandas", Order = 11)]
+		[Browsable(false)]
+		[NinjaScriptProperty, Display(Name = "VWAP Fibo", GroupName = "Bandas", Order = 11)]
 		public bool UseFiboBands { get; set; } = false;
 
-		[NinjaScriptProperty, Display(Name = "Use Fixed Bands (%)", GroupName = "Bandas", Order = 12)]
+		[Browsable(false)]
+		[NinjaScriptProperty, Display(Name = "VWAP Fixed", GroupName = "Bandas", Order = 12)]
 		public bool UseFixedBands { get; set; } = false;
 
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Fixed 1 (%)", GroupName = "Bandas", Order = 13)]
 		public double Fixed1Pct { get; set; } = 0.5;
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Fixed 2 (%)", GroupName = "Bandas", Order = 14)]
 		public double Fixed2Pct { get; set; } = 1.0;
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Fixed 3 (%)", GroupName = "Bandas", Order = 15)]
 		public double Fixed3Pct { get; set; } = 1.5;
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Fixed 4 (%)", GroupName = "Bandas", Order = 16)]
 		public double Fixed4Pct { get; set; } = 2.0;
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Fixed 5 (%)", GroupName = "Bandas", Order = 17)]
 		public double Fixed5Pct { get; set; } = 2.5;
 
+		[Browsable(false)]
 		[NinjaScriptProperty, Range(0, 10)]
 		[Display(Name = "Touch Margin (ticks)", GroupName = "Bandas", Order = 18)]
 		public int TouchMarginTicks { get; set; } = 1;
 
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Enable Slow Stoch Filter", GroupName = "Filtros", Order = 1)]
 		public bool EnableSlowStochFilter { get; set; } = false;
 
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Stoch Period K", GroupName = "Filtros", Order = 2)]
 		public int StochPeriodK { get; set; } = 14;
 
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Stoch Period D", GroupName = "Filtros", Order = 3)]
 		public int StochPeriodD { get; set; } = 3;
 
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Stoch Lower Threshold", GroupName = "Filtros", Order = 4)]
 		public double StochLowerThreshold { get; set; } = 10;
 
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Stoch Upper Threshold", GroupName = "Filtros", Order = 5)]
 		public double StochUpperThreshold { get; set; } = 90;
 
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Enable Close Bar", GroupName = "Filtros", Order = 6)]
 		public bool EnableCloseBarFilter { get; set; } = false;
 
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Close Bar Offset (ticks)", GroupName = "Filtros", Order = 7)]
 		public int CloseBarLimitOffsetTicks { get; set; } = 5;
 
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Enable Grid 1", GroupName = "Grids", Order = 1)] public bool EnableGrid1 { get; set; } = true;
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Enable Grid 2", GroupName = "Grids", Order = 2)] public bool EnableGrid2 { get; set; } = true;
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Enable Grid 3", GroupName = "Grids", Order = 3)] public bool EnableGrid3 { get; set; } = false;
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Enable Grid 4", GroupName = "Grids", Order = 4)] public bool EnableGrid4 { get; set; } = false;
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Enable Grid 5", GroupName = "Grids", Order = 5)] public bool EnableGrid5 { get; set; } = false;
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Entry Offset (ticks)", GroupName = "Grids", Order = 6)] public int EntryOffsetTicks { get; set; } = 10;
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Quantity per Grid Order", GroupName = "Grids", Order = 7)] public int QuantityPerGridOrder { get; set; } = 1;
 
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Reprice every N bars", GroupName = "Grids", Order = 8)]
 		public int RepriceEveryNBars { get; set; } = 1;
 
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Disable reprice when flat", GroupName = "Grids", Order = 9)]
 		public bool DisableRepriceWhenFlat { get; set; } = false;
 
+		[Browsable(false)]
 		[NinjaScriptProperty, Range(1, 50)]
 		[Display(Name = "Reprice Threshold (ticks)", GroupName = "Grids", Order = 10)]
 		public int RepriceThresholdTicks { get; set; } = 5;
@@ -1878,68 +1940,90 @@ namespace NinjaTrader.NinjaScript.Strategies
 		// Option A: AggressiveGridMode exists ONLY here (property).
 		// Default=false => each band fills at most once per cycle.
 		// true => legacy behavior (allow repeats).
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Aggressive Grid Mode (allow repeat fills per band)", GroupName = "Grids", Order = 11)]
 		public bool AggressiveGridMode { get; set; } = false;
 
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Meta máxima do DIA (USD)", GroupName = "Limites", Order = 1)] public double DailyProfitLimitUsd { get; set; } = 200;
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Perda máxima do DIA (USD)", GroupName = "Limites", Order = 2)] public double DailyLossLimitUsd { get; set; } = 300;
 
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Disable Daily Limits in Strategy Analyzer", GroupName = "Limites", Order = 99)]
 		public bool DisableDailyLimitsInStrategyAnalyzer { get; set; } = true;
 
-		[NinjaScriptProperty, Display(Name = "Saída na VWAP central (modo exclusivo)", GroupName = "Saída", Order = 1)]
+		[Browsable(false)]
+		[NinjaScriptProperty, Display(Name = "Saída na VWAP Central", GroupName = "Saída", Order = 1)]
 		public bool ExitAtVwapEnabled { get; set; } = true;
 
-		[NinjaScriptProperty, Display(Name = "Saída na Banda Oposta (modo exclusivo)", GroupName = "Saída", Order = 2)]
+		[Browsable(false)]
+		[NinjaScriptProperty, Display(Name = "Saída na Banda Oposta", GroupName = "Saída", Order = 2)]
 		public bool ExitAtOppositeBandEnabled { get; set; } = false;
 
+		[Browsable(false)]
 		[NinjaScriptProperty, Range(1, 5)]
 		[Display(Name = "Opposite Band Exit Deviation", GroupName = "Saída", Order = 3)]
 		public int OppBandExitDeviation { get; set; } = 1;
 
-		[NinjaScriptProperty, Display(Name = "Alvo por TRADE/CICLO (USD)", GroupName = "Saída", Order = 4)]
+		[Browsable(false)]
+		[NinjaScriptProperty, Display(Name = "Alvo Financeiro (USD)", GroupName = "Saída", Order = 4)]
 		public double TradeProfitTargetUsd { get; set; } = 200;
 
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Stop por TRADE/CICLO (USD)", GroupName = "Saída", Order = 5)]
 		public double TradeStopLossUsd { get; set; } = 200;
 
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Enable Financial Stop (USD->preço)", GroupName = "Stops", Order = 3)]
 		public bool EnableFinancialStop { get; set; } = false;
 
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Financial Stop (USD)", GroupName = "Stops", Order = 4)]
 		public double FinancialStopUsd { get; set; } = 500;
 
+		[Browsable(false)]
 		[NinjaScriptProperty]
 		[Display(Name="Enable BreakEven", Order=1, GroupName="Risk Management")]
 		public bool EnableBreakEven { get; set; } = true;
 
+		[Browsable(false)]
 		[NinjaScriptProperty]
 		[Display(Name="BreakEven Trigger (risk multiple)", Order=2, GroupName="Risk Management")]
 		public double BreakEvenTriggerRiskMultiple { get; set; } = 0.5;
 
+		[Browsable(false)]
 		[NinjaScriptProperty]
 		[Display(Name="BreakEven Offset (ticks)", Order=3, GroupName="Risk Management")]
 		public int BreakEvenOffsetTicks { get; set; } = 1;
 
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Panel Title", GroupName = "Painel", Order = 1)]
 		public string PanelTitle { get; set; } = "HawkVwapBandsVolatility";
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "InstanceTag (opcional)", GroupName = "Painel", Order = 2)]
 		public string InstanceTag { get; set; } = "";
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Panel Publish Interval (s)", GroupName = "Painel", Order = 4)]
 		public int PanelPublishIntervalSeconds { get; set; } = 1;
 
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Panel PnL Mode", GroupName = "Painel", Order = 5)]
 		public PanelPnLMode PanelPnlMode { get; set; } = PanelPnLMode.RealtimeOnly;
 
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Limite de operações diárias (0 = ilimitado)", GroupName = "Trade Limits", Order = 1)]
 		public int MaxTradesPerDay { get; set; } = 0;
 
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Ativar sentido de posição", GroupName = "Trade Limits", Order = 2)]
 		public bool EnableTradeDirectionLimits { get; set; } = false;
 
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Máx operações BUY por dia (0 = ilimitado)", GroupName = "Trade Limits", Order = 3)]
 		public int MaxBuysPerDay { get; set; } = 0;
 
+		[Browsable(false)]
 		[NinjaScriptProperty, Display(Name = "Máx operações SELL por dia (0 = ilimitado)", GroupName = "Trade Limits", Order = 4)]
 		public int MaxSellsPerDay { get; set; } = 0;
 
@@ -1953,6 +2037,91 @@ namespace NinjaTrader.NinjaScript.Strategies
 		#endregion
 
 		#region Internals
+		private enum PresetProfile
+		{
+			V1,
+			V2,
+			V3,
+			V4
+		}
+
+		private PresetProfile GetActivePreset()
+		{
+			if (EnableV4) return PresetProfile.V4;
+			if (EnableV1) return PresetProfile.V1;
+			if (EnableV2) return PresetProfile.V2;
+			if (EnableV3) return PresetProfile.V3;
+			return PresetProfile.V1;
+		}
+
+		private void ApplyPresetSettings()
+		{
+			if (!EnableV4)
+				return;
+
+			_barsPeriodMinutes = 5;
+			NumDeviations = 2;
+			QuantityPerGridOrder = 1;
+			EnableSlowStochFilter = false;
+			EnableCloseBarFilter = false;
+			CloseBarLimitOffsetTicks = 5;
+			DailyProfitLimitUsd = 500;
+			DailyLossLimitUsd = 500;
+			TradeProfitTargetUsd = V4TradeProfitTargetUsd;
+			TradeStopLossUsd = 0;
+			EnableStopLoss = false;
+			EnableFinancialStop = true;
+			FinancialStopUsd = V4FinancialStopUsd;
+			ExitAtVwapEnabled = V4ExitAtVwapEnabled;
+			ExitAtOppositeBandEnabled = V4ExitAtOppositeBandEnabled;
+			UseFixedBands = V4UseFixedBands;
+			UseFiboBands = V4UseFiboBands;
+
+			if (UseFiboBands && UseFixedBands)
+			{
+				UseFixedBands = false;
+			}
+
+			if (ExitAtOppositeBandEnabled && ExitAtVwapEnabled)
+			{
+				ExitAtVwapEnabled = false;
+			}
+		}
+
+		private void EnforcePresetExclusivity()
+		{
+			if (EnableV4)
+			{
+				EnableV1 = false;
+				EnableV2 = false;
+				EnableV3 = false;
+				return;
+			}
+
+			if (EnableV1)
+			{
+				EnableV2 = false;
+				EnableV3 = false;
+				EnableV4 = false;
+				return;
+			}
+
+			if (EnableV2)
+			{
+				EnableV1 = false;
+				EnableV3 = false;
+				EnableV4 = false;
+				return;
+			}
+
+			if (EnableV3)
+			{
+				EnableV1 = false;
+				EnableV2 = false;
+				EnableV4 = false;
+			}
+		}
+
 		private struct SignalDecision
 		{
 			public bool RegimeChanged;
@@ -2124,6 +2293,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private int tradesClosedTodayBuy = 0;
 		private int tradesClosedTodaySell = 0;
 		private DateTime tradeCountersBrtDate = DateTime.MinValue;
+		private int _barsPeriodMinutes = 30;
 		private bool cycleOpen = false;
 		private Regime cycleDirection = Regime.None;
 		private double _cycleRealizedAtEntry = 0;
@@ -2218,10 +2388,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 				}
 				else if (State == State.Configure)
 				{
+					EnforcePresetExclusivity();
+					ApplyPresetSettings();
+
 					_brtTimeZone = GetBrasiliaTimeZone();
 					_usEasternTimeZone = GetUsEasternTimeZone();
 
-					AddDataSeries(BarsPeriodType.Minute, 1);
+					AddDataSeries(BarsPeriodType.Minute, EnableV4 ? Math.Max(1, _barsPeriodMinutes) : 1);
 
 					stopHHmmss = GetStopNewTradesHhmmss(ConvertToBrasilia(DateTime.UtcNow).Date);
 					flattenHHmmss = ParseHms(FlattenTimeBrt);
