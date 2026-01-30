@@ -52,9 +52,14 @@ namespace NinjaTrader.NinjaScript
 			public string PnLDiaText { get; set; }
 			public string PnLMesText { get; set; }
 			public string PnLTotalText { get; set; }
+			public double PnLDia { get; set; }
+			public double PnLMes { get; set; }
+			public double PnLTotal { get; set; }
 			public string TakeDollarText { get; set; }
 			public int? MaxGainStreak { get; set; }
 			public int? MaxLossStreak { get; set; }
+			public double MaxWinTrade { get; set; }
+			public double MaxLossTrade { get; set; }
 			public string EndDayText { get; set; }
 			public bool? MainEnabled { get; set; }
 
@@ -715,8 +720,8 @@ namespace NinjaTrader.NinjaScript
 			string stopDollar,
 			string breakevenDollar,
 			string targetDollar,
-			int? maxGain,
-			int? maxLoss
+			double maxGain,
+			double maxLoss
 		)
 		{
 			string sStatus = string.IsNullOrEmpty(status) ? "Waiting (aguardando)" : status;
@@ -724,11 +729,11 @@ namespace NinjaTrader.NinjaScript
 			string sTarget = string.IsNullOrEmpty(targetDollar) ? "-" : targetDollar;
 			string sBE = string.IsNullOrEmpty(breakevenDollar) ? "-" : breakevenDollar;
 			string sStop = string.IsNullOrEmpty(stopDollar) ? "-" : stopDollar;
-			string sMaxGain = maxGain.HasValue ? maxGain.Value.ToString() : "-";
-			string sMaxLoss = maxLoss.HasValue ? maxLoss.Value.ToString() : "-";
+			string sMaxGain = maxGain.ToString("0.00", CultureInfo.CurrentCulture);
+			string sMaxLoss = maxLoss.ToString("0.00", CultureInfo.CurrentCulture);
 
 			_drSentence.Text =
-				$"Status: {sStatus} | Qty: {sQty} | Target$: {sTarget} | BE$: {sBE} | Stop$: {sStop} | MaxGain: {sMaxGain} | MaxLoss: {sMaxLoss}";
+				$"Status: {sStatus} | Qty: {sQty} | Target$: {sTarget} | BE$: {sBE} | Stop$: {sStop} | MaxWin: {sMaxGain} | MaxLoss: {sMaxLoss}";
 
 			bool hasTrade = !string.IsNullOrEmpty(status) &&
 							!status.Trim().Equals("Waiting", StringComparison.OrdinalIgnoreCase) &&
@@ -776,10 +781,10 @@ namespace NinjaTrader.NinjaScript
 				_txtEntry.Text = "-";
 				_txtChartStop.Text = "-";
 				_txtExit.Text = "-";
-				_txtMaxGain.Text = "Max gain: -";
-				_txtMaxLoss.Text = "Max loss: -";
+				_txtMaxGain.Text = "Max win: 0.00";
+				_txtMaxLoss.Text = "Max loss: 0.00";
 
-				SetDayResum(null, null, null, null, null, null, null);
+				SetDayResum(null, null, null, null, null, 0.0, 0.0);
 				SetRiskWarningText(false, "sistema ativo e monitorando condições de mercado.", "");
 			}
 			catch { }
@@ -869,7 +874,7 @@ namespace NinjaTrader.NinjaScript
 		{
 			try
 			{
-				_pnlDiaText.Text = string.IsNullOrEmpty(info) ? "-" : info;
+				_pnlDiaText.Text = string.IsNullOrEmpty(info) ? "0.00" : info;
 				ColorPnL(_pnlDiaText, info);
 			}
 			catch { }
@@ -879,7 +884,7 @@ namespace NinjaTrader.NinjaScript
 		{
 			try
 			{
-				_pnlMesText.Text = string.IsNullOrEmpty(info) ? "-" : info;
+				_pnlMesText.Text = string.IsNullOrEmpty(info) ? "0.00" : info;
 				ColorPnL(_pnlMesText, info);
 			}
 			catch { }
@@ -889,7 +894,7 @@ namespace NinjaTrader.NinjaScript
 		{
 			try
 			{
-				_pnlTotalText.Text = string.IsNullOrEmpty(info) ? "-" : info;
+				_pnlTotalText.Text = string.IsNullOrEmpty(info) ? "0.00" : info;
 				ColorPnL(_pnlTotalText, info, rightAlign: true);
 			}
 			catch { }
@@ -917,12 +922,14 @@ namespace NinjaTrader.NinjaScript
 			if (rightAlign) tb.TextAlignment = TextAlignment.Right;
 		}
 
-		public void SetStreaks(int? maxGain, int? maxLoss)
+		public void SetMaxWinLoss(double maxGain, double maxLoss)
 		{
 			try
 			{
-				_txtMaxGain.Text = $"Max gain: {(maxGain.HasValue ? maxGain.Value.ToString() : "-")}";
-				_txtMaxLoss.Text = $"Max loss: {(maxLoss.HasValue ? maxLoss.Value.ToString() : "-")}";
+				string maxWinText = maxGain.ToString("0.00", CultureInfo.CurrentCulture);
+				string maxLossText = maxLoss.ToString("0.00", CultureInfo.CurrentCulture);
+				_txtMaxGain.Text = $"Max win: {maxWinText}";
+				_txtMaxLoss.Text = $"Max loss: {maxLossText}";
 			}
 			catch { }
 		}
@@ -1570,12 +1577,12 @@ namespace NinjaTrader.NinjaScript
 				string atrDisplay = snap.AtrDisplayText;
 				embeddedControl.SetAtrValue(string.IsNullOrEmpty(atrDisplay) ? "-" : atrDisplay);
 
-				embeddedControl.SetPnLDia(string.IsNullOrEmpty(snap.PnLDiaText) ? "-" : snap.PnLDiaText);
-				embeddedControl.SetPnLMes(string.IsNullOrEmpty(snap.PnLMesText) ? "-" : snap.PnLMesText);
-				embeddedControl.SetPnLTotal(string.IsNullOrEmpty(snap.PnLTotalText) ? "-" : snap.PnLTotalText);
+				embeddedControl.SetPnLDia(string.IsNullOrEmpty(snap.PnLDiaText) ? "0.00" : snap.PnLDiaText);
+				embeddedControl.SetPnLMes(string.IsNullOrEmpty(snap.PnLMesText) ? "0.00" : snap.PnLMesText);
+				embeddedControl.SetPnLTotal(string.IsNullOrEmpty(snap.PnLTotalText) ? "0.00" : snap.PnLTotalText);
 
-				int? maxGain = snap.DayMaxGain ?? snap.MaxGainStreak;
-				int? maxLoss = snap.DayMaxLoss ?? snap.MaxLossStreak;
+				double maxGain = snap.MaxWinTrade;
+				double maxLoss = snap.MaxLossTrade;
 
 				if (!string.IsNullOrEmpty(snap.EndDayText))
 					embeddedControl.SetEndDayText(snap.EndDayText);
@@ -1599,7 +1606,7 @@ namespace NinjaTrader.NinjaScript
 					snap.AttentionText ?? ""
 				);
 
-				embeddedControl.SetStreaks(maxGain, maxLoss);
+				embeddedControl.SetMaxWinLoss(maxGain, maxLoss);
 
 				embeddedControl.ForceSetBEEnabled(snap.BEEnabled ?? false);
 				embeddedControl.ForceSetATREnabled(snap.ATREnabled ?? false);
@@ -1842,9 +1849,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[Display(Name = "Enable Operational Log", Order = 1, GroupName = "Operational")]
 		public bool EnableOperationalLog { get; set; } = true;
 
+		[NinjaScriptProperty]
+		[Display(Name = "Enable Panel Debug Log", Order = 2, GroupName = "Operational")]
+		public bool EnablePanelDebugLog { get; set; } = false;
+
 		[Browsable(false)]
 		[NinjaScriptProperty]
-		[Display(Name = "Enable AutoClose Account Flatten Fallback", Order = 2, GroupName = "Operational")]
+		[Display(Name = "Enable AutoClose Account Flatten Fallback", Order = 3, GroupName = "Operational")]
 		public bool EnableAutoCloseAccountFallback { get; set; } = false;
 
 		[Browsable(false)]
@@ -2307,9 +2318,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private int _lastPnlCalcCount = -1;
 		private DateTime _lastPnlCalcUtc = DateTime.MinValue;
-		private string _cachedPnlDay = "-";
-		private string _cachedPnlMonth = "-";
-		private string _cachedPnlTotal = "-";
+		private string _cachedPnlDay = "0.00";
+		private string _cachedPnlMonth = "0.00";
+		private string _cachedPnlTotal = "0.00";
 		private bool _panelPnLInitialized = false;
 		private DateTime _lastPanelPnlDayBrt = DateTime.MinValue;
 
@@ -2323,6 +2334,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private double _totalPnlDay = 0;
 		private double _monthPnl = 0;
 		private double _overallPnl = 0;
+		private double _maxWinTrade = 0;
+		private double _maxLossTrade = 0;
 		private double _histNetProfit = 0;
 		private double _histGrossProfit = 0;
 		private double _histGrossLoss = 0;
@@ -3281,6 +3294,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 			return price.ToString("0.00", CultureInfo.InvariantCulture);
 		}
 
+		private string FormatPnlValue(double value)
+		{
+			return value.ToString("0.00", CultureInfo.InvariantCulture);
+		}
+
 		private void LogSessionStartIfNeeded(DateTime nowBrt, TimeSpan startTime, TimeSpan endTime)
 		{
 			if (_sessionStartLoggedDayBrt.Date == nowBrt.Date) return;
@@ -3416,11 +3434,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 					if (Enum.TryParse(state.PanelPnLMode, out PanelPnLMode savedMode))
 						PanelPnlMode = savedMode;
 
-					_cachedPnlDay = "-";
-					_cachedPnlMonth = "-";
-					_cachedPnlTotal = "-";
+					_cachedPnlDay = "0.00";
+					_cachedPnlMonth = "0.00";
+					_cachedPnlTotal = "0.00";
 					_maxGainStreak = 0;
 					_maxLossStreak = 0;
+					_maxWinTrade = 0;
+					_maxLossTrade = 0;
 					_lastSavedHistoricalTradesCount = -1;
 					ClearRealtimePanelStats(resetProcessedCount: true);
 					return true;
@@ -3521,6 +3541,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 			snap.PnLDiaText = _cachedPnlDay;
 			snap.PnLMesText = _cachedPnlMonth;
 			snap.PnLTotalText = _cachedPnlTotal;
+			snap.PnLDia = _totalPnlDay;
+			snap.PnLMes = _monthPnl;
+			snap.PnLTotal = _overallPnl;
+			snap.MaxWinTrade = _maxWinTrade;
+			snap.MaxLossTrade = _maxLossTrade;
 			snap.ATREnabled = EnableSlowStochFilter;
 			snap.AtrDisplayText = EnableSlowStochFilter ? "On" : "Off";
 			snap.BEEnabled = breakEvenActivated;
@@ -3536,6 +3561,30 @@ namespace NinjaTrader.NinjaScript.Strategies
 			snap.EndDayText = endSession.ToString(@"hh\:mm");
 
 			snap.MainEnabled = (status == "Trading" || status == "StopNewTrades") && !isLockedForDay;
+
+			if (EnablePanelDebugLog)
+			{
+				int tradesCount = SystemPerformance?.AllTrades?.Count ?? 0;
+				string cultureName = CultureInfo.CurrentCulture?.Name ?? "unknown";
+				string stateName = State.ToString();
+				double cumProfit = GetCumProfitSafe();
+				PanelLog(
+					"PANEL_DEBUG",
+					string.Format(
+						CultureInfo.InvariantCulture,
+						"tradesCount={0} cumProfit={1:0.00} dayProfit={2:0.00} monthProfit={3:0.00} maxWinTrade={4:0.00} maxLossTrade={5:0.00} cultureName={6} isAnalyzerMode={7} state={8}",
+						tradesCount,
+						cumProfit,
+						_totalPnlDay,
+						_monthPnl,
+						_maxWinTrade,
+						_maxLossTrade,
+						cultureName,
+						State == State.Historical,
+						stateName
+					)
+				);
+			}
 
 			if (offSnapshot)
 			{
@@ -3652,7 +3701,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			realizedPnlDay = 0;
 			_totalPnlDay = 0;
-			_cachedPnlDay = "0.00";
+			_cachedPnlDay = FormatPnlValue(0);
 
 			if (PanelPnlMode == PanelPnLMode.RealtimeOnly && State == State.Realtime)
 			{
@@ -3675,9 +3724,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 			realizedPnlDay = 0;
 			_totalPnlDay = 0;
 			_unrealizedPnlManual = 0;
-			_cachedPnlDay = "0.00";
-			_cachedPnlMonth = "0.00";
-			_cachedPnlTotal = "0.00";
+			_cachedPnlDay = FormatPnlValue(0);
+			_cachedPnlMonth = FormatPnlValue(0);
+			_cachedPnlTotal = FormatPnlValue(0);
+			_maxWinTrade = 0;
+			_maxLossTrade = 0;
 
 			_currentStreak = 0;
 			_maxGainStreak = 0;
@@ -3718,6 +3769,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 			DateTime monthStart = new DateTime(nowLocalBrt.Year, nowLocalBrt.Month, 1);
 			DateTime nextMonthStart = monthStart.AddMonths(1);
 			realizedPnlDay = 0;
+			_maxWinTrade = 0;
+			_maxLossTrade = 0;
 			double cumulative = 0;
 			double peak = 0;
 			int currentWinStreak = 0;
@@ -3730,6 +3783,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 				double pnl = trade.ProfitCurrency;
 				_histTotalTrades++;
 				cumulative += pnl;
+				if (pnl > _maxWinTrade) _maxWinTrade = pnl;
+				if (pnl < _maxLossTrade) _maxLossTrade = pnl;
 
 				if (pnl > 0)
 				{
@@ -3764,11 +3819,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 
 			_histNetProfit = _histGrossProfit + _histGrossLoss;
-			_overallPnl = _histNetProfit;
+			_overallPnl = GetCumProfitSafe();
 			_totalPnlDay = realizedPnlDay;
-			_cachedPnlDay = realizedPnlDay.ToString("0.00");
-			_cachedPnlMonth = _monthPnl.ToString("0.00");
-			_cachedPnlTotal = _overallPnl.ToString("0.00");
+			_cachedPnlDay = FormatPnlValue(realizedPnlDay);
+			_cachedPnlMonth = FormatPnlValue(_monthPnl);
+			_cachedPnlTotal = FormatPnlValue(_overallPnl);
 			_lastPanelPnlDayBrt = today;
 
 			if (_histTotalTrades > 0)
@@ -3783,7 +3838,18 @@ namespace NinjaTrader.NinjaScript.Strategies
 			_lastPnlCalcUtc = DateTime.UtcNow;
 
 			string runtimeMode = (State == State.Realtime) ? "Realtime" : "Historical";
-			PanelLog("PNL_REBUILD", $"total={_overallPnl:0.00} month={_monthPnl:0.00} day={_totalPnlDay:0.00} trades={trades.Count} mode={runtimeMode}");
+			PanelLog(
+				"PNL_REBUILD",
+				string.Format(
+					CultureInfo.InvariantCulture,
+					"total={0:0.00} month={1:0.00} day={2:0.00} trades={3} mode={4}",
+					_overallPnl,
+					_monthPnl,
+					_totalPnlDay,
+					trades.Count,
+					runtimeMode
+				)
+			);
 			return true;
 		}
 
@@ -3820,7 +3886,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 					_totalPnlDay = realizedPnlDay + _unrealizedPnlManual;
 
-					_cachedPnlDay = _totalPnlDay.ToString("0.00");
+					_cachedPnlDay = FormatPnlValue(_totalPnlDay);
 				}
 				catch
 				{
@@ -6159,11 +6225,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 			_rtBrtYearMonth = 0;
 
 			realizedPnlDay = 0;
-			_cachedPnlDay = "-";
-			_cachedPnlMonth = "-";
-			_cachedPnlTotal = "-";
+			_cachedPnlDay = FormatPnlValue(0);
+			_cachedPnlMonth = FormatPnlValue(0);
+			_cachedPnlTotal = FormatPnlValue(0);
 			_maxGainStreak = 0;
 			_maxLossStreak = 0;
+			_maxWinTrade = 0;
+			_maxLossTrade = 0;
 
 			if (resetProcessedCount)
 			{
@@ -6245,18 +6313,21 @@ namespace NinjaTrader.NinjaScript.Strategies
 					_rtBrtYearMonth = exitYm;
 				}
 
-				_rtRealizedTotal += tr.ProfitCurrency;
-				_rtRealizedMonth += tr.ProfitCurrency;
-				_rtRealizedDay += tr.ProfitCurrency;
+				double tradePnl = tr.ProfitCurrency;
+				_rtRealizedTotal += tradePnl;
+				_rtRealizedMonth += tradePnl;
+				_rtRealizedDay += tradePnl;
+				if (tradePnl > _maxWinTrade) _maxWinTrade = tradePnl;
+				if (tradePnl < _maxLossTrade) _maxLossTrade = tradePnl;
 			}
 
 			_rtLastProcessedTradeCount = count;
 
-			_cachedPnlMonth = _rtRealizedMonth.ToString("0.00");
-			_cachedPnlTotal = _rtRealizedTotal.ToString("0.00");
+			_cachedPnlMonth = FormatPnlValue(_rtRealizedMonth);
+			_cachedPnlTotal = FormatPnlValue(_rtRealizedTotal);
 
 			realizedPnlDay = _rtRealizedDay;
-			_cachedPnlDay = realizedPnlDay.ToString("0.00");
+			_cachedPnlDay = FormatPnlValue(realizedPnlDay);
 
 			_panelCacheSaveRequested = true;
 		}
@@ -6518,8 +6589,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 					else
 					{
 						realizedPnlDay = _rtRealizedDay;
-						_cachedPnlMonth = _rtRealizedMonth.ToString("0.00");
-						_cachedPnlTotal = _rtRealizedTotal.ToString("0.00");
+						_cachedPnlMonth = FormatPnlValue(_rtRealizedMonth);
+						_cachedPnlTotal = FormatPnlValue(_rtRealizedTotal);
 						UpdateUnrealizedAndTotalPnL();
 						UpdateStreaksIfClosedTradesChanged();
 					}
@@ -6615,8 +6686,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 					else
 					{
 						realizedPnlDay = _rtRealizedDay;
-						_cachedPnlMonth = _rtRealizedMonth.ToString("0.00");
-						_cachedPnlTotal = _rtRealizedTotal.ToString("0.00");
+						_cachedPnlMonth = FormatPnlValue(_rtRealizedMonth);
+						_cachedPnlTotal = FormatPnlValue(_rtRealizedTotal);
 						UpdateUnrealizedAndTotalPnL();
 						UpdateStreaksIfClosedTradesChanged();
 					}
@@ -6881,7 +6952,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				realizedPnlDay = 0;
 				_unrealizedPnlManual = 0;
 				_totalPnlDay = 0;
-				_cachedPnlDay = "0.00";
+				_cachedPnlDay = FormatPnlValue(0);
 				_lastPanelStatus = PanelTradeStatus.Off;
 				_lastPanelStatusBrtDay = DateTime.MinValue;
 				lastRegime = currentRegime;
