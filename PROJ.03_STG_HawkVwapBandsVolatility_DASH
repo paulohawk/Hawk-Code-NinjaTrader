@@ -2293,6 +2293,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private DateTime lastCalendarDayBrt = DateTime.MinValue;
 		private bool isLockedForDay = false;
+		private bool hasPositiveTradeToday = false;
 		private double realizedPnlDay = 0;
 
 		private int stopHHmmss, flattenHHmmss;
@@ -3719,6 +3720,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (_lastPanelPnlDayBrt == today)
 				return;
 
+			hasPositiveTradeToday = false;
 			realizedPnlDay = 0;
 			_totalPnlDay = 0;
 			_cachedPnlDay = FormatPnlValue(0);
@@ -6286,6 +6288,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 			if (side == Regime.None) return false;
 			if (_bracketFailSafeActive || _executionCycleLocked) return false;
+			if (hasPositiveTradeToday) return false;
 
 			if (MaxTradesPerDay > 0 && tradesClosedTodayTotal >= MaxTradesPerDay)
 				return false;
@@ -6517,6 +6520,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 				return;
 			}
 
+			if (hasPositiveTradeToday)
+			{
+				CancelAllGrid("fallback_positive_trade_lock");
+				string dayText = nowBrtDt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+				OpLog("DAY_LOCK_FALLBACK", $"positiveTrade=true | day={dayText} | pnlDay={_dailyRealizedPnlForLimits:0.00}");
+				CheckFlattenProgress();
+				return;
+			}
+
 			if (isLockedForDay)
 				return;
 
@@ -6622,9 +6634,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 					if (PanelPnlMode == PanelPnLMode.ChartHistorical)
 					{
 						bool rebuilt = RebuildPanelPnLFromSystemPerformance(nowBrtDt);
-						_dailyRealizedPnlForLimits = realizedPnlDay;
 						if (rebuilt)
+						{
+							_dailyRealizedPnlForLimits = realizedPnlDay;
 							PublishPanelSnapshot("PnLRecalc", force: true);
+							EvaluateAndLockDailyLimitsIfNeeded(nowBrtDt, "PnLRecalc", true);
+						}
+						else
+						{
+							_dailyRealizedPnlForLimits = GetRealizedPnlDayForLimits(nowBrtDt);
+							EvaluateAndLockDailyLimitsIfNeeded(nowBrtDt, "PnLInitFallback", true);
+						}
 						PublishPanelSnapshot("PnLInit", force: true);
 						_panelPnLInitialized = true;
 					}
@@ -6732,9 +6752,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 					if (PanelPnlMode == PanelPnLMode.ChartHistorical)
 					{
 						bool rebuilt = RebuildPanelPnLFromSystemPerformance(nowBrtDt);
-						_dailyRealizedPnlForLimits = realizedPnlDay;
 						if (rebuilt)
+						{
+							_dailyRealizedPnlForLimits = realizedPnlDay;
 							PublishPanelSnapshot("PnLRecalc", force: true);
+							EvaluateAndLockDailyLimitsIfNeeded(nowBrtDt, "PnLRecalc", true);
+						}
+						else
+						{
+							_dailyRealizedPnlForLimits = GetRealizedPnlDayForLimits(nowBrtDt);
+							EvaluateAndLockDailyLimitsIfNeeded(nowBrtDt, "OnBarUpdateFallback", true);
+						}
 					}
 					else
 					{
@@ -6815,9 +6843,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 					if (PanelPnlMode == PanelPnLMode.ChartHistorical)
 					{
 						bool rebuilt = RebuildPanelPnLFromSystemPerformance(nowBrtDt);
-						_dailyRealizedPnlForLimits = realizedPnlDay;
 						if (rebuilt)
+						{
+							_dailyRealizedPnlForLimits = realizedPnlDay;
 							PublishPanelSnapshot("PnLRecalc", force: true);
+							EvaluateAndLockDailyLimitsIfNeeded(nowBrtDt, "PnLRecalc", true);
+						}
+						else
+						{
+							_dailyRealizedPnlForLimits = GetRealizedPnlDayForLimits(nowBrtDt);
+							EvaluateAndLockDailyLimitsIfNeeded(nowBrtDt, "OnBarUpdateFallback", true);
+						}
 					}
 					else
 					{
@@ -7067,6 +7103,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				lastCalendarDayBrt = calDay.Date;
 				isLockedForDay = false;
+				hasPositiveTradeToday = false;
 				stopHHmmss = GetStopNewTradesHhmmss(calDay.Date);
 				_lockedAtUtc = DateTime.MinValue;
 				realizedPnlDay = 0;
@@ -7365,14 +7402,29 @@ namespace NinjaTrader.NinjaScript.Strategies
 				{
 					bool rebuilt = RebuildPanelPnLFromSystemPerformance(nowBrt);
 					if (rebuilt)
+					{
 						PublishPanelSnapshot("PnLRecalc", force: true);
-					_dailyRealizedPnlForLimits = rebuilt ? realizedPnlDay : GetRealizedPnlDayForLimits(nowBrt);
+						_dailyRealizedPnlForLimits = realizedPnlDay;
+						EvaluateAndLockDailyLimitsIfNeeded(nowBrt, "PnLRecalc", true);
+					}
+					else
+					{
+						_dailyRealizedPnlForLimits = GetRealizedPnlDayForLimits(nowBrt);
+						EvaluateAndLockDailyLimitsIfNeeded(nowBrt, "OnExecutionUpdate", false);
+					}
 				}
 				else
 				{
 					_dailyRealizedPnlForLimits = GetRealizedPnlDayForLimits(nowBrt);
+					EvaluateAndLockDailyLimitsIfNeeded(nowBrt, "OnExecutionUpdate", false);
 				}
-				EvaluateAndLockDailyLimitsIfNeeded(nowBrt, "OnExecutionUpdate", false);
+
+				if (!hasPositiveTradeToday)
+				{
+					double cycleDelta = GetCumProfitSafe() - _cycleRealizedAtEntry;
+					if (cycleDelta > 0)
+						hasPositiveTradeToday = true;
+				}
 			}
 
 			TrackCycleCounters(time);
