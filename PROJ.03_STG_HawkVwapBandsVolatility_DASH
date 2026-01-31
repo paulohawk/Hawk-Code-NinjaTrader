@@ -2589,6 +2589,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					EnsurePanelInitializedOnce();
 					var nowBrt = ConvertToBrasilia(DateTime.UtcNow).AddMinutes(UserBrtOffsetMinutes);
 					RebuildPanelPnLFromSystemPerformance(nowBrt);
+					_dailyRealizedPnlForLimits = realizedPnlDay;
 					SyncRealtimeLedgerFromRebuild(nowBrt);
 					PublishPanelSnapshot("StartupRebuild", force: true);
 					PublishPanelSnapshot("OverlayMsgInit", force: true);
@@ -6516,6 +6517,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 				return;
 			}
 
+			if (isLockedForDay)
+				return;
+
 			if (IsFailSafeBlocking())
 			{
 				CancelAllGrid("failsafe");
@@ -6617,7 +6621,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 				{
 					if (PanelPnlMode == PanelPnLMode.ChartHistorical)
 					{
-						if (RebuildPanelPnLFromSystemPerformance(nowBrtDt))
+						bool rebuilt = RebuildPanelPnLFromSystemPerformance(nowBrtDt);
+						_dailyRealizedPnlForLimits = realizedPnlDay;
+						if (rebuilt)
 							PublishPanelSnapshot("PnLRecalc", force: true);
 						PublishPanelSnapshot("PnLInit", force: true);
 						_panelPnLInitialized = true;
@@ -6725,7 +6731,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 					if (PanelPnlMode == PanelPnLMode.ChartHistorical)
 					{
-						if (RebuildPanelPnLFromSystemPerformance(nowBrtDt))
+						bool rebuilt = RebuildPanelPnLFromSystemPerformance(nowBrtDt);
+						_dailyRealizedPnlForLimits = realizedPnlDay;
+						if (rebuilt)
 							PublishPanelSnapshot("PnLRecalc", force: true);
 					}
 					else
@@ -6806,7 +6814,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 					if (PanelPnlMode == PanelPnLMode.ChartHistorical)
 					{
-						if (RebuildPanelPnLFromSystemPerformance(nowBrtDt))
+						bool rebuilt = RebuildPanelPnLFromSystemPerformance(nowBrtDt);
+						_dailyRealizedPnlForLimits = realizedPnlDay;
+						if (rebuilt)
 							PublishPanelSnapshot("PnLRecalc", force: true);
 					}
 					else
