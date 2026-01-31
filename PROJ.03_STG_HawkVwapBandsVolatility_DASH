@@ -2082,6 +2082,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 					ApplyV4Settings();
 					break;
 			}
+
+			ResetHistoricalPanelStats();
+			ClearRealtimePanelStats(resetProcessedCount: true);
+			PublishPanelSnapshot("PresetChanged", force: true);
 		}
 
 		private void ApplyV1Defaults()
@@ -2572,8 +2576,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 					ResetExecutionCycleGuard("state_realtime");
 
 					EnsurePanelInitializedOnce();
-					PublishPanelSnapshot("OverlayMsgInit", force: true);
 					var nowBrt = ConvertToBrasilia(DateTime.UtcNow).AddMinutes(UserBrtOffsetMinutes);
+					RebuildPanelPnLFromSystemPerformance(nowBrt);
+					SyncRealtimeLedgerFromRebuild(nowBrt);
+					PublishPanelSnapshot("StartupRebuild", force: true);
+					PublishPanelSnapshot("OverlayMsgInit", force: true);
 					ChartControl?.Dispatcher.BeginInvoke(new Action(() =>
 					{
 						EvaluateOverlayPenalty(nowBrt);
@@ -3364,11 +3371,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 			string inst = "Unknown";
 			string acc = "NoAccount";
 			string strat = "Strategy";
+			string preset = GetActivePreset().ToString();
 			string discriminator = !string.IsNullOrWhiteSpace(InstanceTag) ? InstanceTag.Trim() : $"chart={chartToken}";
 			try { inst = Instrument?.FullName ?? "Unknown"; } catch { }
 			try { acc = Account?.Name ?? "NoAccount"; } catch { }
 			try { strat = string.IsNullOrWhiteSpace(Name) ? "Strategy" : Name; } catch { }
-			return $"{inst}::{acc}::{strat}::{discriminator}";
+			return $"{inst}::{acc}::{strat}::{preset}::{discriminator}";
 		}
 
 		private double ParseDoubleFlexible(string text)
