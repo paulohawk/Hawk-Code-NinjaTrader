@@ -720,8 +720,8 @@ namespace NinjaTrader.NinjaScript
 			string stopDollar,
 			string breakevenDollar,
 			string targetDollar,
-			double maxGain,
-			double maxLoss
+			int maxGain,
+			int maxLoss
 		)
 		{
 			string sStatus = string.IsNullOrEmpty(status) ? "Waiting (aguardando)" : status;
@@ -729,8 +729,8 @@ namespace NinjaTrader.NinjaScript
 			string sTarget = string.IsNullOrEmpty(targetDollar) ? "-" : targetDollar;
 			string sBE = string.IsNullOrEmpty(breakevenDollar) ? "-" : breakevenDollar;
 			string sStop = string.IsNullOrEmpty(stopDollar) ? "-" : stopDollar;
-			string sMaxGain = maxGain.ToString("0.00", CultureInfo.CurrentCulture);
-			string sMaxLoss = maxLoss.ToString("0.00", CultureInfo.CurrentCulture);
+			string sMaxGain = maxGain.ToString(CultureInfo.CurrentCulture);
+			string sMaxLoss = maxLoss.ToString(CultureInfo.CurrentCulture);
 
 			_drSentence.Text =
 				$"Status: {sStatus} | Qty: {sQty} | Target$: {sTarget} | BE$: {sBE} | Stop$: {sStop} | MaxWin: {sMaxGain} | MaxLoss: {sMaxLoss}";
@@ -781,10 +781,10 @@ namespace NinjaTrader.NinjaScript
 				_txtEntry.Text = "-";
 				_txtChartStop.Text = "-";
 				_txtExit.Text = "-";
-				_txtMaxGain.Text = "Max win: 0.00";
-				_txtMaxLoss.Text = "Max loss: 0.00";
+				_txtMaxGain.Text = "Max win: 0";
+				_txtMaxLoss.Text = "Max loss: 0";
 
-				SetDayResum(null, null, null, null, null, 0.0, 0.0);
+				SetDayResum(null, null, null, null, null, 0, 0);
 				SetRiskWarningText(false, "sistema ativo e monitorando condições de mercado.", "");
 			}
 			catch { }
@@ -922,12 +922,12 @@ namespace NinjaTrader.NinjaScript
 			if (rightAlign) tb.TextAlignment = TextAlignment.Right;
 		}
 
-		public void SetMaxWinLoss(double maxGain, double maxLoss)
+		public void SetMaxWinLoss(int maxGain, int maxLoss)
 		{
 			try
 			{
-				string maxWinText = maxGain.ToString("0.00", CultureInfo.CurrentCulture);
-				string maxLossText = maxLoss.ToString("0.00", CultureInfo.CurrentCulture);
+				string maxWinText = maxGain.ToString(CultureInfo.CurrentCulture);
+				string maxLossText = maxLoss.ToString(CultureInfo.CurrentCulture);
 				_txtMaxGain.Text = $"Max win: {maxWinText}";
 				_txtMaxLoss.Text = $"Max loss: {maxLossText}";
 			}
@@ -1581,8 +1581,8 @@ namespace NinjaTrader.NinjaScript
 				embeddedControl.SetPnLMes(string.IsNullOrEmpty(snap.PnLMesText) ? "0.00" : snap.PnLMesText);
 				embeddedControl.SetPnLTotal(string.IsNullOrEmpty(snap.PnLTotalText) ? "0.00" : snap.PnLTotalText);
 
-				double maxGain = snap.MaxWinTrade;
-				double maxLoss = snap.MaxLossTrade;
+				int maxGain = snap.MaxGainStreak ?? 0;
+				int maxLoss = snap.MaxLossStreak ?? 0;
 
 				if (!string.IsNullOrEmpty(snap.EndDayText))
 					embeddedControl.SetEndDayText(snap.EndDayText);
