@@ -7351,7 +7351,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (isFlatAfterExit)
 			{
 				DateTime nowBrt = ConvertToBrasilia(time).AddMinutes(UserBrtOffsetMinutes);
-				_dailyRealizedPnlForLimits = GetRealizedPnlDayForLimits(nowBrt);
+				if (State == State.Historical)
+				{
+					bool rebuilt = RebuildPanelPnLFromSystemPerformance(nowBrt);
+					if (rebuilt)
+						PublishPanelSnapshot("PnLRecalc", force: true);
+					_dailyRealizedPnlForLimits = rebuilt ? realizedPnlDay : GetRealizedPnlDayForLimits(nowBrt);
+				}
+				else
+				{
+					_dailyRealizedPnlForLimits = GetRealizedPnlDayForLimits(nowBrt);
+				}
 				EvaluateAndLockDailyLimitsIfNeeded(nowBrt, "OnExecutionUpdate", false);
 			}
 
