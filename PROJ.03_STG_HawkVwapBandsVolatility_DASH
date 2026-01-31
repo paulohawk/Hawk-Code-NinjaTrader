@@ -2361,6 +2361,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private double _limitsPnlCacheValue = 0.0;
 		private DateTime _limitsPnlCacheLastExitBrt = DateTime.MinValue;
 		private DateTime _limitsPnlLastErrorDay = DateTime.MinValue;
+		private DateTime _dailyLimitsBrtDate = DateTime.MinValue;
+		private double _dailyRealizedPnlForLimits = 0.0;
 
 		private double unrealizedTicks = 0;
 		private DateTime _lockedAtUtc = DateTime.MinValue;
@@ -3928,6 +3930,58 @@ namespace NinjaTrader.NinjaScript.Strategies
 					return 0.0;
 				return _limitsPnlCacheValue;
 			}
+		}
+
+		private void ResetDailyLimitAccumulatorIfNewDay(DateTime nowBrt)
+		{
+			if (_dailyLimitsBrtDate != nowBrt.Date)
+			{
+				_dailyLimitsBrtDate = nowBrt.Date;
+				_dailyRealizedPnlForLimits = 0.0;
+			}
+		}
+
+		private void UpdateDailyLimitAccumulator(DateTime nowBrt)
+		{
+			ResetDailyLimitAccumulatorIfNewDay(nowBrt);
+			_dailyRealizedPnlForLimits = GetRealizedPnlDayForLimits(nowBrt);
+		}
+
+		private bool EvaluateAndLockDailyLimitsIfNeeded(DateTime nowBrt, string source, bool allowFlatten)
+		{
+			bool skipLimits = (State == State.Historical && DisableDailyLimitsInStrategyAnalyzer);
+			if (isLockedForDay || skipLimits)
+				return false;
+
+			if (_dailyRealizedPnlForLimits >= DailyProfitLimitUsd)
+			{
+				if (allowFlatten)
+					RequestFlatten("DailyProfitLimit", allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
+				LockDay($"DailyProfitLimit:{source}");
+				CancelExitVwap();
+				CancelOppositeBandExit();
+				CancelFinancialTarget();
+				CancelStopLoss();
+				CancelAllGrid("daily_profit_limit");
+				PublishPanelSnapshot("DailyLimit", force: true);
+				return true;
+			}
+
+			if (_dailyRealizedPnlForLimits <= -DailyLossLimitUsd)
+			{
+				if (allowFlatten)
+					RequestFlatten("DailyLossLimit", allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
+				LockDay($"DailyLossLimit:{source}");
+				CancelExitVwap();
+				CancelOppositeBandExit();
+				CancelFinancialTarget();
+				CancelStopLoss();
+				CancelAllGrid("daily_loss_limit");
+				PublishPanelSnapshot("DailyLimit", force: true);
+				return true;
+			}
+
+			return false;
 		}
 
 			private void UpdateUnrealizedAndTotalPnL()
@@ -6619,7 +6673,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				bool isAnalyzer = (ChartControl == null);
 				TimeSpan startAnalysisTime = GetStartAnalysisTimeBrt(calDay);
 				int startAnalysisInt = ToHhmmss(startAnalysisTime);
-				double realizedPnlDayForLimits = GetRealizedPnlDayForLimits(nowBrtDt);
+				UpdateDailyLimitAccumulator(nowBrtDt);
 
 				// ---- rest of your original OnBarUpdate follows unchanged ----
 				if (!EnableSlowStochFilter)
@@ -6679,24 +6733,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 					dayTargetDollars = $"+{DailyProfitLimitUsd:0}";
 					dayBreakevenDollars = breakEvenActivated ? "ON" : "-";
 
-					bool skipLimits = (State == State.Historical && DisableDailyLimitsInStrategyAnalyzer);
-					if (!isLockedForDay && !skipLimits)
-					{
-						if (realizedPnlDayForLimits >= DailyProfitLimitUsd)
-						{
-							RequestFlatten("DailyProfitLimit", allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
-							LockDay("DailyProfitLimit");
-							PublishPanelSnapshot("DailyLimit");
-							return;
-						}
-						else if (realizedPnlDayForLimits <= -DailyLossLimitUsd)
-						{
-							RequestFlatten("DailyLossLimit", allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
-							LockDay("DailyLossLimit");
-							PublishPanelSnapshot("DailyLimit");
-							return;
-						}
-					}
+					if (EvaluateAndLockDailyLimitsIfNeeded(nowBrtDt, "OnBarUpdate", true))
+						return;
 
 				bool inWindow = InTradingWindow(nowBrtInt, startAnalysisInt) && !isLockedForDay;
 				if (isAnalyzer && IgnoreWindowInAnalyzer)
@@ -6776,24 +6814,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 					dayTargetDollars = $"+{DailyProfitLimitUsd:0}";
 					dayBreakevenDollars = breakEvenActivated ? "ON" : "-";
 
-					bool skipLimits = (State == State.Historical && DisableDailyLimitsInStrategyAnalyzer);
-					if (!isLockedForDay && !skipLimits)
-					{
-						if (realizedPnlDayForLimits >= DailyProfitLimitUsd)
-						{
-							RequestFlatten("DailyProfitLimit", allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
-							LockDay("DailyProfitLimit");
-							PublishPanelSnapshot("DailyLimit");
-							return;
-						}
-						else if (realizedPnlDayForLimits <= -DailyLossLimitUsd)
-						{
-							RequestFlatten("DailyLossLimit", allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
-							LockDay("DailyLossLimit");
-							PublishPanelSnapshot("DailyLimit");
-							return;
-						}
-					}
+					if (EvaluateAndLockDailyLimitsIfNeeded(nowBrtDt, "OnBarUpdate", true))
+						return;
 
 					bool inWindow = InTradingWindow(nowBrtInt, startAnalysisInt) && !isLockedForDay;
 					if (isAnalyzer && IgnoreWindowInAnalyzer)
@@ -7033,6 +7055,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 				_cachedPnlDay = FormatPnlValue(0);
 				_lastPanelStatus = PanelTradeStatus.Off;
 				_lastPanelStatusBrtDay = DateTime.MinValue;
+				_dailyLimitsBrtDate = calDay.Date;
+				_dailyRealizedPnlForLimits = 0.0;
 				lastRegime = currentRegime;
 				currentRegime = Regime.None;
 				closeBarOrderPending = false;
@@ -7295,8 +7319,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 				}
 			}
 
-			if (!_exitLoggedForPosition &&
-				(execution.Order.OrderAction == OrderAction.Sell || execution.Order.OrderAction == OrderAction.BuyToCover))
+			bool isExitExecution = execution.Order.OrderAction == OrderAction.Sell || execution.Order.OrderAction == OrderAction.BuyToCover;
+			if (!_exitLoggedForPosition && isExitExecution)
 			{
 				bool isFlat = Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0;
 				if (isFlat)
@@ -7312,6 +7336,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 					_exitPendingType = GetExitType(execution.Order);
 					_exitPendingQty = quantity;
 				}
+			}
+
+			bool isFlatAfterExit = isExitExecution && (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0);
+			if (isFlatAfterExit)
+			{
+				DateTime nowBrt = ConvertToBrasilia(time).AddMinutes(UserBrtOffsetMinutes);
+				UpdateDailyLimitAccumulator(nowBrt);
+				EvaluateAndLockDailyLimitsIfNeeded(nowBrt, "OnExecutionUpdate", false);
 			}
 
 			TrackCycleCounters(time);
