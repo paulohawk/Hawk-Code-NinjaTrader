@@ -2361,11 +2361,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private double _limitsPnlCacheValue = 0.0;
 		private DateTime _limitsPnlCacheLastExitBrt = DateTime.MinValue;
 		private DateTime _limitsPnlLastErrorDay = DateTime.MinValue;
-		private DateTime _dailyLimitsBrtDate = DateTime.MinValue;
 		private double _dailyRealizedPnlForLimits = 0.0;
-		private DateTime _dailyPnlBrtDate = DateTime.MinValue;
-		private double _dailyPnlAccumulator = 0.0;
-		private int _lastLimitsAllTradesCount = 0;
 
 		private double unrealizedTicks = 0;
 		private DateTime _lockedAtUtc = DateTime.MinValue;
@@ -3881,6 +3877,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 			try
 			{
 				var trades = SystemPerformance?.AllTrades;
+				if (State == State.Realtime && !isAnalyzerMode && _rtBrtDay == nowBrt.Date &&
+					trades != null && trades.Count == _rtLastProcessedTradeCount)
+					return _rtRealizedDay;
+
 				if (trades == null || trades.Count == 0)
 				{
 					_limitsPnlCacheDay = nowBrt.Date;
@@ -3935,24 +3935,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 		}
 
-		private void ResetDailyLimitAccumulatorIfNewDay(DateTime nowBrt)
-		{
-			if (_dailyLimitsBrtDate != nowBrt.Date)
-			{
-				_dailyLimitsBrtDate = nowBrt.Date;
-				_dailyRealizedPnlForLimits = 0.0;
-				_dailyPnlBrtDate = nowBrt.Date;
-				_dailyPnlAccumulator = 0.0;
-				_lastLimitsAllTradesCount = 0;
-			}
-		}
-
-		private void UpdateDailyLimitAccumulator(DateTime nowBrt)
-		{
-			ResetDailyLimitAccumulatorIfNewDay(nowBrt);
-			_dailyRealizedPnlForLimits = _dailyPnlAccumulator;
-		}
-
 		private bool EvaluateAndLockDailyLimitsIfNeeded(DateTime nowBrt, string source, bool allowFlatten)
 		{
 			bool skipLimits = (State == State.Historical && DisableDailyLimitsInStrategyAnalyzer);
@@ -3961,6 +3943,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			if (_dailyRealizedPnlForLimits >= DailyProfitLimitUsd)
 			{
+				LogDailyLimitHit(nowBrt, "DailyProfitLimit", source);
 				if (allowFlatten)
 					RequestFlatten("DailyProfitLimit", allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
 				LockDay($"DailyProfitLimit:{source}");
@@ -3975,6 +3958,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			if (_dailyRealizedPnlForLimits <= -DailyLossLimitUsd)
 			{
+				LogDailyLimitHit(nowBrt, "DailyLossLimit", source);
 				if (allowFlatten)
 					RequestFlatten("DailyLossLimit", allowAccountFallback: State == State.Realtime && !isAnalyzerMode);
 				LockDay($"DailyLossLimit:{source}");
@@ -3990,32 +3974,23 @@ namespace NinjaTrader.NinjaScript.Strategies
 			return false;
 		}
 
-		private bool TryUpdateDailyPnlAccumulatorFromLastTrade(DateTime nowBrt)
+		private void LogDailyLimitHit(DateTime nowBrt, string limitTag, string source)
 		{
-			var trades = SystemPerformance?.AllTrades;
-			if (trades == null || trades.Count == 0)
-				return false;
-
-			ResetDailyLimitAccumulatorIfNewDay(nowBrt);
-
-			if (trades.Count <= _lastLimitsAllTradesCount)
-				return false;
-
-			var lastTrade = trades[trades.Count - 1];
-			if (lastTrade?.Exit == null)
-				return false;
-
-			DateTime exitBrt = ConvertToBrasilia(lastTrade.Exit.Time).AddMinutes(UserBrtOffsetMinutes);
-			if (exitBrt.Date != nowBrt.Date)
-			{
-				_lastLimitsAllTradesCount = trades.Count;
-				return false;
-			}
-
-			_dailyPnlAccumulator += lastTrade.ProfitCurrency;
-			_dailyRealizedPnlForLimits = _dailyPnlAccumulator;
-			_lastLimitsAllTradesCount = trades.Count;
-			return true;
+			int tradesCount = SystemPerformance?.AllTrades?.Count ?? 0;
+			string preset = GetActivePreset().ToString();
+			string message = string.Format(
+				CultureInfo.InvariantCulture,
+				"[HVB][LIMITS][HIT] date={0:yyyy-MM-dd} realized={1:0.00} profitLimit={2:0.00} lossLimit={3:0.00} preset={4} tradesCount={5} source={6} tag={7}",
+				nowBrt.Date,
+				_dailyRealizedPnlForLimits,
+				DailyProfitLimitUsd,
+				DailyLossLimitUsd,
+				preset,
+				tradesCount,
+				source,
+				limitTag
+			);
+			OpLog("LIMITS_HIT", message);
 		}
 
 			private void UpdateUnrealizedAndTotalPnL()
@@ -6707,7 +6682,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 				bool isAnalyzer = (ChartControl == null);
 				TimeSpan startAnalysisTime = GetStartAnalysisTimeBrt(calDay);
 				int startAnalysisInt = ToHhmmss(startAnalysisTime);
-				UpdateDailyLimitAccumulator(nowBrtDt);
+				double realizedPnlDayForLimits = GetRealizedPnlDayForLimits(nowBrtDt);
+				_dailyRealizedPnlForLimits = realizedPnlDayForLimits;
 
 				// ---- rest of your original OnBarUpdate follows unchanged ----
 				if (!EnableSlowStochFilter)
@@ -7089,11 +7065,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				_cachedPnlDay = FormatPnlValue(0);
 				_lastPanelStatus = PanelTradeStatus.Off;
 				_lastPanelStatusBrtDay = DateTime.MinValue;
-				_dailyLimitsBrtDate = calDay.Date;
 				_dailyRealizedPnlForLimits = 0.0;
-				_dailyPnlBrtDate = calDay.Date;
-				_dailyPnlAccumulator = 0.0;
-				_lastLimitsAllTradesCount = 0;
 				lastRegime = currentRegime;
 				currentRegime = Regime.None;
 				closeBarOrderPending = false;
@@ -7379,12 +7351,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (isFlatAfterExit)
 			{
 				DateTime nowBrt = ConvertToBrasilia(time).AddMinutes(UserBrtOffsetMinutes);
-				if (!TryUpdateDailyPnlAccumulatorFromLastTrade(nowBrt))
-				{
-					_dailyPnlAccumulator = GetRealizedPnlDayForLimits(nowBrt);
-					_dailyRealizedPnlForLimits = _dailyPnlAccumulator;
-				}
-				UpdateDailyLimitAccumulator(nowBrt);
+				_dailyRealizedPnlForLimits = GetRealizedPnlDayForLimits(nowBrt);
 				EvaluateAndLockDailyLimitsIfNeeded(nowBrt, "OnExecutionUpdate", false);
 			}
 
