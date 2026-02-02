@@ -5758,25 +5758,60 @@ namespace NinjaTrader.NinjaScript.Strategies
 		#region VWAP exit
 		private void MaintainVwapExitOrder(double vwap)
 		{
-			if (isLockedForDay || flattenInProgress || IsFailSafeBlocking()) { CancelExitVwap(); return; }
+			if (isLockedForDay || flattenInProgress || IsFailSafeBlocking())
+			{
+				CancelExitVwap();
+				return;
+			}
 
-			int qty = Math.Abs(Position.Quantity);
-			if (qty <= 0) { CancelExitVwap(); return; }
+			if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
+			{
+				CancelExitVwap();
+				return;
+			}
 
 			if (!EnsureProtectionIntegrity("MaintainVwapExit", allowRepair: true, requireProtectionReady: false))
 				return;
 
-			vwap = AdjustTargetPriceForBracket(vwap, Position.MarketPosition, "MaintainVwapExit");
+			if (double.IsNaN(vwap) || vwap <= 0)
+			{
+				CancelExitVwap();
+				return;
+			}
+
+			double target = Instrument.MasterInstrument.RoundToTickSize(vwap);
+			target = AdjustTargetPriceForBracket(target, Position.MarketPosition, "MaintainVwapExit");
 
 			double ts = Instrument.MasterInstrument.TickSize;
 			double repricingThreshold = ts * 0.5;
 
-			if (exitVwapOrderReplace != null && IsActiveOrSubmitted(exitVwapOrderReplace))
+			int qty = Math.Abs(Position.Quantity);
+
+			var ord = exitVwapOrder;
+			var rep = exitVwapOrderReplace;
+
+			// heal rep==ord deadlock
+			if (ord != null && rep != null && ReferenceEquals(ord, rep))
 			{
-				return;
+				exitVwapOrderReplace = null;
+				rep = null;
 			}
 
-			if (exitVwapOrder != null && (exitVwapOrder.OrderState == OrderState.CancelPending || exitVwapOrder.OrderState == OrderState.CancelSubmitted))
+			// promote replace->main if main is dead/missing
+			if (rep != null && IsActiveOrSubmitted(rep) && (ord == null || IsDeadOrder(ord)))
+			{
+				exitVwapOrder = rep;
+				exitVwapOrderReplace = null;
+				ord = exitVwapOrder;
+				rep = null;
+			}
+
+			// only block if replace is active AND main is active
+			if (rep != null && IsActiveOrSubmitted(rep) && ord != null && IsActiveOrSubmitted(ord))
+				return;
+
+			// If main is cancelling, don't submit a new replace
+			if (ord != null && IsCancelling(ord))
 			{
 				return;
 			}
@@ -5784,10 +5819,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (Position.MarketPosition == MarketPosition.Long)
 			{
 				string fromEntry = null;
-				if (exitVwapOrder != null && IsActiveOrSubmitted(exitVwapOrder))
+				if (ord != null && IsActiveOrSubmitted(ord))
 				{
-					if (Math.Abs(exitVwapOrder.LimitPrice - vwap) > repricingThreshold ||
-					    exitVwapOrder.Quantity != qty)
+					if (Math.Abs(ord.LimitPrice - target) > repricingThreshold ||
+					    ord.Quantity != qty)
 					{
 						if (BlockIfSameBar("VWAPExitReplace")) return;
 						if (HasWorkingOrders(exitVwapOrderReplace))
@@ -5795,7 +5830,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 							return;
 						}
 						fromEntry = GetFromEntrySignal();
-						exitVwapOrderReplace = ExitLongLimit(0, true, qty, vwap, "VWAPExitL_R", fromEntry);
+						exitVwapOrderReplace = ExitLongLimit(0, true, qty, target, "VWAPExitL_R", fromEntry);
 						if (exitVwapOrderReplace != null)
 						{
 							MarkActionExecuted();
@@ -5810,7 +5845,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					return;
 				}
 				fromEntry = GetFromEntrySignal();
-				exitVwapOrder = ExitLongLimit(0, true, qty, vwap, "VWAPExitL", fromEntry);
+				exitVwapOrder = ExitLongLimit(0, true, qty, target, "VWAPExitL", fromEntry);
 				if (exitVwapOrder != null)
 				{
 					MarkActionExecuted();
@@ -5819,10 +5854,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 			else if (Position.MarketPosition == MarketPosition.Short)
 			{
 				string fromEntry = null;
-				if (exitVwapOrder != null && IsActiveOrSubmitted(exitVwapOrder))
+				if (ord != null && IsActiveOrSubmitted(ord))
 				{
-					if (Math.Abs(exitVwapOrder.LimitPrice - vwap) > repricingThreshold ||
-					    exitVwapOrder.Quantity != qty)
+					if (Math.Abs(ord.LimitPrice - target) > repricingThreshold ||
+					    ord.Quantity != qty)
 					{
 						if (BlockIfSameBar("VWAPExitReplace")) return;
 						if (HasWorkingOrders(exitVwapOrderReplace))
@@ -5830,7 +5865,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 							return;
 						}
 						fromEntry = GetFromEntrySignal();
-						exitVwapOrderReplace = ExitShortLimit(0, true, qty, vwap, "VWAPExitS_R", fromEntry);
+						exitVwapOrderReplace = ExitShortLimit(0, true, qty, target, "VWAPExitS_R", fromEntry);
 						if (exitVwapOrderReplace != null)
 						{
 							MarkActionExecuted();
@@ -5845,7 +5880,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					return;
 				}
 				fromEntry = GetFromEntrySignal();
-				exitVwapOrder = ExitShortLimit(0, true, qty, vwap, "VWAPExitS", fromEntry);
+				exitVwapOrder = ExitShortLimit(0, true, qty, target, "VWAPExitS", fromEntry);
 				if (exitVwapOrder != null)
 				{
 					MarkActionExecuted();
@@ -5865,6 +5900,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			try { if (exitVwapOrder != null && !IsCancelling(exitVwapOrder)) CancelOrder(exitVwapOrder); } catch { }
 			try { if (exitVwapOrderReplace != null && !IsCancelling(exitVwapOrderReplace)) CancelOrder(exitVwapOrderReplace); } catch { }
+
+			if (IsDeadOrder(exitVwapOrder)) exitVwapOrder = null;
+			if (IsDeadOrder(exitVwapOrderReplace)) exitVwapOrderReplace = null;
 		}
 
 		private void ForceFlatten(string reason)
