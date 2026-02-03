@@ -2362,6 +2362,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private double _limitsPnlCacheValue = 0.0;
 		private DateTime _limitsPnlCacheLastExitBrt = DateTime.MinValue;
 		private DateTime _limitsPnlLastErrorDay = DateTime.MinValue;
+		private DateTime _limitsCacheResetDay = DateTime.MinValue;
 		private double _dailyRealizedPnlForLimits = 0.0;
 
 		private double unrealizedTicks = 0;
@@ -2531,6 +2532,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 						cacheKey = GetCacheKey();
 
 					_panelPnLInitialized = false;
+					if (IsV4OppositeBandExit())
+					{
+						_limitsCacheResetDay = DateTime.MinValue;
+						_limitsPnlCacheDay = DateTime.MinValue;
+						_limitsPnlCacheTradesCount = -1;
+						_limitsPnlCacheValue = 0.0;
+						_limitsPnlCacheLastExitBrt = DateTime.MinValue;
+						_dailyRealizedPnlForLimits = 0.0;
+					}
 
 					bool cacheLoadedNow = false;
 					if (!_panelCacheLoaded)
@@ -3526,6 +3536,49 @@ namespace NinjaTrader.NinjaScript.Strategies
 			return ExitMode.Financial;
 		}
 
+		private bool IsV4OppositeBandExit()
+		{
+			return GetActivePreset() == PresetProfile.V4 && GetExitMode() == ExitMode.OppositeBand;
+		}
+
+		private DateTime TradeTimeToUtc(DateTime tradeTime)
+		{
+			TimeZoneInfo srcTz = null;
+
+			try
+			{
+				srcTz = Bars?.TradingHours?.TimeZoneInfo;
+			}
+			catch
+			{
+			}
+
+			if (tradeTime.Kind == DateTimeKind.Utc)
+				return tradeTime;
+
+			if (tradeTime.Kind == DateTimeKind.Local)
+				return tradeTime.ToUniversalTime();
+
+			if (srcTz == null)
+				srcTz = TimeZoneInfo.Local;
+
+			var unspecified = DateTime.SpecifyKind(tradeTime, DateTimeKind.Unspecified);
+			return TimeZoneInfo.ConvertTimeToUtc(unspecified, srcTz);
+		}
+
+		private void ResetDailyLimitsCacheIfNewDay(DateTime nowBrt)
+		{
+			if (_limitsCacheResetDay == nowBrt.Date)
+				return;
+
+			_limitsCacheResetDay = nowBrt.Date;
+			_limitsPnlCacheDay = DateTime.MinValue;
+			_limitsPnlCacheTradesCount = -1;
+			_limitsPnlCacheValue = 0.0;
+			_limitsPnlCacheLastExitBrt = DateTime.MinValue;
+			_dailyRealizedPnlForLimits = 0.0;
+		}
+
 		// === Added by paper: keep regime direction locked during an open cycle/position ===
 		private Regime GetEffectiveRegime(double vwap)
 		{
@@ -3880,6 +3933,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			try
 			{
 				var trades = SystemPerformance?.AllTrades;
+				bool useV4OppositeBandLimits = IsV4OppositeBandExit();
 				if (State == State.Realtime && !isAnalyzerMode && _rtBrtDay == nowBrt.Date &&
 					trades != null && trades.Count == _rtLastProcessedTradeCount)
 					return _rtRealizedDay;
@@ -3896,7 +3950,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 				DateTime targetDay = nowBrt.Date;
 				DateTime lastExitBrt = DateTime.MinValue;
 				if (trades.Count > 0 && trades[trades.Count - 1]?.Exit != null)
-					lastExitBrt = ConvertToBrasilia(trades[trades.Count - 1].Exit.Time).AddMinutes(UserBrtOffsetMinutes);
+				{
+					DateTime lastExitTime = trades[trades.Count - 1].Exit.Time;
+					lastExitBrt = useV4OppositeBandLimits
+						? ConvertToBrasilia(TradeTimeToUtc(lastExitTime)).AddMinutes(UserBrtOffsetMinutes)
+						: ConvertToBrasilia(lastExitTime).AddMinutes(UserBrtOffsetMinutes);
+				}
 
 				if (_limitsPnlCacheDay == targetDay &&
 					_limitsPnlCacheTradesCount == trades.Count &&
@@ -3909,7 +3968,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 				{
 					if (trade?.Exit == null) continue;
 
-					DateTime exitBrt = ConvertToBrasilia(trade.Exit.Time).AddMinutes(UserBrtOffsetMinutes);
+					DateTime exitBrt = useV4OppositeBandLimits
+						? ConvertToBrasilia(TradeTimeToUtc(trade.Exit.Time)).AddMinutes(UserBrtOffsetMinutes)
+						: ConvertToBrasilia(trade.Exit.Time).AddMinutes(UserBrtOffsetMinutes);
 					if (exitBrt.Date == targetDay)
 					{
 						total += trade.ProfitCurrency;
@@ -6665,6 +6726,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 				var nowBrtDt = ConvertToBrasilia(Time[0]).AddMinutes(UserBrtOffsetMinutes);
 				ResetDailyPanelPnLIfNewDay(nowBrtDt);
+				if (IsV4OppositeBandExit())
+					ResetDailyLimitsCacheIfNewDay(nowBrtDt);
 				DateTime calDay = nowBrtDt.Date;
 				EvaluateOverlayPenalty(nowBrtDt);
 				if (!_panelPnLInitialized)
