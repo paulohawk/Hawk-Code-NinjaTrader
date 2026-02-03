@@ -1987,6 +1987,9 @@ namespace NinjaTrader.NinjaScript.Strategies
         private const int AutoCloseMaxAttempts = 15;
         private const int AutoCloseMaxWindowMinutes = 15;
         private static readonly TimeSpan AutoCloseMaxDuration = new TimeSpan(5, 30, 0);
+        private const int BracketCreateMaxAttempts = 50;
+        private static readonly TimeSpan BracketCreateCooldown = TimeSpan.FromMilliseconds(500);
+        private static readonly TimeSpan BracketCreateTimeout = TimeSpan.FromSeconds(10);
         // ============================
         // OVERLAY TIME (fixed BRT window)
         // ============================
@@ -2019,6 +2022,26 @@ namespace NinjaTrader.NinjaScript.Strategies
         private double plannedTargetPrice = 0;
         private DateTime plannedTradeDate = DateTime.MinValue;
         private DateTime lastInvertPlanCancelDate = DateTime.MinValue;
+
+        // RT-Live tick engine: cycle state (per position cycle)
+        private long bracketCycleId = 0;
+        private DateTime cycleStartTime = Core.Globals.MinDate;
+        private MarketPosition cycleSide = MarketPosition.Flat;
+        private int cycleQty = 0;
+        private bool bracketConfirmed = false;
+        private bool stopWorking = false;
+        private bool targetWorking = false;
+        private bool bracketCreateArmed = false;
+        private int bracketCreateAttempts = 0;
+        private DateTime lastBracketCreateAttemptUtc = Core.Globals.MinDate;
+        private bool breakEvenArmed = false;
+        private bool breakEvenApplied = false;
+        private double entryPrice = 0.0;
+        private double initialRiskPoints = 0.0;
+        private double beTriggerPrice = 0.0;
+        private double beStopPrice = 0.0;
+        private long lastBracketBrokenCycleId = 0;
+        private string lastBracketBrokenReason = "";
 
         private enum BracketState
         {
@@ -2103,6 +2126,345 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             string suffix = string.IsNullOrWhiteSpace(extra) ? "" : $" {extra}";
             Print($"[BRACKET_CTRL] action={action} reason={reason} source={source} state={bracketState}{suffix}");
+        }
+
+        private bool IsRealtimeLive()
+        {
+            if (State != State.Realtime)
+                return false;
+
+            if (IsPlaybackAccount())
+                return false;
+
+            try
+            {
+                if (Account?.Connection != null)
+                    return Account.Connection.IsConnected;
+            }
+            catch
+            {
+                return true;
+            }
+
+            return true;
+        }
+
+        private string GetModeTag()
+        {
+            return IsHedgeActive() ? "Hedge" : "Default";
+        }
+
+        private string GetEnvTag()
+        {
+            if (IsRealtimeLive())
+                return "RealtimeLive";
+
+            return State == State.Realtime ? "Realtime" : "Historical";
+        }
+
+        private void StartBracketCycle(Position position, double averagePrice, int qty, double stopTicks)
+        {
+            bracketCycleId++;
+            cycleStartTime = DateTime.UtcNow;
+            cycleSide = position.MarketPosition;
+            cycleQty = qty;
+            entryPrice = averagePrice;
+            initialRiskPoints = stopTicks * Instrument.MasterInstrument.TickSize;
+
+            double effectiveAtRR = GetEffectiveBreakEvenAtRR();
+            double effectiveLockRR = GetEffectiveBreakEvenLockRR();
+
+            beTriggerPrice = cycleSide == MarketPosition.Long
+                ? entryPrice + initialRiskPoints * effectiveAtRR
+                : entryPrice - initialRiskPoints * effectiveAtRR;
+            beStopPrice = cycleSide == MarketPosition.Long
+                ? entryPrice + initialRiskPoints * effectiveLockRR
+                : entryPrice - initialRiskPoints * effectiveLockRR;
+
+            bracketCreateArmed = true;
+            breakEvenArmed = true;
+            bracketConfirmed = false;
+            stopWorking = false;
+            targetWorking = false;
+            breakEvenApplied = false;
+            bracketCreateAttempts = 0;
+            lastBracketCreateAttemptUtc = Core.Globals.MinDate;
+
+            Log("CYCLE_START",
+                $"cycleId={bracketCycleId} side={cycleSide} qty={cycleQty} entry={F0(entryPrice)} riskPx={F(initialRiskPoints)} mode={GetModeTag()} env={GetEnvTag()}");
+        }
+
+        private void EndBracketCycle(string reason)
+        {
+            if (cycleSide == MarketPosition.Flat)
+                return;
+
+            Log("CYCLE_END",
+                $"cycleId={bracketCycleId} side={cycleSide} qty={cycleQty} entry={F0(entryPrice)} reason={reason} mode={GetModeTag()} env={GetEnvTag()}");
+
+            cycleStartTime = Core.Globals.MinDate;
+            cycleSide = MarketPosition.Flat;
+            cycleQty = 0;
+            bracketConfirmed = false;
+            stopWorking = false;
+            targetWorking = false;
+            bracketCreateArmed = false;
+            bracketCreateAttempts = 0;
+            lastBracketCreateAttemptUtc = Core.Globals.MinDate;
+            breakEvenArmed = false;
+            breakEvenApplied = false;
+            entryPrice = 0.0;
+            initialRiskPoints = 0.0;
+            beTriggerPrice = 0.0;
+            beStopPrice = 0.0;
+        }
+
+        private void MarkBracketBroken(string reason, string source, string extra = "")
+        {
+            if (bracketCycleId == 0 || cycleSide == MarketPosition.Flat)
+                return;
+
+            if (lastBracketBrokenCycleId == bracketCycleId && string.Equals(lastBracketBrokenReason, reason, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            lastBracketBrokenCycleId = bracketCycleId;
+            lastBracketBrokenReason = reason;
+
+            string suffix = string.IsNullOrWhiteSpace(extra) ? "" : $" {extra}";
+            Log("BRACKET_BROKEN",
+                $"cycleId={bracketCycleId} side={cycleSide} qty={cycleQty} reason={reason} source={source}{suffix} mode={GetModeTag()} env={GetEnvTag()}");
+
+            bracketConfirmed = false;
+            stopWorking = false;
+            targetWorking = false;
+            bracketCreateArmed = true;
+
+            bool stopMissing = cycleSide == MarketPosition.Long ? !IsOrderActive(ordemStopLong) : !IsOrderActive(ordemStopShort);
+            if (breakEvenApplied && stopMissing)
+            {
+                breakEvenApplied = false;
+                breakEvenArmed = true;
+            }
+        }
+
+        private void UpdateBracketConfirmation(Order order, OrderState orderState, string source)
+        {
+            if (order == null)
+                return;
+
+            bool isStop = order == ordemStopLong || order == ordemStopShort;
+            bool isTarget = order == ordemTPLong || order == ordemTPShort;
+            if (!isStop && !isTarget)
+                return;
+
+            bool active = orderState == OrderState.Accepted || orderState == OrderState.Working;
+            if (isStop)
+                stopWorking = active;
+            if (isTarget)
+                targetWorking = active;
+
+            if (!bracketConfirmed && stopWorking && targetWorking)
+            {
+                bracketConfirmed = true;
+                bracketCreateArmed = false;
+                double stopPriceAudit;
+                double targetPriceAudit;
+                GetBracketPrices(cycleSide, out stopPriceAudit, out targetPriceAudit);
+                Log("BRACKET_CONFIRMED",
+                    $"cycleId={bracketCycleId} stop={F0(stopPriceAudit)} target={F0(targetPriceAudit)} mode={GetModeTag()} env={GetEnvTag()}");
+            }
+        }
+
+        private void EnsureCycleSynced(Position position, double averagePrice)
+        {
+            if (position == null || position.MarketPosition == MarketPosition.Flat)
+                return;
+
+            int posQtyAbs = Math.Abs(position.Quantity);
+            double stopTicks;
+            double targetTicks;
+            double stopDollars;
+            ComputeBracketMetrics(out stopTicks, out targetTicks, out stopDollars);
+
+            if (cycleSide == MarketPosition.Flat || cycleQty == 0 || cycleSide != position.MarketPosition)
+            {
+                StartBracketCycle(position, averagePrice, posQtyAbs, stopTicks);
+                return;
+            }
+
+            if (cycleQty != posQtyAbs)
+            {
+                MarkBracketBroken("QTY_MISMATCH", "CycleSync", $"posQty={posQtyAbs}");
+                StartBracketCycle(position, averagePrice, posQtyAbs, stopTicks);
+            }
+        }
+
+        private void AttemptRealtimeLiveBracketCreate(Position position, double averagePrice, string reason)
+        {
+            if (!bracketCreateArmed || bracketConfirmed)
+                return;
+
+            if (position == null || position.MarketPosition == MarketPosition.Flat)
+                return;
+
+            int posQtyAbs = Math.Abs(position.Quantity);
+            if (posQtyAbs <= 0)
+                return;
+
+            if (cycleQty != posQtyAbs)
+            {
+                MarkBracketBroken("QTY_MISMATCH", "BracketCreate", $"posQty={posQtyAbs}");
+                return;
+            }
+
+            var nowUtc = DateTime.UtcNow;
+            if (lastBracketCreateAttemptUtc != Core.Globals.MinDate &&
+                (nowUtc - lastBracketCreateAttemptUtc) < BracketCreateCooldown)
+                return;
+
+            if (cycleStartTime != Core.Globals.MinDate && (nowUtc - cycleStartTime) > BracketCreateTimeout)
+            {
+                Log("BRACKET_CREATE_TIMEOUT",
+                    $"cycleId={bracketCycleId} attempts={bracketCreateAttempts} reason={reason} mode={GetModeTag()} env={GetEnvTag()}");
+                MarkBracketBroken("CREATE_TIMEOUT", "BracketCreate", $"attempts={bracketCreateAttempts}");
+                cycleStartTime = nowUtc;
+                bracketCreateAttempts = 0;
+                bracketCreateArmed = true;
+                lastBracketCreateAttemptUtc = nowUtc.AddSeconds(30);
+                return;
+            }
+
+            if (bracketCreateAttempts >= BracketCreateMaxAttempts)
+            {
+                Log("BRACKET_CREATE_TIMEOUT",
+                    $"cycleId={bracketCycleId} attempts={bracketCreateAttempts} reason=MAX_ATTEMPTS mode={GetModeTag()} env={GetEnvTag()}");
+                MarkBracketBroken("CREATE_MAX_ATTEMPTS", "BracketCreate", $"attempts={bracketCreateAttempts}");
+                cycleStartTime = nowUtc;
+                bracketCreateAttempts = 0;
+                bracketCreateArmed = true;
+                lastBracketCreateAttemptUtc = nowUtc.AddSeconds(30);
+                return;
+            }
+
+            bracketCreateAttempts++;
+            lastBracketCreateAttemptUtc = nowUtc;
+
+            Log("BRACKET_ATTEMPT",
+                $"cycleId={bracketCycleId} attempt={bracketCreateAttempts} side={position.MarketPosition} qty={posQtyAbs} entry={F0(averagePrice)} reason={reason} mode={GetModeTag()} env={GetEnvTag()}");
+
+            double stopTicks;
+            double targetTicks;
+            double stopDollars;
+            ComputeBracketMetrics(out stopTicks, out targetTicks, out stopDollars);
+
+            DateTime tradingDay = GetTradingDay(GetSafeTime());
+            SubmitBracketOrders(position, averagePrice, posQtyAbs, tradingDay, stopTicks, targetTicks, stopDollars, reason, "RealtimeLive", false);
+        }
+
+        private void ApplyRealtimeLiveBreakEven(double lastPrice)
+        {
+            if (!breakEvenArmed || breakEvenApplied)
+                return;
+
+            if (Position == null || Position.MarketPosition == MarketPosition.Flat)
+                return;
+
+            if (cycleSide == MarketPosition.Flat || cycleQty == 0)
+                return;
+
+            double effectiveAtRR = GetEffectiveBreakEvenAtRR();
+            double effectiveLockRR = GetEffectiveBreakEvenLockRR();
+            if (effectiveAtRR <= 0 || effectiveLockRR <= 0)
+                return;
+
+            if (initialRiskPoints <= 0)
+            {
+                double stopTicks;
+                double targetTicks;
+                double stopDollars;
+                ComputeBracketMetrics(out stopTicks, out targetTicks, out stopDollars);
+                initialRiskPoints = stopTicks * Instrument.MasterInstrument.TickSize;
+                beTriggerPrice = cycleSide == MarketPosition.Long
+                    ? entryPrice + initialRiskPoints * effectiveAtRR
+                    : entryPrice - initialRiskPoints * effectiveAtRR;
+                beStopPrice = cycleSide == MarketPosition.Long
+                    ? entryPrice + initialRiskPoints * effectiveLockRR
+                    : entryPrice - initialRiskPoints * effectiveLockRR;
+            }
+
+            bool triggerHit = cycleSide == MarketPosition.Long
+                ? lastPrice >= beTriggerPrice
+                : lastPrice <= beTriggerPrice;
+
+            if (!triggerHit)
+                return;
+
+            Log("BE_TRIGGER_HIT",
+                $"cycleId={bracketCycleId} side={cycleSide} trigger={F0(beTriggerPrice)} priceNow={F0(lastPrice)} mode={GetModeTag()} env={GetEnvTag()}");
+
+            Order stopOrder = cycleSide == MarketPosition.Long ? ordemStopLong : ordemStopShort;
+            if (!IsOrderActive(stopOrder))
+            {
+                MarkBracketBroken("STOP_MISSING_BE", "RealtimeLive", $"priceNow={F0(lastPrice)}");
+                return;
+            }
+
+            int qty = Math.Abs(Position.Quantity) > 0 ? Math.Abs(Position.Quantity) : Math.Abs(stopOrder.Quantity);
+            double tickSize = Instrument.MasterInstrument.TickSize;
+
+            double bid = 0;
+            double ask = 0;
+            bool hasQuotes = false;
+            try
+            {
+                bid = GetCurrentBid();
+                ask = GetCurrentAsk();
+                hasQuotes = (bid > 0 && ask > 0);
+            }
+            catch
+            {
+                hasQuotes = false;
+            }
+
+            double newStop = beStopPrice;
+            if (hasQuotes)
+            {
+                if (cycleSide == MarketPosition.Long && newStop >= bid)
+                    newStop = bid - tickSize;
+                if (cycleSide == MarketPosition.Short && newStop <= ask)
+                    newStop = ask + tickSize;
+            }
+
+            bool changeOk = TryChangeStopOrder(stopOrder, qty, newStop, "BreakEvenAdjust", "RealtimeLive");
+            if (!changeOk)
+            {
+                BracketLog("DENY_CHANGE", "BreakEvenAdjust", "RealtimeLive", $"side={cycleSide}");
+                try { CancelOrder(stopOrder); } catch { }
+
+                string fromSignal = GetActiveEntrySignal(GetTradingDay(GetSafeTime()));
+                if (string.IsNullOrEmpty(fromSignal))
+                    fromSignal = cycleSide == MarketPosition.Long ? "AutoLong" : "AutoShort";
+
+                if (cycleSide == MarketPosition.Long)
+                    ordemStopLong = ExitLongStopMarket(0, true, qty, newStop, "BreakEven", fromSignal);
+                else
+                    ordemStopShort = ExitShortStopMarket(0, true, qty, newStop, "BreakEven", fromSignal);
+            }
+
+            breakEvenApplied = true;
+            breakEvenArmed = false;
+            breakevenAtivado = true;
+            stopWorking = false;
+
+            double locked = ComputeRiskDollars(entryPrice, newStop, Math.Abs(qty));
+            dayBreakevenDollars = locked.ToString("0.00");
+            exitReasonHint = "BE";
+            exitReasonHintTradingDay = GetTradingDay(Times[0][0]);
+
+            Log("BE_APPLIED",
+                $"cycleId={bracketCycleId} trigger={F0(beTriggerPrice)} stopNew={F0(newStop)} priceNow={F0(lastPrice)} mode={GetModeTag()} env={GetEnvTag()}");
+
+            PublishPanelSnapshot("BreakEven_RT");
         }
 
         private void SetBracketState(BracketState nextState, string reason, string source)
@@ -2919,6 +3281,27 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
         }
 
+        protected override void OnMarketData(MarketDataEventArgs e)
+        {
+            if (e == null)
+                return;
+
+            UpdateHeartbeat("OnMarketData");
+
+            if (!IsRealtimeLive())
+                return;
+
+            if (e.MarketDataType != MarketDataType.Last)
+                return;
+
+            if (Position == null || Position.MarketPosition == MarketPosition.Flat)
+                return;
+
+            EnsureCycleSynced(Position, Position.AveragePrice);
+            AttemptRealtimeLiveBracketCreate(Position, Position.AveragePrice, "RT_LIVE_TICK");
+            ApplyRealtimeLiveBreakEven(e.Price);
+        }
+
         private void MaybeRunReconcile(string reason, string source)
         {
             var now = DateTime.UtcNow;
@@ -3198,6 +3581,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
             if (!WatchdogCooldownOk()) return;
             if (!IsBracketMissingOrDead()) return;
+
+            MarkBracketBroken("MISSING_OR_DEAD", context, $"reason={reason}");
 
             lastWatchdogAttemptUtc = DateTime.UtcNow;
             lastWatchdogPositionQty = Math.Abs(Position.Quantity);
@@ -4742,7 +5127,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 GetEffectiveBreakEvenAtRR() > 0 &&
                 GetEffectiveBreakEvenLockRR() > 0)
             {
-                AplicarBreakEvenSeAtingiuRR();
+                if (!IsRealtimeLive())
+                    AplicarBreakEvenSeAtingiuRR();
             }
 
             bool blockEntries = IsEntryBlocked(out string blockReason);
@@ -4974,6 +5360,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }
 
                 lastExitReason = exitReason;
+                EndBracketCycle($"PositionFlat:{exitReason}");
 
                 lastBracketQty = 0;
                 riscoPrecoAtual = 0;
@@ -5070,6 +5457,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             double stopDollars;
             ComputeBracketMetrics(out stopTicks, out targetTicks, out stopDollars);
 
+            EnsureCycleSynced(position, averagePrice);
+
             riscoPrecoAtual = stopTicks * tickSize;
             precoEntradaAtual = averagePrice;
             breakevenAtivado = false;
@@ -5088,7 +5477,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             if (mustRebuild)
             {
-                SubmitBracketOrders(position, averagePrice, posQtyAbs, tradingDay, stopTicks, targetTicks, stopDollars, "PositionOpen", "OnPositionUpdate", false);
+                if (IsRealtimeLive())
+                {
+                    bracketCreateArmed = true;
+                    bracketConfirmed = false;
+                }
+                else
+                {
+                    SubmitBracketOrders(position, averagePrice, posQtyAbs, tradingDay, stopTicks, targetTicks, stopDollars, "PositionOpen", "OnPositionUpdate", false);
+                }
             }
 
             UpdateBracketState("PositionOpen", "OnPositionUpdate");
@@ -5144,6 +5541,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 SetBracketState(BracketState.Pending, "OrderDead", "OnOrderUpdate");
 
                 EnsureBracketAlive("OnOrderUpdate", "OrderDead");
+                MarkBracketBroken("ORDER_DEAD", "OnOrderUpdate", $"name={orderName} state={orderState}");
             }
 
             if (pendingWatchdogRebuild && isBracket &&
@@ -5171,7 +5569,10 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
 
             if (isBracket && (orderState == OrderState.Accepted || orderState == OrderState.Working || orderState == OrderState.Submitted))
+            {
                 UpdateBracketState("OrderActive", "OnOrderUpdate");
+                UpdateBracketConfirmation(order, orderState, "OnOrderUpdate");
+            }
 
             bool unknownOrderAnomaly = orderState == OrderState.Unknown
                 && (IsHeartbeatStale() || IsBracketMissingOrDead() || HasOrphanBracketOrders());
@@ -5274,6 +5675,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 PublishPanelSnapshot("OnExecutionUpdate_dead");
                 EnsureBracketAlive("OnExecutionUpdate", "OrderDead");
+                MarkBracketBroken("ORDER_DEAD", "OnExecutionUpdate", $"name={orderName} state={order.OrderState}");
             }
 
             bool unknownExecAnomaly = order.OrderState == OrderState.Unknown
