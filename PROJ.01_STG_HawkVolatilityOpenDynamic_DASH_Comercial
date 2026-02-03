@@ -3605,7 +3605,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 hasQuotes = false;
             }
 
-            if (!ShouldThrottleAudit($"WATCHDOG_{tradingDay:yyyyMMdd}", LogThrottleSeconds))
+            string throttleKey = "WATCHDOG_" + tradingDay.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
+            if (!ShouldThrottleAudit(throttleKey, LogThrottleSeconds))
             {
                 double stopPriceAudit;
                 double targetPriceAudit;
@@ -3630,10 +3631,16 @@ namespace NinjaTrader.NinjaScript.Strategies
             SubmitBracketOrders(Position, Position.AveragePrice, Math.Abs(Position.Quantity), tradingDay, stopTicks, targetTicks, stopDollars, reason, context, true);
         }
 
-        private void Log(string tag, string message, DateTime? when = null)
+        private void Log(string tag, string message)
         {
-            DateTime ts = when ?? GetSafeTime();
-            Print($"[HAWKLOG] {ts:yyyy-MM-dd HH:mm:ss} [{tag}] {message}");
+            LogAt(tag, message, GetSafeTime());
+        }
+
+        private void LogAt(string tag, string message, DateTime when)
+        {
+            // Evitar interpolação com format specifier no editor do Ninja
+            string ts = when.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+            Print(string.Format(CultureInfo.InvariantCulture, "[HAWKLOG] {0} [{1}] {2}", ts, tag, message));
         }
 
         private string BuildPanelTitle()
@@ -3797,12 +3804,12 @@ namespace NinjaTrader.NinjaScript.Strategies
                         DateTime td = GetTradingDay(GetSafeTime());
                         cutoff = BuildHedgeCutoffLocal(td);
                     }
-                    snap.EndDayText = $"{cutoff:HH\\:mm\\:ss} BR";
+                    snap.EndDayText = cutoff.ToString("HH:mm:ss", CultureInfo.InvariantCulture) + " BR";
                 }
                 else if (autoCloseEntryTimeLocal != Core.Globals.MinDate)
                 {
                     DateTime scheduledClose = autoCloseEntryTimeLocal.Add(AutoCloseMaxDuration);
-                    snap.EndDayText = $"{scheduledClose:HH\\:mm\\:ss} BR";
+                    snap.EndDayText = scheduledClose.ToString("HH:mm:ss", CultureInfo.InvariantCulture) + " BR";
                 }
                 else
                 {
