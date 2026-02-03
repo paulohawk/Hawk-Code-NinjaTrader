@@ -2329,26 +2329,25 @@ namespace NinjaTrader.NinjaScript.Strategies
                 DateTime overlayStart;
                 DateTime overlayEnd;
                 DateTime overlayCutoff;
-                DateTime nowRaw = GetSafeTime();
-                GetOverlayWindowDecision(nowRaw, out overlayTradingDay, out overlayStart, out overlayEnd, out overlayCutoff);
-                bool isInsideOperationalWindow = IsInsideWindow(nowRaw, overlayStart, overlayEnd);
-                bool penaltyNow = isInsideOperationalWindow;
+                DateTime windowsNow;
+                DateTime ninjaNow;
+                bool isInsideOperationalWindow = EvaluateOverlayWindow("Enable", out windowsNow, out ninjaNow, out overlayTradingDay, out overlayStart, out overlayEnd, out overlayCutoff);
                 overlayPenaltyTradingDay = overlayTradingDay.Date;
                 overlayStartCached = overlayStart;
                 overlayEndCached = overlayEnd;
                 overlayCutoffCached = overlayCutoff;
-                overlayPenaltyOnEnable = penaltyNow;
+                overlayPenaltyOnEnable = isInsideOperationalWindow;
                 overlayPenaltyCaptured = true;
-                bool overlayVisibleNow = penaltyNow;
-                Log("TimeTruth", BuildTimeTruthAudit("Enable", nowRaw));
+                bool overlayVisibleNow = isInsideOperationalWindow;
+                Log("TimeTruth", BuildTimeTruthDualAudit("Enable", windowsNow, ninjaNow));
                 string enableMessage = overlayPenaltyOnEnable ? "Attention" : "Status";
                 bool isPlayback = IsPlaybackAccount();
                 Log("OverlayEnableDecision",
-                    $"nowRaw={nowRaw:O} overlayStart={overlayStart:O} cutoff={overlayCutoff:O} overlayEnd={overlayEnd:O} penalty={overlayPenaltyOnEnable} inside={isInsideOperationalWindow} replay={isPlayback}");
+                    $"nowRaw={windowsNow:O} overlayStart={overlayStart:O} cutoff={overlayCutoff:O} overlayEnd={overlayEnd:O} penalty={overlayPenaltyOnEnable} inside={isInsideOperationalWindow} replay={isPlayback}");
                 Log("PanelRiskMessage",
                     $"reason=Enable message={enableMessage} overlayPenaltyOnEnable={overlayPenaltyOnEnable} isInsideOperationalWindow={isInsideOperationalWindow} offSnapshot=false state={State} td={overlayTradingDay:yyyy-MM-dd}");
                 if (overlayVisibleNow)
-                    riskOverlayHelper?.TryShow(this, overlayTradingDay, nowRaw, overlayStart, overlayEnd);
+                    riskOverlayHelper?.TryShow(this, overlayTradingDay, windowsNow, overlayStart, overlayEnd);
                 else
                     riskOverlayHelper?.Remove();
             }
@@ -2458,7 +2457,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             private DateTime riskOverlayResetDate = DateTime.MinValue;
             private ChartControl chartControl;
 
-            public void TryShow(HawkVolatilityOpen owner, DateTime tradingDay, DateTime ninjaNow, DateTime overlayStart, DateTime overlayEnd)
+            public void TryShow(HawkVolatilityOpen owner, DateTime tradingDay, DateTime windowsNow, DateTime overlayStart, DateTime overlayEnd)
             {
                 if (owner == null)
                     return;
@@ -2467,24 +2466,24 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (owner.ChartControl == null)
                     return;
 
-                ResetDailyState(tradingDay, ninjaNow);
+                ResetDailyState(tradingDay, windowsNow);
                 // Overlay exibido no máximo uma vez por dia operacional.
                 if (tradingDay.Date == riskOverlayLastDate.Date)
                     return;
-                if (ninjaNow < overlayStart || ninjaNow >= overlayEnd)
+                if (windowsNow < overlayStart || windowsNow >= overlayEnd)
                 {
                     owner.Log("OverlayDiag",
-                        $"BLOCKED reason=OUTSIDE_WINDOW ninjaNow={ninjaNow:O} start={overlayStart:O} end={overlayEnd:O}");
+                        $"BLOCKED reason=OUTSIDE_WINDOW windowsNow={windowsNow:O} start={overlayStart:O} end={overlayEnd:O}");
                     return;
                 }
 
                 riskOverlayLastDate = tradingDay.Date;
                 owner.Log("OverlayDiag",
-                    $"SHOWN ninjaNow={ninjaNow:O} start={overlayStart:O} end={overlayEnd:O}");
+                    $"SHOWN windowsNow={windowsNow:O} start={overlayStart:O} end={overlayEnd:O}");
                 owner.ChartControl.Dispatcher.BeginInvoke(new Action(() => CreateAndShow(owner.ChartControl)));
             }
 
-            private void ResetDailyState(DateTime tradingDay, DateTime ninjaNow)
+            private void ResetDailyState(DateTime tradingDay, DateTime windowsNow)
             {
                 if (riskOverlayResetDate.Date != tradingDay.Date)
                 {
@@ -2632,6 +2631,38 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
             catch { }
             return DateTime.Now;
+        }
+
+        private DateTime GetWindowsNow()
+        {
+            return DateTime.Now;
+        }
+
+        private void LogTimeSource(string context, DateTime windowsNow, DateTime ninjaNow)
+        {
+            if (ShouldThrottleAudit($"TIMESOURCE_{context}", 60))
+                return;
+            Print($"[TimeSource] context={context} windowsNow={windowsNow:O} ninjaNow={ninjaNow:O} timeSourceUsed=WINDOWS");
+        }
+
+        private void ComputeOverlayWindow(DateTime windowsNow, out DateTime tradingDay, out DateTime overlayStart, out DateTime overlayEnd, out DateTime overlayCutoff)
+        {
+            GetOverlayWindowDecision(windowsNow, out tradingDay, out overlayStart, out overlayEnd, out overlayCutoff);
+        }
+
+        private bool EvaluateOverlayWindow(string context, out DateTime windowsNow, out DateTime ninjaNow, out DateTime tradingDay, out DateTime overlayStart, out DateTime overlayEnd, out DateTime overlayCutoff)
+        {
+            windowsNow = GetWindowsNow();
+            ninjaNow = GetSafeTime();
+            LogTimeSource(context, windowsNow, ninjaNow);
+
+            ComputeOverlayWindow(windowsNow, out tradingDay, out overlayStart, out overlayEnd, out overlayCutoff);
+            return IsInsideWindow(windowsNow, overlayStart, overlayEnd);
+        }
+
+        private string BuildTimeTruthDualAudit(string tag, DateTime windowsNow, DateTime ninjaNow)
+        {
+            return $"{BuildTimeTruthAudit($"{tag}_WINDOWS", windowsNow)} {BuildTimeTruthAudit($"{tag}_NINJA", ninjaNow)}";
         }
 
         private bool IsSameAsPrimaryTimeframe(BarsPeriodType periodType, int periodValue)
@@ -3427,11 +3458,21 @@ namespace NinjaTrader.NinjaScript.Strategies
             bool overlayAttention = false;
             if (!offSnapshot && State == State.Realtime)
             {
-                overlayAttention = overlayPenaltyOnEnable;
+                DateTime windowsNow;
+                DateTime ninjaNow;
+                DateTime overlayTradingDay;
+                DateTime overlayStart;
+                DateTime overlayEnd;
+                DateTime overlayCutoff;
+                overlayAttention = EvaluateOverlayWindow("OverlayEval", out windowsNow, out ninjaNow, out overlayTradingDay, out overlayStart, out overlayEnd, out overlayCutoff);
+                if (overlayAttention)
+                    riskOverlayHelper?.TryShow(this, overlayTradingDay, windowsNow, overlayStart, overlayEnd);
+                else
+                    riskOverlayHelper?.Remove();
             }
             snap.RiskWarningIsAttention = overlayAttention;
             snap.RiskWarningText = overlayAttention
-                ? "Atenção: automação ligada fora do horário operacional.\nMonitore possíveis falhas de stop e alvo."
+                ? "Execução da automação em horário crítico.\nMonitore possíveis falhas de stop e alvo."
                 : "Status: sistema ativo e monitorando condições de mercado.";
 
             RecalcPnLIfNeeded();
