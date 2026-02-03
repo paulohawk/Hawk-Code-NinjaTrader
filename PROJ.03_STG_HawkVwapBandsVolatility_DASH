@@ -2681,11 +2681,21 @@ namespace NinjaTrader.NinjaScript.Strategies
 			DateTime overlayEnd = tradingDay + GetOverlayPenaltyEndTimeBrt(tradingDay);
 
 			bool insideOperationalWindow = nowBrt >= overlayCutoff && nowBrt <= overlayEnd;
+			bool overlayBefore = overlayPenaltyOnEnable;
 
 			overlayStartCached = overlayCutoff;
 			overlayEndCached = overlayEnd;
 			overlayCutoffCached = overlayCutoff;
 			overlayPenaltyOnEnable = nowBrt >= overlayCutoff;
+
+			if (overlayBefore != overlayPenaltyOnEnable)
+			{
+				string reason = nowBrt < overlayCutoff ? "BEFORE_CUTOFF" : "OUT_OF_WINDOW";
+				PanelLog(
+					"OVERLAY",
+					$"bip={BarsInProgress} nowBrt={FormatBrtDate(nowBrt)} {FormatBrtTime(nowBrt)} overlay={overlayBefore}->{overlayPenaltyOnEnable} reason={reason}"
+				);
+			}
 
 			if (insideOperationalWindow)
 			{
@@ -3102,9 +3112,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (newStatus == _lastPanelStatus && _lastPanelStatusBrtDay == nowBrt.Date)
 				return;
 
+			var previousStatus = _lastPanelStatus;
+			bool overlayActive = overlayPenaltyOnEnable;
 			_lastPanelStatus = newStatus;
 			_lastPanelStatusBrtDay = nowBrt.Date;
 			dayStatus = PanelStatusToText(newStatus);
+			PanelLog(
+				"STATUS",
+				$"ctx={contextTag} bip={BarsInProgress} nowBrt={FormatBrtDate(nowBrt)} {FormatBrtTime(nowBrt)} status={previousStatus}->{newStatus} overlay={overlayActive}"
+			);
 			PublishPanelSnapshot($"StatusChange:{contextTag}", force: true);
 		}
 
@@ -3610,7 +3626,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 			snap.DayTradeStatus = status;
 			snap.OverlayPenalty = overlayPenaltyOnEnable;
 			snap.StatusText = "sistema ativo e monitorando condições de mercado.";
-			snap.AttentionText = "automação ligada fora do horário operacional.";
+			snap.AttentionText = overlayPenaltyOnEnable
+				? "automação ligada fora do horário operacional."
+				: "";
 
 			snap.PnLDiaText = _cachedPnlDay;
 			snap.PnLMesText = _cachedPnlMonth;
@@ -6717,6 +6735,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					var barTime = Times[BIP_AUTOCLOSE][0];
 					var nowBrtAutoClose = ConvertToBrasilia(barTime).AddMinutes(UserBrtOffsetMinutes);
 					ApplyDailyResetIfNeeded(nowBrtAutoClose.Date);
+					EvaluateOverlayPenalty(nowBrtAutoClose);
 					UpdatePanelStatusIfChanged(nowBrtAutoClose, "BIP_AUTOCLOSE");
 					TryAutoCloseByClock(nowBrtAutoClose, barTime);
 					return;
