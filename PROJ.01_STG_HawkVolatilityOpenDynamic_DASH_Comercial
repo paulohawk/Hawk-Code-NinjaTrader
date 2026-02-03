@@ -2136,16 +2136,9 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (IsPlaybackAccount())
                 return false;
 
-            try
-            {
-                if (Account != null)
-                    return Account.Connected;
-            }
-            catch
-            {
-                return true;
-            }
-
+            // Não usar Account.Connection.IsConnected ou Account.Connected:
+            // essas APIs não existem/não são acessíveis em alguns builds do NinjaTrader.
+            // Gate mínimo seguro: Realtime (não playback).
             return true;
         }
 
