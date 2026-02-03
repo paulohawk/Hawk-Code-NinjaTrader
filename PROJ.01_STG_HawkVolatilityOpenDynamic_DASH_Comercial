@@ -2138,8 +2138,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             try
             {
-                if (Account?.Connection != null)
-                    return Account.Connection.IsConnected;
+                if (Account != null)
+                    return Account.Connected;
             }
             catch
             {
