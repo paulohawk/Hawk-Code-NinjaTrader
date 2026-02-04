@@ -2042,6 +2042,9 @@ namespace NinjaTrader.NinjaScript.Strategies
         private double initialRiskPoints = 0.0;
         private double beTriggerPrice = 0.0;
         private double beStopPrice = 0.0;
+        private double frozenEntryPrice = 0.0;
+        private double frozenStopPrice = 0.0;
+        private double frozenRiskPoints = 0.0;
         private long lastBracketBrokenCycleId = 0;
         private string lastBracketBrokenReason = "";
 
@@ -2164,17 +2167,23 @@ namespace NinjaTrader.NinjaScript.Strategies
             cycleSide = position.MarketPosition;
             cycleQty = qty;
             entryPrice = averagePrice;
-            initialRiskPoints = stopTicks * Instrument.MasterInstrument.TickSize;
+            double tickSize = Instrument.MasterInstrument.TickSize;
+            initialRiskPoints = stopTicks * tickSize;
+            frozenEntryPrice = averagePrice;
+            frozenStopPrice = cycleSide == MarketPosition.Long
+                ? frozenEntryPrice - initialRiskPoints
+                : frozenEntryPrice + initialRiskPoints;
+            frozenRiskPoints = Math.Abs(frozenEntryPrice - frozenStopPrice);
 
             double effectiveAtRR = GetEffectiveBreakEvenAtRR();
             double effectiveLockRR = GetEffectiveBreakEvenLockRR();
 
             beTriggerPrice = cycleSide == MarketPosition.Long
-                ? entryPrice + initialRiskPoints * effectiveAtRR
-                : entryPrice - initialRiskPoints * effectiveAtRR;
+                ? frozenEntryPrice + frozenRiskPoints * effectiveAtRR
+                : frozenEntryPrice - frozenRiskPoints * effectiveAtRR;
             beStopPrice = cycleSide == MarketPosition.Long
-                ? entryPrice + initialRiskPoints * effectiveLockRR
-                : entryPrice - initialRiskPoints * effectiveLockRR;
+                ? frozenEntryPrice + frozenRiskPoints * effectiveLockRR
+                : frozenEntryPrice - frozenRiskPoints * effectiveLockRR;
 
             bracketCreateArmed = true;
             breakEvenArmed = true;
@@ -2186,7 +2195,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             lastBracketCreateAttemptUtc = Core.Globals.MinDate;
 
             Log("CYCLE_START",
-                $"cycleId={bracketCycleId} side={cycleSide} qty={cycleQty} entry={F0(entryPrice)} riskPx={F(initialRiskPoints)} mode={GetModeTag()} env={GetEnvTag()}");
+                $"cycleId={bracketCycleId} side={cycleSide} qty={cycleQty} entry={F0(entryPrice)} riskPx={F(initialRiskPoints)} frozenEntry={F0(frozenEntryPrice)} frozenRiskPx={F(frozenRiskPoints)} mode={GetModeTag()} env={GetEnvTag()}");
         }
 
         private void EndBracketCycle(string reason)
@@ -2212,6 +2221,9 @@ namespace NinjaTrader.NinjaScript.Strategies
             initialRiskPoints = 0.0;
             beTriggerPrice = 0.0;
             beStopPrice = 0.0;
+            frozenEntryPrice = 0.0;
+            frozenStopPrice = 0.0;
+            frozenRiskPoints = 0.0;
         }
 
         private void MarkBracketBroken(string reason, string source, string extra = "")
@@ -2372,20 +2384,44 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (effectiveAtRR <= 0 || effectiveLockRR <= 0)
                 return;
 
-            if (initialRiskPoints <= 0)
+            if (frozenEntryPrice <= 0)
+                frozenEntryPrice = entryPrice > 0 ? entryPrice : Position.AveragePrice;
+
+            if (frozenRiskPoints <= 0)
             {
+                double stopPriceAudit;
+                double targetPriceAudit;
+                GetBracketPrices(cycleSide, out stopPriceAudit, out targetPriceAudit);
+
                 double stopTicks;
                 double targetTicks;
                 double stopDollars;
                 ComputeBracketMetrics(out stopTicks, out targetTicks, out stopDollars);
-                initialRiskPoints = stopTicks * Instrument.MasterInstrument.TickSize;
-                beTriggerPrice = cycleSide == MarketPosition.Long
-                    ? entryPrice + initialRiskPoints * effectiveAtRR
-                    : entryPrice - initialRiskPoints * effectiveAtRR;
-                beStopPrice = cycleSide == MarketPosition.Long
-                    ? entryPrice + initialRiskPoints * effectiveLockRR
-                    : entryPrice - initialRiskPoints * effectiveLockRR;
+
+                if (stopPriceAudit > 0)
+                {
+                    frozenStopPrice = stopPriceAudit;
+                    frozenRiskPoints = Math.Abs(frozenEntryPrice - frozenStopPrice);
+                }
+                else
+                {
+                    frozenRiskPoints = stopTicks * Instrument.MasterInstrument.TickSize;
+                    frozenStopPrice = cycleSide == MarketPosition.Long
+                        ? frozenEntryPrice - frozenRiskPoints
+                        : frozenEntryPrice + frozenRiskPoints;
+                }
             }
+
+            initialRiskPoints = frozenRiskPoints;
+            beTriggerPrice = cycleSide == MarketPosition.Long
+                ? frozenEntryPrice + frozenRiskPoints * effectiveAtRR
+                : frozenEntryPrice - frozenRiskPoints * effectiveAtRR;
+            beStopPrice = cycleSide == MarketPosition.Long
+                ? frozenEntryPrice + frozenRiskPoints * effectiveLockRR
+                : frozenEntryPrice - frozenRiskPoints * effectiveLockRR;
+
+            Log("BE_CALC",
+                $"cycleId={bracketCycleId} side={cycleSide} entry={F0(frozenEntryPrice)} stop0={F0(frozenStopPrice)} riskPx={F(frozenRiskPoints)} trigger={F0(beTriggerPrice)} stopNew={F0(beStopPrice)} mode={GetModeTag()} env={GetEnvTag()}");
 
             bool triggerHit = cycleSide == MarketPosition.Long
                 ? lastPrice >= beTriggerPrice
@@ -3710,10 +3746,17 @@ namespace NinjaTrader.NinjaScript.Strategies
             double stopDollars;
             ComputeBracketMetrics(out stopTicks, out targetTicks, out stopDollars);
 
-            if (precoEntradaAtual <= 0)
-                precoEntradaAtual = Position.AveragePrice;
-            if (riscoPrecoAtual <= 0)
-                riscoPrecoAtual = stopTicks * Instrument.MasterInstrument.TickSize;
+            if (frozenEntryPrice <= 0)
+                frozenEntryPrice = Position.AveragePrice;
+            if (frozenRiskPoints <= 0)
+            {
+                frozenRiskPoints = stopTicks * Instrument.MasterInstrument.TickSize;
+                frozenStopPrice = lastWatchdogMktPos == MarketPosition.Long
+                    ? frozenEntryPrice - frozenRiskPoints
+                    : frozenEntryPrice + frozenRiskPoints;
+            }
+            precoEntradaAtual = frozenEntryPrice;
+            riscoPrecoAtual = frozenRiskPoints;
 
             lastBracketQty = 0;
             SubmitBracketOrders(Position, Position.AveragePrice, Math.Abs(Position.Quantity), tradingDay, stopTicks, targetTicks, stopDollars, reason, context, true);
@@ -4765,6 +4808,13 @@ namespace NinjaTrader.NinjaScript.Strategies
             breakevenAtivado = false;
             precoEntradaAtual = 0;
             riscoPrecoAtual = 0;
+            bool canResetFrozen = (Position == null || Position.MarketPosition == MarketPosition.Flat) && cycleSide == MarketPosition.Flat;
+            if (canResetFrozen)
+            {
+                frozenEntryPrice = 0.0;
+                frozenStopPrice = 0.0;
+                frozenRiskPoints = 0.0;
+            }
             ordemStopLong = null;
             ordemStopShort = null;
             ordemTPLong = null;
@@ -5444,6 +5494,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                 lastBracketQty = 0;
                 riscoPrecoAtual = 0;
                 precoEntradaAtual = 0;
+                frozenEntryPrice = 0.0;
+                frozenStopPrice = 0.0;
+                frozenRiskPoints = 0.0;
                 breakevenAtivado = false;
                 activeEntrySignal = "";
                 activeEntrySignalDay = DateTime.MinValue;
@@ -5538,8 +5591,18 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             EnsureCycleSynced(position, averagePrice);
 
-            riscoPrecoAtual = stopTicks * tickSize;
-            precoEntradaAtual = averagePrice;
+            if (frozenEntryPrice <= 0)
+                frozenEntryPrice = averagePrice;
+            if (frozenRiskPoints <= 0)
+            {
+                frozenRiskPoints = stopTicks * tickSize;
+                frozenStopPrice = position.MarketPosition == MarketPosition.Long
+                    ? frozenEntryPrice - frozenRiskPoints
+                    : frozenEntryPrice + frozenRiskPoints;
+            }
+
+            riscoPrecoAtual = frozenRiskPoints;
+            precoEntradaAtual = frozenEntryPrice;
             breakevenAtivado = false;
 
             double riskDollars = stopDollars * posQtyAbs;
@@ -5781,12 +5844,40 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             if (Position.MarketPosition == MarketPosition.Long && ordemStopLong != null && !breakevenAtivado && effectiveAtRR > 0 && effectiveLockRR > 0)
             {
-                double trigger = precoEntradaAtual + riscoPrecoAtual * effectiveAtRR;
+                if (frozenEntryPrice <= 0)
+                    frozenEntryPrice = precoEntradaAtual > 0 ? precoEntradaAtual : Position.AveragePrice;
+
+                if (frozenRiskPoints <= 0)
+                {
+                    double stopPriceAudit;
+                    double targetPriceAudit;
+                    GetBracketPrices(MarketPosition.Long, out stopPriceAudit, out targetPriceAudit);
+                    if (stopPriceAudit > 0)
+                    {
+                        frozenStopPrice = stopPriceAudit;
+                        frozenRiskPoints = Math.Abs(frozenEntryPrice - frozenStopPrice);
+                    }
+                    else
+                    {
+                        double stopTicks;
+                        double targetTicks;
+                        double stopDollars;
+                        ComputeBracketMetrics(out stopTicks, out targetTicks, out stopDollars);
+                        double tickSize = Instrument.MasterInstrument.TickSize;
+                        frozenRiskPoints = stopTicks * tickSize;
+                        frozenStopPrice = frozenEntryPrice - frozenRiskPoints;
+                    }
+                }
+
+                if (frozenRiskPoints <= 0)
+                    return;
+
+                double trigger = frozenEntryPrice + frozenRiskPoints * effectiveAtRR;
 
                 if (high >= trigger)
                 {
-                    double novoStop = precoEntradaAtual + riscoPrecoAtual * effectiveLockRR;
-                    double maxStop = precoEntradaAtual + riscoPrecoAtual * TargetFactor;
+                    double novoStop = frozenEntryPrice + frozenRiskPoints * effectiveLockRR;
+                    double maxStop = frozenEntryPrice + frozenRiskPoints * TargetFactor;
                     if (novoStop > maxStop) novoStop = maxStop;
 
                     int qty = Math.Abs(Position.Quantity) > 0 ? Math.Abs(Position.Quantity) : Math.Abs(ordemStopLong.Quantity);
@@ -5831,25 +5922,55 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                     breakevenAtivado = true;
 
-                    double locked = ComputeRiskDollars(precoEntradaAtual, novoStop, Math.Abs(qty));
+                    double locked = ComputeRiskDollars(frozenEntryPrice, novoStop, Math.Abs(qty));
                     dayBreakevenDollars = locked.ToString("0.00");
 
                     exitReasonHint = "BE";
                     exitReasonHintTradingDay = GetTradingDay(Times[0][0]);
 
-                    Audit("BreakEvenTriggered", $"side=Long trigger={F0(trigger)} entry={F0(precoEntradaAtual)} riskPx={F(riscoPrecoAtual)} newStop={F0(novoStop)} lockedDollars={F0(locked)} rrTrigger={F(effectiveAtRR)} rrLock={F(effectiveLockRR)}");
+                    Audit("BreakEvenTriggered", $"side=Long trigger={F0(trigger)} entry={F0(frozenEntryPrice)} riskPx={F(frozenRiskPoints)} newStop={F0(novoStop)} lockedDollars={F0(locked)} rrTrigger={F(effectiveAtRR)} rrLock={F(effectiveLockRR)}");
+                    Log("BE_CALC",
+                        $"cycleId={bracketCycleId} side=Long entry={F0(frozenEntryPrice)} stop0={F0(frozenStopPrice)} riskPx={F(frozenRiskPoints)} trigger={F0(trigger)} stopNew={F0(novoStop)} mode={GetModeTag()} env={GetEnvTag()}");
 
                     PublishPanelSnapshot("BreakEven_Long");
                 }
             }
             else if (Position.MarketPosition == MarketPosition.Short && ordemStopShort != null && !breakevenAtivado && effectiveAtRR > 0 && effectiveLockRR > 0)
             {
-                double trigger = precoEntradaAtual - riscoPrecoAtual * effectiveAtRR;
+                if (frozenEntryPrice <= 0)
+                    frozenEntryPrice = precoEntradaAtual > 0 ? precoEntradaAtual : Position.AveragePrice;
+
+                if (frozenRiskPoints <= 0)
+                {
+                    double stopPriceAudit;
+                    double targetPriceAudit;
+                    GetBracketPrices(MarketPosition.Short, out stopPriceAudit, out targetPriceAudit);
+                    if (stopPriceAudit > 0)
+                    {
+                        frozenStopPrice = stopPriceAudit;
+                        frozenRiskPoints = Math.Abs(frozenEntryPrice - frozenStopPrice);
+                    }
+                    else
+                    {
+                        double stopTicks;
+                        double targetTicks;
+                        double stopDollars;
+                        ComputeBracketMetrics(out stopTicks, out targetTicks, out stopDollars);
+                        double tickSize = Instrument.MasterInstrument.TickSize;
+                        frozenRiskPoints = stopTicks * tickSize;
+                        frozenStopPrice = frozenEntryPrice + frozenRiskPoints;
+                    }
+                }
+
+                if (frozenRiskPoints <= 0)
+                    return;
+
+                double trigger = frozenEntryPrice - frozenRiskPoints * effectiveAtRR;
 
                 if (low <= trigger)
                 {
-                    double novoStop = precoEntradaAtual - riscoPrecoAtual * effectiveLockRR;
-                    double minStop = precoEntradaAtual - riscoPrecoAtual * TargetFactor;
+                    double novoStop = frozenEntryPrice - frozenRiskPoints * effectiveLockRR;
+                    double minStop = frozenEntryPrice - frozenRiskPoints * TargetFactor;
                     if (novoStop < minStop) novoStop = minStop;
 
                     int qty = Math.Abs(Position.Quantity) > 0 ? Math.Abs(Position.Quantity) : Math.Abs(ordemStopShort.Quantity);
@@ -5894,13 +6015,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                     breakevenAtivado = true;
 
-                    double locked = ComputeRiskDollars(precoEntradaAtual, novoStop, Math.Abs(qty));
+                    double locked = ComputeRiskDollars(frozenEntryPrice, novoStop, Math.Abs(qty));
                     dayBreakevenDollars = locked.ToString("0.00");
 
                     exitReasonHint = "BE";
                     exitReasonHintTradingDay = GetTradingDay(Times[0][0]);
 
-                    Audit("BreakEvenTriggered", $"side=Short trigger={F0(trigger)} entry={F0(precoEntradaAtual)} riskPx={F(riscoPrecoAtual)} newStop={F0(novoStop)} lockedDollars={F0(locked)} rrTrigger={F(effectiveAtRR)} rrLock={F(effectiveLockRR)}");
+                    Audit("BreakEvenTriggered", $"side=Short trigger={F0(trigger)} entry={F0(frozenEntryPrice)} riskPx={F(frozenRiskPoints)} newStop={F0(novoStop)} lockedDollars={F0(locked)} rrTrigger={F(effectiveAtRR)} rrLock={F(effectiveLockRR)}");
+                    Log("BE_CALC",
+                        $"cycleId={bracketCycleId} side=Short entry={F0(frozenEntryPrice)} stop0={F0(frozenStopPrice)} riskPx={F(frozenRiskPoints)} trigger={F0(trigger)} stopNew={F0(novoStop)} mode={GetModeTag()} env={GetEnvTag()}");
 
                     PublishPanelSnapshot("BreakEven_Short");
                 }
