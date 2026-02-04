@@ -1996,9 +1996,11 @@ namespace NinjaTrader.NinjaScript.Strategies
         private static readonly TimeSpan OverlayAnchorOffset = new TimeSpan(0, 29, 30);
         private static readonly TimeSpan OverlayStartTime = new TimeSpan(11, 0, 0);
         private static readonly TimeSpan OverlayEndTime = new TimeSpan(20, 0, 0);
-        private bool overlayPenaltyOnEnable = false;
-        private bool overlayPenaltyCaptured = false;
-        private DateTime overlayPenaltyTradingDay = Core.Globals.MinDate;
+        // Overlay enable latch (per trading day)
+        private DateTime overlayEnableTimeLocal = Core.Globals.MinDate;
+        private DateTime overlayEnableTradingDay = Core.Globals.MinDate;
+        private bool overlayPenaltyArmedToday = false;
+        private bool overlayAttentionActive = false;
         private DateTime overlayStartCached = Core.Globals.MinDate;
         private DateTime overlayEndCached = Core.Globals.MinDate;
         private DateTime overlayCutoffCached = Core.Globals.MinDate;
@@ -2686,25 +2688,28 @@ namespace NinjaTrader.NinjaScript.Strategies
                 DateTime overlayCutoff;
                 DateTime windowsNow;
                 DateTime ninjaNow;
-                bool isInsideOperationalWindow = EvaluateOverlayWindow("Enable", out windowsNow, out ninjaNow, out overlayTradingDay, out overlayStart, out overlayEnd, out overlayCutoff);
-                overlayPenaltyTradingDay = overlayTradingDay.Date;
+                bool overlayAttention = EvaluateOverlayPenalty("Enable", out windowsNow, out ninjaNow, out overlayTradingDay, out overlayStart, out overlayEnd, out overlayCutoff);
                 overlayStartCached = overlayStart;
                 overlayEndCached = overlayEnd;
                 overlayCutoffCached = overlayCutoff;
-                overlayPenaltyOnEnable = isInsideOperationalWindow;
-                overlayPenaltyCaptured = true;
-                bool overlayVisibleNow = isInsideOperationalWindow;
+                bool isInsideOperationalWindow = IsInsideWindow(windowsNow, overlayStart, overlayEnd);
                 Log("TimeTruth", BuildTimeTruthDualAudit("Enable", windowsNow, ninjaNow));
-                string enableMessage = overlayPenaltyOnEnable ? "Attention" : "Status";
+                string enableMessage = overlayAttention ? "Attention" : "Status";
                 bool isPlayback = IsPlaybackAccount();
                 Log("OverlayEnableDecision",
-                    $"nowRaw={windowsNow:O} overlayStart={overlayStart:O} cutoff={overlayCutoff:O} overlayEnd={overlayEnd:O} penalty={overlayPenaltyOnEnable} inside={isInsideOperationalWindow} replay={isPlayback}");
+                    "nowRaw=" + windowsNow.ToString("O", CultureInfo.InvariantCulture)
+                    + " overlayStart=" + overlayStart.ToString("O", CultureInfo.InvariantCulture)
+                    + " cutoff=" + overlayCutoff.ToString("O", CultureInfo.InvariantCulture)
+                    + " overlayEnd=" + overlayEnd.ToString("O", CultureInfo.InvariantCulture)
+                    + " armed=" + overlayPenaltyArmedToday
+                    + " inside=" + isInsideOperationalWindow
+                    + " replay=" + isPlayback);
                 Log("PanelRiskMessage",
-                    $"reason=Enable message={enableMessage} overlayPenaltyOnEnable={overlayPenaltyOnEnable} isInsideOperationalWindow={isInsideOperationalWindow} offSnapshot=false state={State} td={overlayTradingDay:yyyy-MM-dd}");
-                if (overlayVisibleNow)
-                    riskOverlayHelper?.TryShow(this, overlayTradingDay, windowsNow, overlayStart, overlayEnd);
-                else
-                    riskOverlayHelper?.Remove();
+                    "reason=Enable message=" + enableMessage
+                    + " overlayPenaltyArmedToday=" + overlayPenaltyArmedToday
+                    + " isInsideOperationalWindow=" + isInsideOperationalWindow
+                    + " offSnapshot=false state=" + State
+                    + " td=" + overlayTradingDay.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
             }
             else if (State == State.Terminated)
             {
@@ -2713,9 +2718,10 @@ namespace NinjaTrader.NinjaScript.Strategies
                 terminatedHandled = true;
 
                 isStrategyActive = false;
-                overlayPenaltyOnEnable = false;
-                overlayPenaltyCaptured = false;
-                overlayPenaltyTradingDay = Core.Globals.MinDate;
+                overlayEnableTimeLocal = Core.Globals.MinDate;
+                overlayEnableTradingDay = Core.Globals.MinDate;
+                overlayPenaltyArmedToday = false;
+                overlayAttentionActive = false;
                 overlayStartCached = Core.Globals.MinDate;
                 overlayEndCached = Core.Globals.MinDate;
                 overlayCutoffCached = Core.Globals.MinDate;
@@ -2826,15 +2832,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (tradingDay.Date == riskOverlayLastDate.Date)
                     return;
                 if (windowsNow < overlayStart || windowsNow >= overlayEnd)
-                {
-                    owner.Log("OverlayDiag",
-                        $"BLOCKED reason=OUTSIDE_WINDOW windowsNow={windowsNow:O} start={overlayStart:O} end={overlayEnd:O}");
                     return;
-                }
 
                 riskOverlayLastDate = tradingDay.Date;
-                owner.Log("OverlayDiag",
-                    $"SHOWN windowsNow={windowsNow:O} start={overlayStart:O} end={overlayEnd:O}");
                 owner.ChartControl.Dispatcher.BeginInvoke(new Action(() => CreateAndShow(owner.ChartControl)));
             }
 
@@ -2993,6 +2993,29 @@ namespace NinjaTrader.NinjaScript.Strategies
             return DateTime.Now;
         }
 
+        private bool IsWithinOverlayWindow(TimeSpan tod)
+        {
+            return tod >= OverlayStartTime && tod <= OverlayEndTime;
+        }
+
+        private void CaptureOverlayEnableLatch(string source, DateTime nowLocal)
+        {
+            DateTime td = GetTradingDay(nowLocal);
+
+            if (overlayEnableTradingDay.Date == td.Date && overlayEnableTimeLocal != Core.Globals.MinDate)
+                return;
+
+            overlayEnableTimeLocal = nowLocal;
+            overlayEnableTradingDay = td.Date;
+            overlayPenaltyArmedToday = IsWithinOverlayWindow(nowLocal.TimeOfDay);
+
+            Log("OverlayLatch",
+                "CAPTURE td=" + td.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
+                + " enable=" + nowLocal.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)
+                + " armed=" + overlayPenaltyArmedToday
+                + " source=" + source);
+        }
+
         private void LogTimeSource(string context, DateTime windowsNow, DateTime ninjaNow)
         {
             if (ShouldThrottleAudit($"TIMESOURCE_{context}", 60))
@@ -3013,6 +3036,72 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             ComputeOverlayWindow(windowsNow, out tradingDay, out overlayStart, out overlayEnd, out overlayCutoff);
             return IsInsideWindow(windowsNow, overlayStart, overlayEnd);
+        }
+
+        private bool EvaluateOverlayPenalty(string context, out DateTime windowsNow, out DateTime ninjaNow, out DateTime tradingDay, out DateTime overlayStart, out DateTime overlayEnd, out DateTime overlayCutoff)
+        {
+            bool nowInWindow = EvaluateOverlayWindow(context, out windowsNow, out ninjaNow, out tradingDay, out overlayStart, out overlayEnd, out overlayCutoff);
+
+            CaptureOverlayEnableLatch(context, windowsNow);
+
+            DateTime td = GetTradingDay(windowsNow);
+            if (overlayEnableTradingDay.Date != td.Date)
+                CaptureOverlayEnableLatch(context + "_ResetTD", windowsNow);
+
+            if (!overlayPenaltyArmedToday)
+            {
+                HideOverlayIfNeeded("NOT_ARMED", windowsNow, overlayStart, overlayEnd);
+                return false;
+            }
+
+            if (nowInWindow)
+            {
+                ShowOverlayIfNeeded("ARMED_AND_IN_WINDOW", tradingDay, windowsNow, overlayStart, overlayEnd);
+                return true;
+            }
+
+            HideOverlayIfNeeded("ARMED_BUT_OUTSIDE_WINDOW", windowsNow, overlayStart, overlayEnd);
+            return false;
+        }
+
+        private void ShowOverlayIfNeeded(string reason, DateTime tradingDay, DateTime windowsNow, DateTime overlayStart, DateTime overlayEnd)
+        {
+            if (!overlayAttentionActive)
+            {
+                string enableText = overlayEnableTimeLocal == Core.Globals.MinDate
+                    ? "n/a"
+                    : overlayEnableTimeLocal.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+                Log("OverlayDiag",
+                    "SHOWN reason=" + reason
+                    + " windowsNow=" + windowsNow.ToString("O", CultureInfo.InvariantCulture)
+                    + " start=" + overlayStart.ToString("O", CultureInfo.InvariantCulture)
+                    + " end=" + overlayEnd.ToString("O", CultureInfo.InvariantCulture)
+                    + " armed=" + overlayPenaltyArmedToday
+                    + " enable=" + enableText);
+                overlayAttentionActive = true;
+            }
+
+            riskOverlayHelper?.TryShow(this, tradingDay, windowsNow, overlayStart, overlayEnd);
+        }
+
+        private void HideOverlayIfNeeded(string reason, DateTime windowsNow, DateTime overlayStart, DateTime overlayEnd)
+        {
+            if (overlayAttentionActive)
+            {
+                string enableText = overlayEnableTimeLocal == Core.Globals.MinDate
+                    ? "n/a"
+                    : overlayEnableTimeLocal.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+                Log("OverlayDiag",
+                    "HIDDEN reason=" + reason
+                    + " windowsNow=" + windowsNow.ToString("O", CultureInfo.InvariantCulture)
+                    + " start=" + overlayStart.ToString("O", CultureInfo.InvariantCulture)
+                    + " end=" + overlayEnd.ToString("O", CultureInfo.InvariantCulture)
+                    + " armed=" + overlayPenaltyArmedToday
+                    + " enable=" + enableText);
+                overlayAttentionActive = false;
+            }
+
+            riskOverlayHelper?.Remove();
         }
 
         private string BuildTimeTruthDualAudit(string tag, DateTime windowsNow, DateTime ninjaNow)
@@ -3842,11 +3931,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 DateTime overlayStart;
                 DateTime overlayEnd;
                 DateTime overlayCutoff;
-                overlayAttention = EvaluateOverlayWindow("OverlayEval", out windowsNow, out ninjaNow, out overlayTradingDay, out overlayStart, out overlayEnd, out overlayCutoff);
-                if (overlayAttention)
-                    riskOverlayHelper?.TryShow(this, overlayTradingDay, windowsNow, overlayStart, overlayEnd);
-                else
-                    riskOverlayHelper?.Remove();
+                overlayAttention = EvaluateOverlayPenalty("OverlayEval", out windowsNow, out ninjaNow, out overlayTradingDay, out overlayStart, out overlayEnd, out overlayCutoff);
             }
             snap.RiskWarningIsAttention = overlayAttention;
             snap.RiskWarningText = overlayAttention
@@ -4720,9 +4805,10 @@ namespace NinjaTrader.NinjaScript.Strategies
             dayStopDollars = "-";
             dayTargetDollars = "-";
             dayBreakevenDollars = "-";
-            overlayPenaltyOnEnable = false;
-            overlayPenaltyCaptured = false;
-            overlayPenaltyTradingDay = Core.Globals.MinDate;
+            overlayEnableTimeLocal = Core.Globals.MinDate;
+            overlayEnableTradingDay = Core.Globals.MinDate;
+            overlayPenaltyArmedToday = false;
+            overlayAttentionActive = false;
             overlayStartCached = Core.Globals.MinDate;
             overlayEndCached = Core.Globals.MinDate;
             overlayCutoffCached = Core.Globals.MinDate;
@@ -5187,7 +5273,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     Audit("EntryDecision",
                         $"scheduled={entryHms} invertMode={GetEffectiveInvertMode()} enterInverted={EnterInverted} useST={UseSuperTrend} stOnClose={SuperTrendOnBarClose} stReady={memoSuperTrendReady} stBull={memoSuperTrendUpTrend} stBear={memoSuperTrendDownTrend} liberarLong={liberarLong} liberarShort={liberarShort} chosen={chosen} qtyPlanned={actualContractsForDay} stopPerCt={F(stopDollarsPerContract)} atr={F(lastAtrVal, "0.000")} atrFactor={F(ATRFactor)}");
                     DateTime auditNow = GetSafeTime();
-                    if (overlayPenaltyCaptured)
+                    if (overlayEnableTimeLocal != Core.Globals.MinDate)
                     {
                         string timeTruth = BuildTimeTruthAudit("EntryDecision", auditNow);
                         string overlayAudit = BuildOverlayWindowAudit(auditNow, overlayStartCached, overlayEndCached, overlayCutoffCached);
@@ -5223,7 +5309,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     {
                         Audit("EntrySubmit", $"side=Long qty={actualContractsForDay} signal=AutoLong");
                         DateTime submitNow = GetSafeTime();
-                        if (overlayPenaltyCaptured)
+                        if (overlayEnableTimeLocal != Core.Globals.MinDate)
                         {
                             string timeTruth = BuildTimeTruthAudit("EntrySubmit", submitNow);
                             string overlayAudit = BuildOverlayWindowAudit(submitNow, overlayStartCached, overlayEndCached, overlayCutoffCached);
@@ -5242,7 +5328,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     {
                         Audit("EntrySubmit", $"side=Short qty={actualContractsForDay} signal=AutoShort");
                         DateTime submitNow = GetSafeTime();
-                        if (overlayPenaltyCaptured)
+                        if (overlayEnableTimeLocal != Core.Globals.MinDate)
                         {
                             string timeTruth = BuildTimeTruthAudit("EntrySubmit", submitNow);
                             string overlayAudit = BuildOverlayWindowAudit(submitNow, overlayStartCached, overlayEndCached, overlayCutoffCached);
