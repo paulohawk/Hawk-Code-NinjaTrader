@@ -3903,6 +3903,19 @@ namespace NinjaTrader.NinjaScript.Strategies
             currentEntryPrice = entryPrice;
             stopAlvoConfigurados = true;
 
+            string entrySignal = marketPosition == MarketPosition.Long ? "LongAuto" : "ShortAuto";
+            DateTime bracketCreateTime = Core.Globals.Now;
+            Print(
+                $"[HawkBRACKET_CREATE] " +
+                $"time={bracketCreateTime:O} " +
+                $"entrySignal={entrySignal} " +
+                $"side={marketPosition} " +
+                $"qty={qty} " +
+                $"stopPrice={stopPrice} " +
+                $"targetPrice={targetPrice} " +
+                $"source=ConfigureStopsTargetsForEntry"
+            );
+
             if (marketPosition == MarketPosition.Long)
             {
                 EnsureLongStopsTargets(qty, stopPrice, targetPrice);
@@ -4035,10 +4048,28 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (needStop)
             {
                 ordemStopLong = ExitLongStopMarket(0, true, qty, stopPrice, "StopLoss", "LongAuto");
+                Print(
+                    $"[HawkBRACKET_ORDER_SUBMIT] " +
+                    $"time={Core.Globals.Now:O} " +
+                    $"type=STOP " +
+                    $"name={ordemStopLong?.Name ?? "StopLoss"} " +
+                    $"price={stopPrice} " +
+                    $"fromSignal={ordemStopLong?.FromEntrySignal ?? "LongAuto"}"
+                );
                 LogStopEvent(ordemStopLong?.Name ?? "StopLoss", stopPrice, ordemStopLong?.FromEntrySignal ?? string.Empty);
             }
             if (needTarget)
+            {
                 ordemTargetLong = ExitLongLimit(0, true, qty, targetPrice, "TakeProfit", "LongAuto");
+                Print(
+                    $"[HawkBRACKET_ORDER_SUBMIT] " +
+                    $"time={Core.Globals.Now:O} " +
+                    $"type=TARGET " +
+                    $"name={ordemTargetLong?.Name ?? "TakeProfit"} " +
+                    $"price={targetPrice} " +
+                    $"fromSignal={ordemTargetLong?.FromEntrySignal ?? "LongAuto"}"
+                );
+            }
         }
 
         private void EnsureShortStopsTargets(int qty, double stopPrice, double targetPrice)
@@ -4055,10 +4086,28 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (needStop)
             {
                 ordemStopShort = ExitShortStopMarket(0, true, qty, stopPrice, "StopLoss", "ShortAuto");
+                Print(
+                    $"[HawkBRACKET_ORDER_SUBMIT] " +
+                    $"time={Core.Globals.Now:O} " +
+                    $"type=STOP " +
+                    $"name={ordemStopShort?.Name ?? "StopLoss"} " +
+                    $"price={stopPrice} " +
+                    $"fromSignal={ordemStopShort?.FromEntrySignal ?? "ShortAuto"}"
+                );
                 LogStopEvent(ordemStopShort?.Name ?? "StopLoss", stopPrice, ordemStopShort?.FromEntrySignal ?? string.Empty);
             }
             if (needTarget)
+            {
                 ordemTargetShort = ExitShortLimit(0, true, qty, targetPrice, "TakeProfit", "ShortAuto");
+                Print(
+                    $"[HawkBRACKET_ORDER_SUBMIT] " +
+                    $"time={Core.Globals.Now:O} " +
+                    $"type=TARGET " +
+                    $"name={ordemTargetShort?.Name ?? "TakeProfit"} " +
+                    $"price={targetPrice} " +
+                    $"fromSignal={ordemTargetShort?.FromEntrySignal ?? "ShortAuto"}"
+                );
+            }
         }
         #endregion
     }
