@@ -1795,6 +1795,13 @@ namespace NinjaTrader.NinjaScript.Strategies
         private double riscoPrecoAtual = 0;
         private bool breakevenAtivado = false;
         private bool stopAlvoConfigurados = false;
+        // INVARIANTE:
+        // bracketQtyLatched representa a quantidade atualmente protegida pelo bracket
+        // e só pode ser atualizado dentro de ConfigureStopsTargetsForEntry.
+        // TODO (robustez futura): considerar BRACKET_GUARD para rearmar proteção quando
+        // stopAlvoConfigurados=true, posição aberta e não houver ordens de bracket working
+        // (ex.: cancelamento externo/rejeição fora do fluxo esperado).
+        private int bracketQtyLatched = 0;
         private DateTime realtimeEntryFirstFillTime = Core.Globals.MinDate;
         private readonly int realtimeBracketWatchdogSeconds = 3;
         private DateTime lastBracketMarketTime = Core.Globals.MinDate;
@@ -2131,7 +2138,11 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (BarsInProgress != 0) return;
 
             HandlePrimarySeries();
+            // Watchdog de segurança para RealtimePrecise.
+            // Após a implementação do bracket no primeiro consumo,
+            // este método atua apenas como fallback extremo.
             EvaluateRealtimeBracketWatchdog();
+            EvaluateRealtimeBracketConsolidation();
 
             if (State == State.Realtime)
             {
@@ -3390,6 +3401,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                     CancelAndClearWorkingOrders();
                     stopAlvoConfigurados = false;
+                    bracketQtyLatched = 0;
                     riscoPrecoAtual = 0;
                     ordemStopLong = null; ordemStopShort = null;
                     ordemTargetLong = null; ordemTargetShort = null;
@@ -3529,6 +3541,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 if (ExecutionMode == ExecutionModeType.RealtimePrecise && execution.Order != null)
                 {
+                    /*
+                    FLUXO REALTIME — BRACKET:
+                    1) Primeiro consumo (PartFilled ou Filled):
+                       → cria imediatamente o bracket com a quantidade atual.
+                    2) Fills adicionais no mesmo candle:
+                       → ignorados (sem reconfiguração).
+                    3) Fechamento do candle de 1 minuto:
+                       → se a quantidade aumentou, cancela e recria o bracket consolidado.
+                    4) Histórico e backtest:
+                       → comportamento inalterado.
+                    */
                     bool isEntryAction = execution.Order.OrderAction == OrderAction.Buy || execution.Order.OrderAction == OrderAction.SellShort;
                     bool isMainEntry = IsMainEntryOrder(execution.Order);
                     bool isStopOrTarget = IsStopOrder(execution.Order) || IsTargetOrder(execution.Order);
@@ -3542,23 +3565,22 @@ namespace NinjaTrader.NinjaScript.Strategies
                         RPLog($"[ENTRY_FIRST_FILL] timeMarket={execution.Time:O} timeLocal={Core.Globals.Now:O} name={execution.Order.Name} signal={execution.Order.FromEntrySignal} qty={quantity} pos={marketPosition}");
                     }
 
-                    if (isEntryCandidate && execution.Order.OrderState == OrderState.PartFilled)
-                    {
-                        RPLog($"[ENTRY_PARTIAL_SKIP] timeMarket={execution.Time:O} timeLocal={Core.Globals.Now:O} source=ExecutionUpdate.PartFilled name={execution.Order.Name} signal={execution.Order.FromEntrySignal} orderFilled={execution.Order.Filled} execQty={quantity} pos={marketPosition}");
-                        return; // Em RealtimePrecise, bracket somente no fill final.
-                    }
-
-                    bool isFillEvent = execution.Order.OrderState == OrderState.Filled;
-                    if (isEntryCandidate && isFillEvent && marketPosition != MarketPosition.Flat)
+                    bool isEntryFillEvent = execution.Order.OrderState == OrderState.PartFilled || execution.Order.OrderState == OrderState.Filled;
+                    if (isEntryCandidate && isEntryFillEvent && marketPosition != MarketPosition.Flat && !stopAlvoConfigurados)
                     {
                         int desiredQty = Math.Abs(Position.Quantity);
                         if (desiredQty == 0) desiredQty = Math.Abs(quantity);
                         if (desiredQty == 0) desiredQty = Math.Abs(execution.Order.Filled);
 
                         double entryPrice = Position.AveragePrice > 0 ? Position.AveragePrice : price;
-                        RPLog($"[ENTRY_FILL] timeMarket={execution.Time:O} timeLocal={Core.Globals.Now:O} source=ExecutionUpdate.FinalFill name={execution.Order.Name} signal={execution.Order.FromEntrySignal} action={execution.Order.OrderAction} qty={desiredQty} entryPrice={entryPrice} mp={marketPosition}");
-                        ConfigureStopsTargetsForEntry(marketPosition, entryPrice, desiredQty, "ExecutionUpdate.FinalFill", execution.Time);
-                        realtimeEntryFirstFillTime = Core.Globals.MinDate;
+                        RPLog($"[ENTRY_FILL] timeMarket={execution.Time:O} timeLocal={Core.Globals.Now:O} source=ExecutionUpdate.FirstConsumption name={execution.Order.Name} signal={execution.Order.FromEntrySignal} action={execution.Order.OrderAction} qty={desiredQty} entryPrice={entryPrice} mp={marketPosition}");
+                        ConfigureStopsTargetsForEntry(marketPosition, entryPrice, desiredQty, "ExecutionUpdate.FirstConsumption", execution.Time);
+                    }
+
+                    if (isEntryCandidate && execution.Order.OrderState == OrderState.PartFilled)
+                    {
+                        RPLog($"[ENTRY_PARTIAL_SKIP] timeMarket={execution.Time:O} timeLocal={Core.Globals.Now:O} source=ExecutionUpdate.PartFilled name={execution.Order.Name} signal={execution.Order.FromEntrySignal} orderFilled={execution.Order.Filled} execQty={quantity} pos={marketPosition}");
+                        return;
                     }
                 }
 
@@ -3596,6 +3618,29 @@ namespace NinjaTrader.NinjaScript.Strategies
             RPLog($"[ENTRY_WATCHDOG] timeMarket={(CurrentBar >= 0 ? Time[0] : Core.Globals.Now):O} timeLocal={Core.Globals.Now:O} elapsedSec={elapsed.TotalSeconds:F1} qty={desiredQty} entryPrice={entryPrice} pos={Position.MarketPosition} source=RealtimePreciseWatchdog");
             ConfigureStopsTargetsForEntry(Position.MarketPosition, entryPrice, desiredQty, "RealtimeWatchdog", CurrentBar >= 0 ? Time[0] : Core.Globals.Now);
             realtimeEntryFirstFillTime = Core.Globals.MinDate;
+        }
+
+        private void EvaluateRealtimeBracketConsolidation()
+        {
+            if (ExecutionMode != ExecutionModeType.RealtimePrecise) return;
+            if (BarsInProgress != 0) return;
+            if (Position.MarketPosition == MarketPosition.Flat || !stopAlvoConfigurados) return;
+
+            // Dispara no fechamento do candle (OnBarClose) ou no primeiro tick do candle novo (OnEachTick).
+            if (!(Calculate == Calculate.OnBarClose || IsFirstTickOfBar)) return;
+
+            int desiredQty = Math.Abs(Position.Quantity);
+            if (desiredQty <= 0 || desiredQty == bracketQtyLatched) return;
+
+            double entryPrice = Position.AveragePrice > 0 ? Position.AveragePrice : currentEntryPrice ?? 0;
+            if (entryPrice <= 0) return;
+
+            DateTime marketTs = (Calculate == Calculate.OnBarClose)
+                ? Time[0] // candle que acabou de fechar (modo OnBarClose)
+                : (CurrentBar > 0 ? Time[1] : Time[0]); // candle recém-fechado (modo OnEachTick)
+
+            RPLog($"[ENTRY_CONSOLIDATE] timeMarket={marketTs:O} timeLocal={Core.Globals.Now:O} source=BracketConsolidation qtyPrev={bracketQtyLatched} qtyNew={desiredQty} mp={Position.MarketPosition}");
+            ConfigureStopsTargetsForEntry(Position.MarketPosition, entryPrice, desiredQty, "BracketConsolidation", marketTs, true);
         }
 
         private void TryDrawExitFromExecution(Execution execution)
@@ -3933,7 +3978,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             return true;
         }
 
-        private void ConfigureStopsTargetsForEntry(MarketPosition marketPosition, double entryPrice, int qty, string triggerTag, DateTime? marketTime = null)
+        private void ConfigureStopsTargetsForEntry(MarketPosition marketPosition, double entryPrice, int qty, string triggerTag, DateTime? marketTime = null, bool allowRealtimeReconfigure = false)
         {
             if (qty <= 0)
                 return;
@@ -3942,7 +3987,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 return;
 
             bool hadConfig = stopAlvoConfigurados;
-            if (ExecutionMode == ExecutionModeType.RealtimePrecise && hadConfig)
+            if (ExecutionMode == ExecutionModeType.RealtimePrecise && hadConfig && !allowRealtimeReconfigure)
             {
                 RPLog($"[ENTRY_STOPS][SKIP_RECONFIG] trigger={triggerTag} qty={qty} entry={entryPrice} reason=alreadyConfigured");
                 return;
@@ -3973,6 +4018,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             currentPlannedTarget = targetPrice;
             currentEntryPrice = entryPrice;
             stopAlvoConfigurados = true;
+            bracketQtyLatched = qty;
 
             string entrySignal = marketPosition == MarketPosition.Long ? "LongAuto" : "ShortAuto";
             DateTime marketTs = marketTime ?? (CurrentBar >= 0 ? Time[0] : Core.Globals.Now);
