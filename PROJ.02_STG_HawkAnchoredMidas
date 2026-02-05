@@ -1795,6 +1795,9 @@ namespace NinjaTrader.NinjaScript.Strategies
         private double riscoPrecoAtual = 0;
         private bool breakevenAtivado = false;
         private bool stopAlvoConfigurados = false;
+        private DateTime realtimeEntryFirstFillTime = Core.Globals.MinDate;
+        private readonly int realtimeBracketWatchdogSeconds = 3;
+        private DateTime lastBracketMarketTime = Core.Globals.MinDate;
         private bool longTradedToday = false;
         private bool shortTradedToday = false;
         private bool compraFeitaNaSessao = false;
@@ -2128,6 +2131,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (BarsInProgress != 0) return;
 
             HandlePrimarySeries();
+            EvaluateRealtimeBracketWatchdog();
 
             if (State == State.Realtime)
             {
@@ -3312,6 +3316,25 @@ namespace NinjaTrader.NinjaScript.Strategies
                 || name.IndexOf("BreakEven", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
+        private bool IsTargetOrder(NinjaTrader.Cbi.Order order)
+        {
+            if (order == null) return false;
+            string orderName = order.Name ?? string.Empty;
+            return orderName.IndexOf("TakeProfit", StringComparison.OrdinalIgnoreCase) >= 0
+                || orderName.IndexOf("Target", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private bool IsMainEntryOrder(NinjaTrader.Cbi.Order order)
+        {
+            if (order == null) return false;
+            string name = order.Name ?? string.Empty;
+            string signal = order.FromEntrySignal ?? string.Empty;
+            return name.Equals("LongAuto", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("ShortAuto", StringComparison.OrdinalIgnoreCase)
+                || signal.Equals("LongAuto", StringComparison.OrdinalIgnoreCase)
+                || signal.Equals("ShortAuto", StringComparison.OrdinalIgnoreCase);
+        }
+
         private void LogStopEvent(string orderName, double stopPrice, string fromSignal)
         {
             string stopType = GetStopTypeFromName(orderName);
@@ -3379,6 +3402,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                     currentPlannedTarget = null;
                     currentEntryPrice = null;
                     statusText = lastTradeQty.HasValue ? "Closed" : "Waiting (aguardando)";
+                    realtimeEntryFirstFillTime = Core.Globals.MinDate;
+                    lastBracketMarketTime = Core.Globals.MinDate;
 
                     ConsolidatePerformanceIfNeeded(force: true);
                     return;
@@ -3393,10 +3418,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 if (ExecutionMode == ExecutionModeType.RealtimePrecise)
                 {
-                    if (!stopAlvoConfigurados)
-                        ConfigureStopsTargetsForEntry(marketPosition, averagePrice, desiredQty, "PositionUpdate");
-                    else
-                        currentEntryPrice = currentEntryPrice ?? averagePrice;
+                    // Em modo RealtimePrecise o bracket é configurado apenas no fill final
+                    // (OnExecutionUpdate com OrderState.Filled), evitando churn em PartFilled.
+                    currentEntryPrice = currentEntryPrice ?? averagePrice;
 
                     statusText = marketPosition == MarketPosition.Long ? "Posição Long" : "Posição Short";
                     return;
@@ -3506,16 +3530,29 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (ExecutionMode == ExecutionModeType.RealtimePrecise && execution.Order != null)
                 {
                     bool isEntryAction = execution.Order.OrderAction == OrderAction.Buy || execution.Order.OrderAction == OrderAction.SellShort;
-                    bool isFillEvent = execution.Order.OrderState == OrderState.Filled || execution.Order.OrderState == OrderState.PartFilled;
-                    if (isEntryAction && isFillEvent && marketPosition != MarketPosition.Flat)
+                    bool isMainEntry = IsMainEntryOrder(execution.Order);
+                    bool isStopOrTarget = IsStopOrder(execution.Order) || IsTargetOrder(execution.Order);
+                    bool isEntryCandidate = isEntryAction && isMainEntry && !isStopOrTarget;
+
+                    if (isEntryCandidate && marketPosition != MarketPosition.Flat && quantity > 0
+                        && (execution.Order.OrderState == OrderState.PartFilled || execution.Order.OrderState == OrderState.Filled)
+                        && realtimeEntryFirstFillTime == Core.Globals.MinDate)
+                    {
+                        realtimeEntryFirstFillTime = execution.Time;
+                        RPLog($"[ENTRY_FIRST_FILL] timeMarket={execution.Time:O} timeLocal={Core.Globals.Now:O} name={execution.Order.Name} signal={execution.Order.FromEntrySignal} qty={quantity} pos={marketPosition}");
+                    }
+
+                    bool isFillEvent = execution.Order.OrderState == OrderState.Filled;
+                    if (isEntryCandidate && isFillEvent && marketPosition != MarketPosition.Flat)
                     {
                         int desiredQty = Math.Abs(Position.Quantity);
                         if (desiredQty == 0) desiredQty = Math.Abs(quantity);
                         if (desiredQty == 0) desiredQty = Math.Abs(execution.Order.Filled);
 
                         double entryPrice = Position.AveragePrice > 0 ? Position.AveragePrice : price;
-                        RPLog($"[ENTRY_FILL] time={execution.Time:O} name={execution.Order.Name} action={execution.Order.OrderAction} qty={desiredQty} entryPrice={entryPrice} mp={marketPosition}");
-                        ConfigureStopsTargetsForEntry(marketPosition, entryPrice, desiredQty, "ExecutionUpdate");
+                        RPLog($"[ENTRY_FILL] timeMarket={execution.Time:O} timeLocal={Core.Globals.Now:O} source=ExecutionUpdate.FinalFill name={execution.Order.Name} signal={execution.Order.FromEntrySignal} action={execution.Order.OrderAction} qty={desiredQty} entryPrice={entryPrice} mp={marketPosition}");
+                        ConfigureStopsTargetsForEntry(marketPosition, entryPrice, desiredQty, "ExecutionUpdate.FinalFill", execution.Time);
+                        realtimeEntryFirstFillTime = Core.Globals.MinDate;
                     }
                 }
 
@@ -3531,6 +3568,28 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }
             }
             catch (Exception ex) { Log("[Strategy] OnExecutionUpdate error: " + ex.Message, LogLevel.Error); }
+        }
+
+
+        private void EvaluateRealtimeBracketWatchdog()
+        {
+            if (ExecutionMode != ExecutionModeType.RealtimePrecise) return;
+            if (Position.MarketPosition == MarketPosition.Flat) return;
+            if (stopAlvoConfigurados) return;
+            if (realtimeEntryFirstFillTime == Core.Globals.MinDate) return;
+
+            TimeSpan elapsed = Core.Globals.Now - realtimeEntryFirstFillTime;
+            if (elapsed.TotalSeconds < realtimeBracketWatchdogSeconds) return;
+
+            int desiredQty = Math.Abs(Position.Quantity);
+            if (desiredQty <= 0) return;
+
+            double entryPrice = Position.AveragePrice > 0 ? Position.AveragePrice : currentEntryPrice ?? 0;
+            if (entryPrice <= 0) return;
+
+            RPLog($"[ENTRY_WATCHDOG] timeMarket={(CurrentBar >= 0 ? Time[0] : Core.Globals.Now):O} timeLocal={Core.Globals.Now:O} elapsedSec={elapsed.TotalSeconds:F1} qty={desiredQty} entryPrice={entryPrice} pos={Position.MarketPosition} source=RealtimePreciseWatchdog");
+            ConfigureStopsTargetsForEntry(Position.MarketPosition, entryPrice, desiredQty, "RealtimeWatchdog", CurrentBar >= 0 ? Time[0] : Core.Globals.Now);
+            realtimeEntryFirstFillTime = Core.Globals.MinDate;
         }
 
         private void TryDrawExitFromExecution(Execution execution)
@@ -3868,7 +3927,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             return true;
         }
 
-        private void ConfigureStopsTargetsForEntry(MarketPosition marketPosition, double entryPrice, int qty, string triggerTag)
+        private void ConfigureStopsTargetsForEntry(MarketPosition marketPosition, double entryPrice, int qty, string triggerTag, DateTime? marketTime = null)
         {
             if (qty <= 0)
                 return;
@@ -3904,16 +3963,19 @@ namespace NinjaTrader.NinjaScript.Strategies
             stopAlvoConfigurados = true;
 
             string entrySignal = marketPosition == MarketPosition.Long ? "LongAuto" : "ShortAuto";
-            DateTime bracketCreateTime = Core.Globals.Now;
+            DateTime marketTs = marketTime ?? (CurrentBar >= 0 ? Time[0] : Core.Globals.Now);
+            DateTime localTs = Core.Globals.Now;
+            lastBracketMarketTime = marketTs;
             Print(
                 $"[HawkBRACKET_CREATE] " +
-                $"time={bracketCreateTime:O} " +
+                $"timeMarket={marketTs:O} " +
+                $"timeLocal={localTs:O} " +
                 $"entrySignal={entrySignal} " +
                 $"side={marketPosition} " +
                 $"qty={qty} " +
                 $"stopPrice={stopPrice} " +
                 $"targetPrice={targetPrice} " +
-                $"source=ConfigureStopsTargetsForEntry"
+                $"source={triggerTag}"
             );
 
             if (marketPosition == MarketPosition.Long)
@@ -4050,7 +4112,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 ordemStopLong = ExitLongStopMarket(0, true, qty, stopPrice, "StopLoss", "LongAuto");
                 Print(
                     $"[HawkBRACKET_ORDER_SUBMIT] " +
-                    $"time={Core.Globals.Now:O} " +
+                     $"timeMarket={lastBracketMarketTime:O} " +
+                    $"timeLocal={Core.Globals.Now:O} " +
                     $"type=STOP " +
                     $"name={ordemStopLong?.Name ?? "StopLoss"} " +
                     $"price={stopPrice} " +
@@ -4063,7 +4126,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 ordemTargetLong = ExitLongLimit(0, true, qty, targetPrice, "TakeProfit", "LongAuto");
                 Print(
                     $"[HawkBRACKET_ORDER_SUBMIT] " +
-                    $"time={Core.Globals.Now:O} " +
+                     $"timeMarket={lastBracketMarketTime:O} " +
+                    $"timeLocal={Core.Globals.Now:O} " +
                     $"type=TARGET " +
                     $"name={ordemTargetLong?.Name ?? "TakeProfit"} " +
                     $"price={targetPrice} " +
@@ -4088,7 +4152,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 ordemStopShort = ExitShortStopMarket(0, true, qty, stopPrice, "StopLoss", "ShortAuto");
                 Print(
                     $"[HawkBRACKET_ORDER_SUBMIT] " +
-                    $"time={Core.Globals.Now:O} " +
+                     $"timeMarket={lastBracketMarketTime:O} " +
+                    $"timeLocal={Core.Globals.Now:O} " +
                     $"type=STOP " +
                     $"name={ordemStopShort?.Name ?? "StopLoss"} " +
                     $"price={stopPrice} " +
@@ -4101,7 +4166,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 ordemTargetShort = ExitShortLimit(0, true, qty, targetPrice, "TakeProfit", "ShortAuto");
                 Print(
                     $"[HawkBRACKET_ORDER_SUBMIT] " +
-                    $"time={Core.Globals.Now:O} " +
+                     $"timeMarket={lastBracketMarketTime:O} " +
+                    $"timeLocal={Core.Globals.Now:O} " +
                     $"type=TARGET " +
                     $"name={ordemTargetShort?.Name ?? "TakeProfit"} " +
                     $"price={targetPrice} " +
