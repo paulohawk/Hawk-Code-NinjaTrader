@@ -3333,12 +3333,13 @@ namespace NinjaTrader.NinjaScript.Strategies
             try
             {
                 if (order == null) return;
+                DateTime orderTime = order.Time;
                 if (orderState == OrderState.Filled || orderState == OrderState.Cancelled || orderState == OrderState.Rejected)
                 {
-                    Print($"[HawkDiag][ORDER] stateChange name={order.Name} id={order.OrderId} state={orderState} action={order.OrderAction} type={order.OrderType} qty={order.Quantity} filled={order.Filled} avgFill={order.AverageFillPrice} limit={order.LimitPrice} stop={order.StopPrice} oco={order.Oco} time={time:O} error={error} nativeError={nativeError}");
+                    Print($"[HawkORDER_REAL] orderTime={orderTime:O} cbTime={time:O} source=order.Time name={order.Name} id={order.OrderId} state={orderState} action={order.OrderAction} type={order.OrderType} qty={order.Quantity} filled={order.Filled} avgFill={order.AverageFillPrice} limit={order.LimitPrice} stop={order.StopPrice} oco={order.Oco} error={error} nativeError={nativeError}");
                     if (orderState == OrderState.Rejected)
                     {
-                        RPLog($"[ORDER_REJECT] name={order.Name} id={order.OrderId} action={order.OrderAction} type={order.OrderType} qty={order.Quantity} filled={order.Filled} avgFill={order.AverageFillPrice} limit={order.LimitPrice} stop={order.StopPrice} time={time:O} error={error} nativeError={nativeError} pos={Position.MarketPosition} posQty={Position.Quantity} entry={currentEntryPrice} plannedStop={currentPlannedStop} plannedTarget={currentPlannedTarget}");
+                        RPLog($"[ORDER_REJECT] name={order.Name} id={order.OrderId} action={order.OrderAction} type={order.OrderType} qty={order.Quantity} filled={order.Filled} avgFill={order.AverageFillPrice} limit={order.LimitPrice} stop={order.StopPrice} orderTime={orderTime:O} cbTime={time:O} source=order.Time error={error} nativeError={nativeError} pos={Position.MarketPosition} posQty={Position.Quantity} entry={currentEntryPrice} plannedStop={currentPlannedStop} plannedTarget={currentPlannedTarget}");
                     }
                 }
             }
@@ -3485,6 +3486,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             try
             {
                 if (execution == null) return;
+                DateTime execTime = execution.Time;
                 if (execution.Order != null)
                 {
                     if (execution.Order.OrderAction == OrderAction.Buy) longTradedToday = true;
@@ -3492,9 +3494,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }
 
                 // Log de execução preenchida
-                if (execution.Order != null && (execution.Order.OrderState == OrderState.Filled || execution.Order.OrderState == OrderState.PartFilled))
+                if (execution?.Order != null && quantity > 0)
                 {
-                    Print($"[HawkExec] event=ExecutionUpdate time={time:O} orderName={execution.Order.Name} orderAction={execution.Order.OrderAction} orderType={execution.Order.OrderType} filledQty={quantity} fillPrice={price} mpArg={marketPosition} posNow={Position.MarketPosition} posQty={Position.Quantity} posAvg={Position.AveragePrice} oco={execution.Order.Oco} fromSignal={execution.Order.FromEntrySignal}");
+                    Print($"[HawkEXEC_REAL] execTime={execTime:O} source=execution.Time orderName={execution.Order.Name} orderAction={execution.Order.OrderAction} orderType={execution.Order.OrderType} orderState={execution.Order.OrderState} filledQty={quantity} fillPrice={price} mpArg={marketPosition} posNow={Position.MarketPosition} posQty={Position.Quantity} posAvg={Position.AveragePrice} oco={execution.Order.Oco} fromSignal={execution.Order.FromEntrySignal}");
                     if (IsStopOrder(execution.Order))
                     {
                         LogStopEvent(execution.Order.Name, price, execution.Order.FromEntrySignal);
@@ -3601,7 +3603,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (marketDataUpdate.MarketDataType != MarketDataType.Last) return;
                 if (Position.MarketPosition == MarketPosition.Flat || breakevenAtivado || !stopAlvoConfigurados) return;
 
-                EvaluateBreakEven("TICK_RT", marketDataUpdate.Price, double.NaN, double.NaN, Time[0]);
+                EvaluateBreakEven("TICK_RT", marketDataUpdate.Price, double.NaN, double.NaN, marketDataUpdate.Time);
             }
             catch (Exception ex)
             {
