@@ -2410,7 +2410,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private static readonly TimeSpan OverlayRecommendedLead = new TimeSpan(0, 30, 0);
 		private bool overlayPenaltyOnEnable = false;
 		private bool overlayPenaltyCaptured = false;
-		private DateTime overlayPenaltyTradingDay = Core.Globals.MinDate;
+		private bool overlayEnableCaptured = false;
+		private DateTime overlayEnableTimeBrt = Core.Globals.MinDate;
+		private DateTime overlayEnableTradingDayBrt = Core.Globals.MinDate;
 		private DateTime overlayStartCached = Core.Globals.MinDate;
 		private DateTime overlayEndCached = Core.Globals.MinDate;
 		private DateTime overlayCutoffCached = Core.Globals.MinDate;
@@ -2612,9 +2614,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 						SyncV2InternalLedgerFromRebuild(nowBrt);
 					PublishPanelSnapshot("StartupRebuild", force: true);
 					PublishPanelSnapshot("OverlayMsgInit", force: true);
+					if (!overlayEnableCaptured)
+					{
+						overlayEnableTimeBrt = nowBrt;
+						overlayEnableTradingDayBrt = GetOverlayTradingDayFromEnable(nowBrt);
+						overlayEnableCaptured = true;
+					}
 					ChartControl?.Dispatcher.BeginInvoke(new Action(() =>
 					{
-						EvaluateOverlayPenalty(nowBrt);
+						EvaluateOverlayPenalty();
 					}));
 					StartFlattenTimerIfNeeded();
 					PublishPanelSnapshot("StateRealtime");
@@ -2630,7 +2638,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 					RemoveRiskOverlay();
 					overlayPenaltyOnEnable = false;
 					overlayPenaltyCaptured = false;
-					overlayPenaltyTradingDay = Core.Globals.MinDate;
+					overlayEnableCaptured = false;
+					overlayEnableTimeBrt = Core.Globals.MinDate;
+					overlayEnableTradingDayBrt = Core.Globals.MinDate;
 					overlayStartCached = Core.Globals.MinDate;
 					overlayEndCached = Core.Globals.MinDate;
 					overlayCutoffCached = Core.Globals.MinDate;
@@ -2671,44 +2681,35 @@ namespace NinjaTrader.NinjaScript.Strategies
 		#endregion
 
 		#region Helpers: overlay
-		private void EvaluateOverlayPenalty(DateTime nowBrt)
+		private void EvaluateOverlayPenalty()
 		{
 			if (overlayPenaltyCaptured) return;
 			if (isAnalyzerMode) return;
 			if (State != State.Realtime) return;
 
-			DateTime tradingDay = nowBrt.Date;
+			if (!overlayEnableCaptured) return;
 
-			if (overlayPenaltyTradingDay == tradingDay)
-				return;
-
-			TimeSpan startAnalysis = GetStartAnalysisTimeBrt(tradingDay);
+			TimeSpan startAnalysis = GetStartAnalysisTimeBrt(overlayEnableTradingDayBrt);
 			TimeSpan recommendedCutoff = startAnalysis - OverlayRecommendedLead;
 
-			DateTime overlayCutoff = tradingDay + recommendedCutoff;
-			DateTime overlayEnd = tradingDay + GetOverlayPenaltyEndTimeBrt(tradingDay);
+			DateTime overlayCutoff = overlayEnableTradingDayBrt + recommendedCutoff;
+			DateTime overlayEnd = overlayEnableTradingDayBrt + GetOverlayPenaltyEndTimeBrt(overlayEnableTradingDayBrt);
 
-			bool insideOperationalWindow = nowBrt >= overlayCutoff && nowBrt <= overlayEnd;
-			bool overlayBefore = overlayPenaltyOnEnable;
+			overlayPenaltyOnEnable = overlayEnableTimeBrt >= overlayCutoff && overlayEnableTimeBrt <= overlayEnd;
+			overlayPenaltyCaptured = true;
 
 			overlayStartCached = overlayCutoff;
 			overlayEndCached = overlayEnd;
 			overlayCutoffCached = overlayCutoff;
-			overlayPenaltyOnEnable = nowBrt >= overlayCutoff;
 
-			if (overlayBefore != overlayPenaltyOnEnable)
-			{
-				string reason = nowBrt < overlayCutoff ? "BEFORE_CUTOFF" : "OUT_OF_WINDOW";
-				PanelLog(
-					"OVERLAY",
-					$"bip={BarsInProgress} nowBrt={FormatBrtDate(nowBrt)} {FormatBrtTime(nowBrt)} overlay={overlayBefore}->{overlayPenaltyOnEnable} reason={reason}"
-				);
-			}
+			string reason = overlayEnableTimeBrt < overlayCutoff ? "BEFORE_CUTOFF" : (overlayEnableTimeBrt > overlayEnd ? "AFTER_WINDOW" : "INSIDE_WINDOW");
+			PanelLog(
+				"OVERLAY",
+				$"bip={BarsInProgress} enableBrt={FormatBrtDate(overlayEnableTimeBrt)} {FormatBrtTime(overlayEnableTimeBrt)} tradingDay={FormatBrtDate(overlayEnableTradingDayBrt)} sessionRestart={GetSessionRestartTimeBrt(overlayEnableTradingDayBrt).ToString(@"hh\:mm")} cutoff={FormatBrtTime(overlayCutoff)} end={FormatBrtTime(overlayEnd)} overlay={overlayPenaltyOnEnable} reason={reason}"
+			);
 
-			if (insideOperationalWindow)
+			if (overlayPenaltyOnEnable)
 			{
-				overlayPenaltyCaptured = true;
-				overlayPenaltyTradingDay = tradingDay;
 				ShowRiskOverlay(recommendedCutoff);
 				PublishPanelSnapshot("OverlayPenaltyActivated", force: true);
 			}
@@ -3011,6 +3012,25 @@ namespace NinjaTrader.NinjaScript.Strategies
 			var start = GetStartAnalysisTimeBrt(tradingDayBrt.Date);
 			if (start.Hours == 10) return new TimeSpan(20, 0, 0);
 			return new TimeSpan(19, 0, 0);
+		}
+
+		private TimeSpan GetSessionRestartTimeBrt(DateTime tradingDayBrt)
+		{
+			bool usaDst = IsUsaDstForTradingDay(tradingDayBrt.Date);
+			return usaDst
+				? new TimeSpan(19, 0, 0)
+				: new TimeSpan(20, 0, 0);
+		}
+
+		private DateTime GetOverlayTradingDayFromEnable(DateTime enableTimeBrt)
+		{
+			DateTime enableDate = enableTimeBrt.Date;
+			TimeSpan sessionRestart = GetSessionRestartTimeBrt(enableDate);
+
+			if (enableTimeBrt.TimeOfDay >= sessionRestart)
+				return enableDate.AddDays(1);
+
+			return enableDate;
 		}
 
 		private TimeSpan GetAutoCloseTimeBrt(DateTime tradingDayBrt)
@@ -6857,7 +6877,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					var barTime = Times[BIP_AUTOCLOSE][0];
 					var nowBrtAutoClose = ConvertToBrasilia(barTime).AddMinutes(UserBrtOffsetMinutes);
 					ApplyDailyResetIfNeeded(nowBrtAutoClose.Date);
-					EvaluateOverlayPenalty(nowBrtAutoClose);
+					EvaluateOverlayPenalty();
 					UpdatePanelStatusIfChanged(nowBrtAutoClose, "BIP_AUTOCLOSE");
 					TryAutoCloseByClock(nowBrtAutoClose, barTime);
 					return;
@@ -6870,7 +6890,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (IsV4OppositeBandExit())
 					ResetDailyLimitsCacheIfNewDay(nowBrtDt);
 				DateTime calDay = nowBrtDt.Date;
-				EvaluateOverlayPenalty(nowBrtDt);
+				EvaluateOverlayPenalty();
 				if (!_panelPnLInitialized)
 				{
 					if (PanelPnlMode == PanelPnLMode.ChartHistorical)
