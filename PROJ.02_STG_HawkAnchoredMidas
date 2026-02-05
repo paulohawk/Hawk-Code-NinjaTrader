@@ -1756,11 +1756,12 @@ namespace NinjaTrader.NinjaScript.Strategies
         #endregion
 
         #region Variáveis e Ledger/Cache
-        // BIPs: 0 = primário; 1 = scheduler 1min; 2 = vwap TF; 3 = atr TF; 4 = supertrend TF (opcional)
+        // BIPs: 0 = primário; 1 = scheduler 1min; 2 = vwap TF; 3 = atr TF; 4 = BE 1min; 5 = supertrend TF (opcional)
         private int schedulerBip = 1;
         private int vwapBip = 2;
         private int atrBip = 3;
-        private int stBip = 4;
+        private int beBip = 4;
+        private int stBip = 5;
 
         private AnchoredMidasIndicator vwap;
         private Indicators.ATR atrInd;
@@ -1813,6 +1814,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         private bool blockedAfterCloseLogged = false;
         private DateTime blockedAfterCloseDate = Core.Globals.MinDate;
         private DateTime lastResetTradingDay = Core.Globals.MinDate;
+        private DateTime lastBEEvalLogUtc = DateTime.MinValue;
         private DateTime lastResetDate = Core.Globals.MinDate;
         private bool hasValidMidasToday = false;
         private double lastMidasHigh = double.NaN;
@@ -1980,6 +1982,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 AddDataSeries(BarsPeriodType.Minute, 1); // scheduler 1m
                 AddDataSeries(BarsPeriodType.Minute, VWAPTimeFrameMin);
                 AddDataSeries(BarsPeriodType.Minute, ATRTimeFrameMin);
+                AddDataSeries(BarsPeriodType.Minute, 1); // BE engine 1m (histórico/analyzer)
                 if (UseSuperTrendFilter && ST_TimeFrameMin > 0)
                     AddDataSeries(BarsPeriodType.Minute, ST_TimeFrameMin);
             }
@@ -2113,6 +2116,12 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (BarsInProgress == atrBip)
             {
                 UpdateAtrCache();
+                return;
+            }
+
+            if (BarsInProgress == beBip)
+            {
+                EvaluateBreakEvenFromSecondarySeries();
                 return;
             }
 
@@ -3095,8 +3104,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                     if (ordemHedgeBuyStop != null) CancelOrder(ordemHedgeBuyStop);
                     if (ordemHedgeSellStop != null) CancelOrder(ordemHedgeSellStop);
                 }
-                if (!breakevenAtivado && stopAlvoConfigurados)
-                    AplicarBreakEvenSeAtingiuRR();
             }
             else
             {
@@ -3584,58 +3591,122 @@ namespace NinjaTrader.NinjaScript.Strategies
         }
         #endregion
 
-        #region BreakEven (com log padronizado)
-        private void AplicarBreakEvenSeAtingiuRR()
+
+        protected override void OnMarketData(MarketDataEventArgs marketDataUpdate)
         {
             try
             {
-                if (BE_TriggerMultiple <= 0 || BE_ProtectMultiple <= 0) return;
-                if (Position.MarketPosition == MarketPosition.Flat) return;
+                if (marketDataUpdate == null) return;
+                if (State != State.Realtime) return;
+                if (marketDataUpdate.MarketDataType != MarketDataType.Last) return;
+                if (Position.MarketPosition == MarketPosition.Flat || breakevenAtivado || !stopAlvoConfigurados) return;
 
-                int baseStopTicks = entryStopTicksUsed;
-                if (baseStopTicks <= 0)
-                    baseStopTicks = StopTypeIsATR ? CalculateStopTicksByATR() : FixedStopTicks;
+                EvaluateBreakEven("TICK_RT", marketDataUpdate.Price, double.NaN, double.NaN, Time[0]);
+            }
+            catch (Exception ex)
+            {
+                Log("[Strategy] OnMarketData BE error: " + ex.Message, LogLevel.Error);
+            }
+        }
 
-                double triggerTicks = BE_TriggerMultiple * baseStopTicks;
-                double protectTicks = BE_ProtectMultiple * baseStopTicks;
+        private void EvaluateBreakEvenFromSecondarySeries()
+        {
+            if (Position.MarketPosition == MarketPosition.Flat || breakevenAtivado || !stopAlvoConfigurados) return;
 
-                double entry = Position.AveragePrice;
-                double probePrice = ExecutionMode == ExecutionModeType.HistoricalSafe
-                    ? (Position.MarketPosition == MarketPosition.Long ? High[0] : Low[0])
-                    : Close[0];
-                double unrealTicks = Position.MarketPosition == MarketPosition.Long
-                    ? (probePrice - entry) / tickSize
-                    : (entry - probePrice) / tickSize;
+            bool isHistoricalLike = State == State.Historical || State == State.Transition;
+            if (!isHistoricalLike) return;
 
-                if (!breakevenAtivado && unrealTicks >= triggerTicks)
+            double high = Highs[beBip][0];
+            double low = Lows[beBip][0];
+            double lastProxy = Position.MarketPosition == MarketPosition.Long ? high : low;
+            EvaluateBreakEven("BIP_1M_HIST", lastProxy, high, low, Times[beBip][0]);
+        }
+
+        private void EvaluateBreakEven(string source, double priceUsed, double high, double low, DateTime eventTime)
+        {
+            if (BE_TriggerMultiple <= 0 || BE_ProtectMultiple <= 0) return;
+            if (Position.MarketPosition == MarketPosition.Flat || breakevenAtivado) return;
+
+            int baseStopTicks = entryStopTicksUsed;
+            if (baseStopTicks <= 0)
+                baseStopTicks = StopTypeIsATR ? CalculateStopTicksByATR() : FixedStopTicks;
+
+            double triggerTicks = BE_TriggerMultiple * baseStopTicks;
+            double protectTicks = BE_ProtectMultiple * baseStopTicks;
+            double entry = Position.AveragePrice;
+            double triggerPrice = Position.MarketPosition == MarketPosition.Long
+                ? entry + (triggerTicks * tickSize)
+                : entry - (triggerTicks * tickSize);
+            double beStopPrice = Position.MarketPosition == MarketPosition.Long
+                ? entry + (protectTicks * tickSize)
+                : entry - (protectTicks * tickSize);
+            beStopPrice = Instrument.MasterInstrument.RoundToTickSize(beStopPrice);
+
+            bool touched = Position.MarketPosition == MarketPosition.Long
+                ? ((source == "BIP_1M_HIST" && !double.IsNaN(high)) ? high >= triggerPrice : priceUsed >= triggerPrice)
+                : ((source == "BIP_1M_HIST" && !double.IsNaN(low)) ? low <= triggerPrice : priceUsed <= triggerPrice);
+
+            bool shouldLogEval = touched || (DateTime.UtcNow - lastBEEvalLogUtc).TotalSeconds >= 5;
+            if (shouldLogEval)
+            {
+                lastBEEvalLogUtc = DateTime.UtcNow;
+                Print($"[HawkBE][EVAL] time={eventTime:O} source={source} side={Position.MarketPosition} last={priceUsed} high={high} low={low} triggerPrice={triggerPrice} beStopPrice={beStopPrice} touched={(touched ? 1 : 0)} posQty={Position.Quantity}");
+            }
+
+            if (!touched) return;
+
+            ApplyBreakEvenStop(source, eventTime, priceUsed, triggerPrice, beStopPrice, baseStopTicks, triggerTicks, protectTicks);
+        }
+
+
+        #region BreakEven (com log padronizado)
+        private void ApplyBreakEvenStop(string source, DateTime eventTime, double priceUsed, double triggerPrice, double newStop, int baseStopTicks, double triggerTicks, double protectTicks)
+        {
+            try
+            {
+                if (Position.MarketPosition == MarketPosition.Flat || breakevenAtivado) return;
+
+                string side = Position.MarketPosition == MarketPosition.Long ? "Long" : "Short";
+                string prevStopText = currentPlannedStop.HasValue ? currentPlannedStop.Value.ToString(CultureInfo.InvariantCulture) : "null";
+                string prevTargetText = currentPlannedTarget.HasValue ? currentPlannedTarget.Value.ToString(CultureInfo.InvariantCulture) : "null";
+
+                Print($"[HawkBE][TRIGGER] time={eventTime:O} source={source} side={side} priceUsed={priceUsed} triggerPrice={triggerPrice} beStopPrice={newStop} entryPrice={Position.AveragePrice} baseStopTicks={baseStopTicks} triggerMultiple={BE_TriggerMultiple} protectMultiple={BE_ProtectMultiple} prevStop={prevStopText} prevTarget={prevTargetText} posQty={Position.Quantity}");
+
+                if (Position.MarketPosition == MarketPosition.Long)
                 {
-                    string side = Position.MarketPosition == MarketPosition.Long ? "Long" : "Short";
-                    string prevStopText = currentPlannedStop.HasValue ? currentPlannedStop.Value.ToString(CultureInfo.InvariantCulture) : "null";
-                    string prevTargetText = currentPlannedTarget.HasValue ? currentPlannedTarget.Value.ToString(CultureInfo.InvariantCulture) : "null";
-                    Print($"[HawkBE][ARM] time={Time[0]:O} side={side} entryPrice={entry} baseStopTicks={baseStopTicks} triggerMultiple={BE_TriggerMultiple} protectMultiple={BE_ProtectMultiple} prevStop={prevStopText} prevTarget={prevTargetText} posQty={Position.Quantity}");
+                    if (ordemStopLong != null && ordemStopLong.OrderState == OrderState.Working)
+                    {
+                        Print($"[HawkBE][CANCEL_PREV_STOP] time={eventTime:O} source={source} side=Long orderId={ordemStopLong.OrderId} stopPrice={ordemStopLong.StopPrice}");
+                        CancelOrder(ordemStopLong);
+                        ordemStopLong = null;
+                    }
 
-                    double newStop = Position.MarketPosition == MarketPosition.Long
-                        ? entry + protectTicks * tickSize
-                        : entry - protectTicks * tickSize;
-                    newStop = Instrument.MasterInstrument.RoundToTickSize(newStop);
-
-                    Order beOrder;
-                    if (Position.MarketPosition == MarketPosition.Long)
-                        beOrder = ExitLongStopMarket(0, true, Position.Quantity, newStop, "BE_Stop", "LongAuto");
-                    else
-                        beOrder = ExitShortStopMarket(0, true, Position.Quantity, newStop, "BE_Stop", "ShortAuto");
-
-                    LogStopEvent(beOrder?.Name ?? "BE_Stop", newStop, beOrder?.FromEntrySignal ?? string.Empty);
-
-                    breakevenAtivado = true;
-                    double? targetPrice = currentPlannedTarget
-                        ?? (Position.MarketPosition == MarketPosition.Long ? ordemTargetLong?.LimitPrice : ordemTargetShort?.LimitPrice);
-                    string targetText = targetPrice.HasValue ? targetPrice.Value.ToString(CultureInfo.InvariantCulture) : "null";
-                    Print($"[HawkBE][REPLACE] time={Time[0]:O} side={side} beStopPrice={newStop} targetPrice={targetText} signalStop=BE_Stop signalTarget=TakeProfit posNow={Position.MarketPosition} posQty={Position.Quantity}");
-                    PrintCurrentOrdersState("AFTER_BE");
-                    Print($"[HawkDiag][BE_TRIGGER] time0={Time[0]:O} pos={Position.MarketPosition} entry={entry} probePrice={probePrice} newStop={newStop} baseStopTicks={baseStopTicks} triggerTicks={triggerTicks} protectTicks={protectTicks}");
-                    RPLog($"[BE_TRIGGER] time0={Time[0]:O} pos={Position.MarketPosition} entry={entry} probePrice={probePrice} newStop={newStop} baseStopTicks={baseStopTicks} triggerTicks={triggerTicks} protectTicks={protectTicks}");
+                    ordemStopLong = ExitLongStopMarket(0, true, Position.Quantity, newStop, "BE_Stop", "LongAuto");
+                    LogStopEvent(ordemStopLong?.Name ?? "BE_Stop", newStop, ordemStopLong?.FromEntrySignal ?? string.Empty);
                 }
+                else
+                {
+                    if (ordemStopShort != null && ordemStopShort.OrderState == OrderState.Working)
+                    {
+                        Print($"[HawkBE][CANCEL_PREV_STOP] time={eventTime:O} source={source} side=Short orderId={ordemStopShort.OrderId} stopPrice={ordemStopShort.StopPrice}");
+                        CancelOrder(ordemStopShort);
+                        ordemStopShort = null;
+                    }
+
+                    ordemStopShort = ExitShortStopMarket(0, true, Position.Quantity, newStop, "BE_Stop", "ShortAuto");
+                    LogStopEvent(ordemStopShort?.Name ?? "BE_Stop", newStop, ordemStopShort?.FromEntrySignal ?? string.Empty);
+                }
+
+                currentPlannedStop = newStop;
+                breakevenAtivado = true;
+
+                double? targetPrice = currentPlannedTarget
+                    ?? (Position.MarketPosition == MarketPosition.Long ? ordemTargetLong?.LimitPrice : ordemTargetShort?.LimitPrice);
+                string targetText = targetPrice.HasValue ? targetPrice.Value.ToString(CultureInfo.InvariantCulture) : "null";
+                Print($"[HawkBE][REPLACE] time={eventTime:O} source={source} side={side} beStopPrice={newStop} targetPrice={targetText} signalStop=BE_Stop signalTarget=TakeProfit posNow={Position.MarketPosition} posQty={Position.Quantity}");
+                PrintCurrentOrdersState("AFTER_BE");
+                Print($"[HawkDiag][BE_TRIGGER] time0={eventTime:O} source={source} pos={Position.MarketPosition} entry={Position.AveragePrice} probePrice={priceUsed} triggerPrice={triggerPrice} newStop={newStop} baseStopTicks={baseStopTicks} triggerTicks={triggerTicks} protectTicks={protectTicks}");
+                RPLog($"[BE_TRIGGER] time0={eventTime:O} source={source} pos={Position.MarketPosition} entry={Position.AveragePrice} probePrice={priceUsed} triggerPrice={triggerPrice} newStop={newStop} baseStopTicks={baseStopTicks} triggerTicks={triggerTicks} protectTicks={protectTicks}");
             }
             catch (Exception ex) { Log("[Strategy] BE error: " + ex.Message, LogLevel.Error); }
         }
