@@ -3542,6 +3542,12 @@ namespace NinjaTrader.NinjaScript.Strategies
                         RPLog($"[ENTRY_FIRST_FILL] timeMarket={execution.Time:O} timeLocal={Core.Globals.Now:O} name={execution.Order.Name} signal={execution.Order.FromEntrySignal} qty={quantity} pos={marketPosition}");
                     }
 
+                    if (isEntryCandidate && execution.Order.OrderState == OrderState.PartFilled)
+                    {
+                        RPLog($"[ENTRY_PARTIAL_SKIP] timeMarket={execution.Time:O} timeLocal={Core.Globals.Now:O} source=ExecutionUpdate.PartFilled name={execution.Order.Name} signal={execution.Order.FromEntrySignal} orderFilled={execution.Order.Filled} execQty={quantity} pos={marketPosition}");
+                        return; // Em RealtimePrecise, bracket somente no fill final.
+                    }
+
                     bool isFillEvent = execution.Order.OrderState == OrderState.Filled;
                     if (isEntryCandidate && isFillEvent && marketPosition != MarketPosition.Flat)
                     {
@@ -3936,6 +3942,12 @@ namespace NinjaTrader.NinjaScript.Strategies
                 return;
 
             bool hadConfig = stopAlvoConfigurados;
+            if (ExecutionMode == ExecutionModeType.RealtimePrecise && hadConfig)
+            {
+                RPLog($"[ENTRY_STOPS][SKIP_RECONFIG] trigger={triggerTag} qty={qty} entry={entryPrice} reason=alreadyConfigured");
+                return;
+            }
+
             double? prevStop = currentPlannedStop;
             double? prevTarget = currentPlannedTarget;
             int prevQty = Math.Abs(lastKnownPositionQty);
