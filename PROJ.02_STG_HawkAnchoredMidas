@@ -60,6 +60,10 @@ namespace NinjaTrader.NinjaScript
             public string DayBreakevenDollar { get; set; }
             public int? DayMaxGain { get; set; }
             public int? DayMaxLoss { get; set; }
+            public string RiskWarningTitle { get; set; }
+            public string RiskWarningText { get; set; }
+            public Brush RiskWarningColor { get; set; }
+            public Brush RiskWarningBulletFill { get; set; }
 
             public DateTime LastUpdatedUtc { get; set; }
             public string StrategyName { get; set; }
@@ -184,6 +188,9 @@ namespace NinjaTrader.NinjaScript.Strategies
         private TextBlock _lblDayResum;
         private WpfEllipse _bulletDayResum;
         private TextBlock _drSentence;
+        private TextBlock _riskWarningTitle;
+        private WpfEllipse _riskWarningBullet;
+        private TextBlock _riskWarningText;
 
         private int _qty = 1;
         private bool _beEnabled = false;
@@ -442,6 +449,35 @@ namespace NinjaTrader.NinjaScript.Strategies
             };
             main.Children.Add(_drSentence);
 
+            var riskWarningTitleRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Margin = new Thickness(0, 0, 0, RowSpacing)
+            };
+            _riskWarningBullet = CreateBullet(8);
+            _riskWarningTitle = new TextBlock
+            {
+                Text = "STATUS",
+                Foreground = Brushes.LightGreen,
+                FontSize = CompactFontSize,
+                FontWeight = FontWeights.SemiBold,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            riskWarningTitleRow.Children.Add(_riskWarningBullet);
+            riskWarningTitleRow.Children.Add(_riskWarningTitle);
+            main.Children.Add(riskWarningTitleRow);
+
+            _riskWarningText = new TextBlock
+            {
+                Text = "- sistema ativo e monitorando condições de mercado.",
+                Foreground = Brushes.LightGreen,
+                FontSize = Math.Max(8.5, CompactFontSize - 1.0),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 2)
+            };
+            main.Children.Add(_riskWarningText);
+
             var footer = new TextBlock
             {
                 Text = "-Produto oficial Dashflix-",
@@ -604,7 +640,9 @@ namespace NinjaTrader.NinjaScript.Strategies
             setFont(_txtMaxGain);
             setFont(_txtMaxLoss);
             setFont(_drSentence, Math.Max(8.5, font - 1.0));
+            setFont(_riskWarningText, Math.Max(8.5, font - 1.0));
             if (_lblDayResum != null) _lblDayResum.FontSize = font;
+            if (_riskWarningTitle != null) _riskWarningTitle.FontSize = font;
         }
 
         private void SetDayResumBulletAndTitleColor(bool hasTradeOrOpen)
@@ -675,6 +713,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 _txtMaxLoss.Text = "Max loss: -";
 
                 SetDayResum(null, null, null, null, null, null, null);
+                SetRiskWarning("STATUS", "- sistema ativo e monitorando condições de mercado.", Brushes.LightGreen, Brushes.LightGreen);
             }
             catch { }
         }
@@ -703,6 +742,22 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (_bulletEndDay != null) _bulletEndDay.Fill = (_tbEndDayValue != null && _tbEndDayValue.Text != "-" ? BronzeBrush : InactiveBulletBrush);
             }
             catch { }
+        }
+
+        public void SetRiskWarning(string title, string text, Brush color, Brush bulletFill)
+        {
+            if (_riskWarningTitle != null)
+            {
+                _riskWarningTitle.Text = string.IsNullOrWhiteSpace(title) ? "STATUS" : title;
+                _riskWarningTitle.Foreground = color ?? Brushes.LightGreen;
+            }
+            if (_riskWarningText != null)
+            {
+                _riskWarningText.Text = string.IsNullOrWhiteSpace(text) ? "-" : text;
+                _riskWarningText.Foreground = color ?? Brushes.LightGreen;
+            }
+            if (_riskWarningBullet != null)
+                _riskWarningBullet.Fill = bulletFill ?? Brushes.LightGreen;
         }
 
         public void SetEntryFromPosition(double avgPrice)
@@ -1457,6 +1512,13 @@ namespace NinjaTrader.NinjaScript.Strategies
                 embeddedControl.ForceSetATREnabled(snap.ATREnabled ?? false);
                 embeddedControl.ForceSetMainEnabled(snap.MainEnabled ?? false);
 
+                embeddedControl.SetRiskWarning(
+                    snap.RiskWarningTitle,
+                    snap.RiskWarningText,
+                    snap.RiskWarningColor,
+                    snap.RiskWarningBulletFill
+                );
+
                 embeddedControl.UpdateBulletsAfterStateChange();
             }
             catch (Exception ex) { SafePrint("ApplySnapshotToUi ex: " + ex.Message); }
@@ -1629,6 +1691,124 @@ namespace NinjaTrader.NinjaScript.Strategies
         #endregion
     }
     #endregion // fecha UI Helper
+
+    #region Risk Overlay Helper
+    public class RiskOverlayHelper
+    {
+        private static readonly Brush OverlayWarningRed = new SolidColorBrush(Color.FromRgb(255, 64, 64));
+        private readonly Strategy _strategy;
+        private Border overlayGrid;
+        private TextBlock titleBlock;
+        private TextBlock bodyBlock;
+        private bool isVisible;
+        private DispatcherTimer hideTimer;
+
+        public RiskOverlayHelper(Strategy strategy)
+        {
+            _strategy = strategy;
+        }
+
+        public void TryShow(string title, string body)
+        {
+            if (_strategy?.ChartControl == null) return;
+            var chartControl = _strategy.ChartControl;
+            if (chartControl.Dispatcher == null) return;
+
+            chartControl.Dispatcher.InvokeAsync(() =>
+            {
+                EnsureOverlay();
+                if (titleBlock != null) titleBlock.Text = title ?? "AVISO AO TRADER";
+                if (bodyBlock != null) bodyBlock.Text = body ?? string.Empty;
+                var parent = FindParentPanel(chartControl);
+                if (parent == null) return;
+
+                if (!parent.Children.Contains(overlayGrid))
+                    parent.Children.Add(overlayGrid);
+
+                Panel.SetZIndex(overlayGrid, 9999);
+                isVisible = true;
+                StartHideTimer(parent);
+            });
+        }
+
+        private void EnsureOverlay()
+        {
+            if (overlayGrid != null) return;
+
+            overlayGrid = new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(190, 0, 0, 0)),
+                BorderThickness = new Thickness(2),
+                BorderBrush = OverlayWarningRed,
+                CornerRadius = new CornerRadius(10),
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch,
+                Margin = new Thickness(20),
+                Padding = new Thickness(20)
+            };
+
+            var content = new StackPanel
+            {
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            titleBlock = new TextBlock
+            {
+                Text = "AVISO AO TRADER",
+                Foreground = OverlayWarningRed,
+                FontSize = 22,
+                FontWeight = FontWeights.SemiBold,
+                TextAlignment = TextAlignment.Center,
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+
+            bodyBlock = new TextBlock
+            {
+                Text = string.Empty,
+                Foreground = Brushes.White,
+                FontSize = 16,
+                TextWrapping = TextWrapping.Wrap,
+                TextAlignment = TextAlignment.Center
+            };
+
+            content.Children.Add(titleBlock);
+            content.Children.Add(bodyBlock);
+            overlayGrid.Child = content;
+        }
+
+        private Panel FindParentPanel(DependencyObject node)
+        {
+            while (node != null)
+            {
+                if (node is Panel panel) return panel;
+                node = VisualTreeHelper.GetParent(node);
+            }
+            return null;
+        }
+
+        private void StartHideTimer(Panel parent)
+        {
+            if (hideTimer == null)
+            {
+                hideTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
+                hideTimer.Tick += (s, e) =>
+                {
+                    hideTimer.Stop();
+                    try
+                    {
+                        if (overlayGrid != null && parent.Children.Contains(overlayGrid))
+                            parent.Children.Remove(overlayGrid);
+                    }
+                    catch { }
+                    isVisible = false;
+                };
+            }
+            hideTimer.Stop();
+            hideTimer.Start();
+        }
+    }
+    #endregion
 
     public enum ExecutionModeType
     {
@@ -1840,6 +2020,16 @@ namespace NinjaTrader.NinjaScript.Strategies
         private int qtyLatched = 0;
 
         private HawkPanelHelper panelHelper;
+        private RiskOverlayHelper _riskOverlay;
+        private DateTime overlayPenaltyArmedDate = Core.Globals.MinDate;
+        private bool overlayPenaltyArmedThisEnable = false;
+        private TimeSpan? overlayStartCached = null;
+        private TimeSpan? overlayEndCached = null;
+        private DateTime strategyEnableTimeLocal = Core.Globals.MinDate;
+        private string riskWarningTitle = "STATUS";
+        private string riskWarningText = "- sistema ativo e monitorando condições de mercado.";
+        private Brush riskWarningColor = Brushes.LightGreen;
+        private Brush riskWarningBulletFill = Brushes.LightGreen;
 
         private double? pendingEntryPrice = null;
         private double? pendingStopPrice = null;
@@ -2067,6 +2257,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     {
                         panelHelper = new HawkPanelHelper(false) { LogAction = msg => Print(msg), CacheKey = GetCacheKey() };
                         panelHelper.Init(ChartControl);
+                        _riskOverlay = new RiskOverlayHelper(this);
                     }
                     else
                     {
@@ -2089,6 +2280,12 @@ namespace NinjaTrader.NinjaScript.Strategies
                         tradingDayAnchor = GetTradingDayFromTime(Time[0]);
                         tradingDayAnchorSet = true;
                     }
+                    strategyEnableTimeLocal = DateTime.Now;
+                    overlayPenaltyArmedThisEnable = false;
+                    overlayPenaltyArmedDate = Core.Globals.MinDate;
+                    overlayStartCached = null;
+                    overlayEndCached = null;
+                    UpdateRiskWarningState(DateTime.Now);
                     lastSnapshotUtc = DateTime.MinValue;
                     PublishSnapshotHeartbeat();
                 }
@@ -2137,6 +2334,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             if (BarsInProgress != 0) return;
 
+            EvaluateOverlayPenalty();
             HandlePrimarySeries();
             // Watchdog de segurança para RealtimePrecise.
             // Após a implementação do bracket no primeiro consumo,
@@ -2223,6 +2421,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             string fmt(double? v) => v.HasValue ? v.Value.ToString("N2", CultureInfo.InvariantCulture) : "null";
             string fmtI(int? v) => v.HasValue ? v.Value.ToString() : "null";
             string fmtS(string v) => string.IsNullOrEmpty(v) ? "null" : v.Replace('\n', ' ').Replace('\r', ' ');
+            string fmtB(Brush v) => v == null ? "null" : v.ToString();
             string time0 = "n/a";
             try { time0 = Time[0].ToString("O"); } catch { }
             return
@@ -2271,6 +2470,10 @@ namespace NinjaTrader.NinjaScript.Strategies
                 $" | DayStopDollar={fmtS(s.DayStopDollar)}" +
                 $" | DayTargetDollar={fmtS(s.DayTargetDollar)}" +
                 $" | DayBreakevenDollar={fmtS(s.DayBreakevenDollar)}" +
+                $" | RiskWarningTitle={fmtS(s.RiskWarningTitle)}" +
+                $" | RiskWarningText={fmtS(s.RiskWarningText)}" +
+                $" | RiskWarningColor={fmtB(s.RiskWarningColor)}" +
+                $" | RiskWarningBulletFill={fmtB(s.RiskWarningBulletFill)}" +
                 $" | LastUpdatedUtc={s.LastUpdatedUtc:O}";
         }
 
@@ -2424,6 +2627,10 @@ namespace NinjaTrader.NinjaScript.Strategies
             snap.DayStopDollar = dayStop;
             snap.DayTargetDollar = dayTarget;
             snap.DayBreakevenDollar = dayBE;
+            snap.RiskWarningTitle = riskWarningTitle;
+            snap.RiskWarningText = riskWarningText;
+            snap.RiskWarningColor = riskWarningColor;
+            snap.RiskWarningBulletFill = riskWarningBulletFill;
 
             snap.LastUpdatedUtc = DateTime.UtcNow;
             return snap;
@@ -3124,6 +3331,98 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 statusText = lastTradeQty.HasValue ? "Closed" : "Waiting (aguardando)";
             }
+        }
+
+        private void EvaluateOverlayPenalty()
+        {
+            if (State != State.Realtime || _riskOverlay == null) return;
+
+            DateTime nowLocal;
+            try { nowLocal = Time[0]; }
+            catch { nowLocal = DateTime.Now; }
+
+            DateTime dateKey = nowLocal.Date;
+            if (overlayPenaltyArmedDate != dateKey)
+            {
+                overlayPenaltyArmedDate = dateKey;
+                overlayPenaltyArmedThisEnable = false;
+                overlayStartCached = null;
+                overlayEndCached = null;
+            }
+
+            GetOverlayTimes(nowLocal, out var overlayStart, out var overlayEnd);
+
+            if (!overlayPenaltyArmedThisEnable &&
+                strategyEnableTimeLocal != Core.Globals.MinDate &&
+                strategyEnableTimeLocal.Date == dateKey &&
+                strategyEnableTimeLocal.TimeOfDay >= overlayStart)
+            {
+                overlayPenaltyArmedThisEnable = true;
+            }
+
+            UpdateRiskWarningState(nowLocal, overlayStart);
+
+            if (!overlayPenaltyArmedThisEnable) return;
+
+            var nowTime = nowLocal.TimeOfDay;
+            if (nowTime < overlayStart || nowTime > overlayEnd) return;
+
+            string body =
+                "Você ativou esta automação fora do horário operacional recomendado.\n\n" +
+                "Para máxima estabilidade, recomenda-se manter a estratégia ativa antes das 10:30 ou utilizar VPS dedicada.\n\n" +
+                "Ao prosseguir, você assume os riscos operacionais desta decisão.";
+
+            _riskOverlay.TryShow("AVISO AO TRADER", body);
+        }
+
+        private void UpdateRiskWarningState(DateTime nowLocal, TimeSpan? overlayStartOverride = null)
+        {
+            GetOverlayTimes(nowLocal, out var overlayStart, out _);
+            if (overlayStartOverride.HasValue)
+                overlayStart = overlayStartOverride.Value;
+
+            bool isAttention =
+                strategyEnableTimeLocal != Core.Globals.MinDate &&
+                strategyEnableTimeLocal.Date == nowLocal.Date &&
+                strategyEnableTimeLocal.TimeOfDay >= overlayStart;
+
+            SetRiskWarningText(isAttention);
+        }
+
+        private void SetRiskWarningText(bool isAttention)
+        {
+            if (isAttention)
+            {
+                riskWarningTitle = "ATENÇÃO";
+                riskWarningText = "- automação ligada fora do horário operacional.\n- monitore possíveis falhas de stop e alvo.";
+                riskWarningColor = Brushes.Red;
+                riskWarningBulletFill = Brushes.Red;
+            }
+            else
+            {
+                riskWarningTitle = "STATUS";
+                riskWarningText = "- sistema ativo e monitorando condições de mercado.";
+                riskWarningColor = Brushes.LightGreen;
+                riskWarningBulletFill = Brushes.LightGreen;
+            }
+        }
+
+        private void GetOverlayTimes(DateTime nowLocal, out TimeSpan overlayStart, out TimeSpan overlayEnd)
+        {
+            if (!overlayStartCached.HasValue || !overlayEndCached.HasValue || overlayPenaltyArmedDate != nowLocal.Date)
+            {
+                TimeSpan startOps = IsUsaDst(nowLocal)
+                    ? horarioInicioDstUsaDT.TimeOfDay
+                    : horarioInicioNormalDT.TimeOfDay;
+                overlayStart = startOps - TimeSpan.FromMinutes(30);
+                overlayEnd = horarioFimSessaoDT.TimeOfDay;
+                overlayStartCached = overlayStart;
+                overlayEndCached = overlayEnd;
+                return;
+            }
+
+            overlayStart = overlayStartCached.Value;
+            overlayEnd = overlayEndCached.Value;
         }
         #endregion
 
