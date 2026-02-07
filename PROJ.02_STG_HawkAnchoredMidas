@@ -145,7 +145,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         private readonly Brush InactiveBulletBrush = new SolidColorBrush(Color.FromRgb(150, 150, 150));
         private readonly Brush MainOnBrush = new SolidColorBrush(Color.FromRgb(60, 200, 120));
 
-        public string PanelTitle { get; set; } = "Hawk";
+        public string PanelTitle { get; set; } = "Hawk - Midas Bands (HMB)";
 
         private TextBlock _titleCenter;
         private WpfEllipse _mainStateBullet;
@@ -201,6 +201,9 @@ namespace NinjaTrader.NinjaScript.Strategies
         private DateTime _lastResponsiveUpdate = DateTime.MinValue;
         private readonly TimeSpan _responsiveInterval = TimeSpan.FromMilliseconds(220);
         private const double _responsiveMinDelta = 6.0;
+        // Base visual height aligned with Volatility / VWAP panels (Dashflix standard).
+        public const double PanelBaseHeight = 390.0;
+        public const double PanelMinHeight = PanelBaseHeight * 1.05;
 
         public HawkEmbeddedControl(HawkPanelHelper parent)
         {
@@ -427,7 +430,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             var riskWarningBlock = new Grid
             {
-                MinHeight = 42,
                 Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 2),
                 HorizontalAlignment = HorizontalAlignment.Stretch
             };
@@ -457,7 +459,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 Text = "Status",
                 Foreground = Brushes.LightGreen,
-                FontSize = CompactFontSize,
+                FontSize = CompactFontSize + 2,
                 FontWeight = FontWeights.SemiBold,
                 VerticalAlignment = VerticalAlignment.Center
             };
@@ -470,7 +472,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 Text = "- sistema ativo e monitorando condições de mercado.",
                 Foreground = Brushes.LightGreen,
-                FontSize = Math.Max(8.5, CompactFontSize - 1.0),
+                FontSize = CompactFontSize,
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, RowSpacing, 0, 0),
                 HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -534,7 +536,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (_titleCenter == null) return;
             _titleCenter.Inlines.Clear();
 
-            string title = string.IsNullOrEmpty(PanelTitle) ? "Hawk" : PanelTitle;
+            string title = string.IsNullOrEmpty(PanelTitle) ? "Hawk - Midas Bands (HMB)" : PanelTitle;
             string goldPart = "Hawk";
             string grayPart = "";
 
@@ -560,7 +562,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         public void ApplyPanelTitle(string title)
         {
-            PanelTitle = string.IsNullOrEmpty(title) ? "Hawk" : title;
+            PanelTitle = string.IsNullOrEmpty(title) ? "Hawk - Midas Bands (HMB)" : title;
             RefreshTitleRuns();
         }
 
@@ -654,9 +656,9 @@ namespace NinjaTrader.NinjaScript.Strategies
             setFont(_txtMaxGain);
             setFont(_txtMaxLoss);
             setFont(_drSentence, Math.Max(8.5, font - 1.0));
-            setFont(_riskWarningText, Math.Max(8.5, font - 1.0));
             if (_lblDayResum != null) _lblDayResum.FontSize = font;
-            if (_riskWarningTitle != null) _riskWarningTitle.FontSize = font;
+            if (_riskWarningTitle != null) _riskWarningTitle.FontSize = font + 2;
+            if (_riskWarningText != null) _riskWarningText.FontSize = font;
         }
 
         private void SetDayResumBulletAndTitleColor(bool hasTradeOrOpen)
@@ -1158,6 +1160,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     CornerRadius = new CornerRadius(3),
                     SnapsToDevicePixels = true,
                     VerticalAlignment = VerticalAlignment.Top,
+                    MinHeight = HawkEmbeddedControl.PanelMinHeight,
                     Margin = new Thickness(0, 0, 0, 4),
                     Background = new LinearGradientBrush(
                         new GradientStopCollection {
@@ -1458,8 +1461,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             try
             {
-                string titleFromSnap = SanitizeStrategyName(!string.IsNullOrEmpty(snap.StrategyName) ? snap.StrategyName : (instrumentName ?? "Hawk"));
-                embeddedControl.ApplyPanelTitle($"Hawk - {titleFromSnap}");
+                embeddedControl.ApplyPanelTitle("Hawk - Midas Bands (HMB)");
 
                 if (snap.EntryPrice.HasValue)
                     embeddedControl.SetEntryFromPosition(snap.EntryPrice.Value);
@@ -1624,14 +1626,14 @@ namespace NinjaTrader.NinjaScript.Strategies
                     {
                         var cp = chartControl.ChartPanels[0];
                         if (cp != null && cp.W > 0)
-                            fallbackWidth = Math.Min(cp.W * 0.28, 310.0);
+                            fallbackWidth = Math.Min(cp.W * 0.30, 341.0);
                     }
                     else if (parentPanel.ActualWidth > 0)
-                        fallbackWidth = Math.Min(parentPanel.ActualWidth * 0.28, 310.0);
+                        fallbackWidth = Math.Min(parentPanel.ActualWidth * 0.30, 341.0);
                 }
                 catch { fallbackWidth = 260.0; }
 
-                double finalWidth = Math.Min(Math.Max(247.0, fallbackWidth), 310.0);
+                double finalWidth = Math.Min(Math.Max(272.0, fallbackWidth), 341.0);
 
                 try { embeddedWrapper.Width = finalWidth; } catch { }
                 try { System.Windows.Controls.Panel.SetZIndex(embeddedWrapper, 9999); } catch { }
