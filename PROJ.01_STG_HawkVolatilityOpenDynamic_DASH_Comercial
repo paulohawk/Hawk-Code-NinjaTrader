@@ -208,7 +208,7 @@ namespace NinjaTrader.NinjaScript
         {
             Background = Brushes.Transparent;
             Margin = new Thickness(6);
-            MinHeight = Math.Ceiling(399 * 1.15);
+            MinHeight = Math.Ceiling(399 * 1.05);
 
             var main = new Grid { Margin = new Thickness(2) };
             main.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -451,7 +451,7 @@ namespace NinjaTrader.NinjaScript
             {
                 Text = "",
                 Foreground = StopLossBrush,
-                FontSize = CompactFontSize + 2,
+                FontSize = CompactFontSize + 3,
                 Margin = new Thickness(0, 4, 0, 0),
                 TextWrapping = TextWrapping.NoWrap,
                 TextTrimming = TextTrimming.None,
@@ -463,7 +463,7 @@ namespace NinjaTrader.NinjaScript
             {
                 Text = "",
                 Foreground = StopLossBrush,
-                FontSize = CompactFontSize,
+                FontSize = CompactFontSize + 1,
                 Margin = new Thickness(0, 2, 0, 0),
                 TextWrapping = TextWrapping.Wrap,
                 TextTrimming = TextTrimming.None,
@@ -475,7 +475,7 @@ namespace NinjaTrader.NinjaScript
             {
                 Text = "",
                 Foreground = StopLossBrush,
-                FontSize = CompactFontSize,
+                FontSize = CompactFontSize + 1,
                 Margin = new Thickness(0, 0, 0, 6),
                 TextWrapping = TextWrapping.Wrap,
                 TextTrimming = TextTrimming.None,
@@ -724,11 +724,11 @@ namespace NinjaTrader.NinjaScript
             setFont(_drSentence, Math.Max(8.5, font - 1.0));
             if (_lblDayResum != null) _lblDayResum.FontSize = font;
             if (_riskWarningLabel != null)
-                _riskWarningLabel.FontSize = font + 2;
+                _riskWarningLabel.FontSize = font + 3;
             if (_riskWarningLinePrimary != null)
-                _riskWarningLinePrimary.FontSize = font;
+                _riskWarningLinePrimary.FontSize = font + 1;
             if (_riskWarningLineSecondary != null)
-                _riskWarningLineSecondary.FontSize = font;
+                _riskWarningLineSecondary.FontSize = font + 1;
             if (_riskWarningLabel != null)
                 _riskWarningLabel.MaxWidth = width * 0.78;
             if (_riskWarningLinePrimary != null)
