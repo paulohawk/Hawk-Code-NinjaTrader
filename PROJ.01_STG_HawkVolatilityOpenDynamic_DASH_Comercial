@@ -187,7 +187,7 @@ namespace NinjaTrader.NinjaScript
         private int _qty = 1;
         private bool _beEnabled = false;
         private bool _mainEnabled = false;
-        private double _baseTitleSize = (10.0 + 4) * 0.9;
+        private double _baseTitleSize = (10.0 + 4) * 0.9 - 1.0;
 
         private double _lastResponsiveWidth = 0;
         private DateTime _lastResponsiveUpdate = DateTime.MinValue;
@@ -208,7 +208,7 @@ namespace NinjaTrader.NinjaScript
         {
             Background = Brushes.Transparent;
             Margin = new Thickness(6);
-            MinHeight = Math.Ceiling(399 * 1.30);
+            MinHeight = Math.Ceiling(399 * 1.15);
 
             var main = new Grid { Margin = new Thickness(2) };
             main.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
