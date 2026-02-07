@@ -139,8 +139,8 @@ namespace NinjaTrader.NinjaScript
 		private readonly Brush InactiveBulletBrush = new SolidColorBrush(Color.FromRgb(150, 150, 150));
 		private readonly Brush MainOnBrush = new SolidColorBrush(Color.FromRgb(60, 200, 120));
 		private readonly Brush StopLossBrush = new SolidColorBrush(Color.FromRgb(220, 80, 80));
-		// Padrão DashFlix: AlertRedBrush = RGB(220,80,80)
-		private readonly Brush AlertRedBrush = new SolidColorBrush(Color.FromRgb(220, 80, 80));
+		// Padrão DashFlix: Atenção = Brushes.Red
+		private static readonly Brush DashflixAttentionRed = Brushes.Red;
 
 		public string PanelTitle { get; set; } = "Hawk – Vwap Bands (HVB)";
 
@@ -642,7 +642,6 @@ namespace NinjaTrader.NinjaScript
 
 			_titleCenter.Inlines.Add(runGold);
 			_titleCenter.Inlines.Add(runGray);
-			_titleCenter.FontSize = _baseTitleSize;
 		}
 
 		public void ApplyPanelTitle(string title)
@@ -676,7 +675,7 @@ namespace NinjaTrader.NinjaScript
 
 			if (_titleCenter != null)
 			{
-				_titleCenter.FontSize = titleSize;
+				_titleCenter.FontSize = titleSize - 1;
 				_titleCenter.TextWrapping = wrapTitle ? TextWrapping.Wrap : TextWrapping.NoWrap;
 			}
 
@@ -757,15 +756,15 @@ namespace NinjaTrader.NinjaScript
 		{
 			bool isAttention = isPenalty;
 
-			_riskWarningLabel.Text = isAttention ? "ATENÇÃO" : "STATUS";
+			_riskWarningLabel.Text = isAttention ? "Atenção" : "Status";
 
 			string line1 = isAttention ? attentionText : statusText;
 			string line2 = isAttention ? "monitore possíveis falhas de stop e alvo." : "";
 
-			_riskWarningLinePrimary.Text = string.IsNullOrWhiteSpace(line1) ? "" : line1;
-			_riskWarningLineSecondary.Text = string.IsNullOrWhiteSpace(line2) ? "" : line2;
+			_riskWarningLinePrimary.Text = string.IsNullOrWhiteSpace(line1) ? "" : "- " + line1;
+			_riskWarningLineSecondary.Text = string.IsNullOrWhiteSpace(line2) ? "" : "- " + line2;
 
-			var activeBrush = isAttention ? AlertRedBrush : Brushes.LightGreen;
+			var activeBrush = isAttention ? DashflixAttentionRed : Brushes.LightGreen;
 			_riskWarningLabel.Foreground = activeBrush;
 			_riskWarningLinePrimary.Foreground = activeBrush;
 			_riskWarningLineSecondary.Foreground = activeBrush;
@@ -3749,7 +3748,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			TimeSpan endSession = GetAutoCloseTimeBrt(snapshotBrt.Date);
 			snap.EndDayText = endSession.ToString(@"hh\:mm");
 
-			snap.MainEnabled = (status == "Trading" || status == "StopNewTrades") && !isLockedForDay;
+			snap.MainEnabled = Enabled;
 
 			if (EnablePanelDebugLog)
 			{
