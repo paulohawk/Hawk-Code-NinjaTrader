@@ -470,13 +470,13 @@ namespace NinjaTrader.NinjaScript
 			main.Children.Add(mainContent);
 
 			// Row: Risk Warning
-			_riskWarningRow = new Grid { Margin = new Thickness(0, 4, 0, 2), MinHeight = 56 };
+			_riskWarningRow = new Grid { Margin = new Thickness(0, 4, 0, 0), MinHeight = 50 };
 			_riskWarningRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 			_riskWarningRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 			_riskWarningRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-			_riskWarningRow.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto, MinHeight = 16 });
-			_riskWarningRow.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto, MinHeight = 16 });
-			_riskWarningRow.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto, MinHeight = 16 });
+			_riskWarningRow.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto, MinHeight = 14 });
+			_riskWarningRow.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto, MinHeight = 14 });
+			_riskWarningRow.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto, MinHeight = 14 });
 
 			var wrap = new Grid
 			{
