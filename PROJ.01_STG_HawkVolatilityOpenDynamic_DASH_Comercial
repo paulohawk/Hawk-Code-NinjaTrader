@@ -3865,6 +3865,94 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
         }
 
+        // ============================================================
+        // DayResum Hydration (Fix Hedge metrics not populating)
+        // ============================================================
+        private bool IsDayResumHydrated(int qtyAbs)
+        {
+            if (qtyAbs <= 0) return false;
+            if (!dayQtyCache.HasValue) return false;
+            if (dayQtyCache.Value != qtyAbs) return false;
+            if (frozenEntryPrice <= 0) return false;
+            if (frozenRiskPoints <= 0) return false;
+            if (string.IsNullOrWhiteSpace(dayStopDollars) || dayStopDollars == "-") return false;
+            if (string.IsNullOrWhiteSpace(dayTargetDollars) || dayTargetDollars == "-") return false;
+            return true;
+        }
+
+        private void HydrateDayResumOnOpen(MarketPosition side, int qtyAbs, double avgPrice, DateTime tradingDay, string reason, string context)
+        {
+            if (side == MarketPosition.Flat || qtyAbs <= 0)
+                return;
+
+            if (frozenEntryPrice <= 0)
+            {
+                if (avgPrice > 0)
+                    frozenEntryPrice = avgPrice;
+                else if (Position != null)
+                    frozenEntryPrice = Position.AveragePrice;
+            }
+
+            if (frozenRiskPoints <= 0)
+            {
+                double stopPriceAudit;
+                double targetPriceAudit;
+                GetBracketPrices(side, out stopPriceAudit, out targetPriceAudit);
+
+                if (stopPriceAudit > 0)
+                {
+                    frozenStopPrice = stopPriceAudit;
+                    frozenRiskPoints = Math.Abs(frozenEntryPrice - frozenStopPrice);
+                }
+                else
+                {
+                    double stopTicks;
+                    double targetTicks;
+                    double stopDollars;
+                    ComputeBracketMetrics(out stopTicks, out targetTicks, out stopDollars);
+                    double tickSize = Instrument.MasterInstrument.TickSize;
+                    frozenRiskPoints = stopTicks * tickSize;
+                    if (frozenRiskPoints > 0)
+                    {
+                        frozenStopPrice = (side == MarketPosition.Long)
+                            ? frozenEntryPrice - frozenRiskPoints
+                            : frozenEntryPrice + frozenRiskPoints;
+                    }
+                }
+            }
+
+            if (frozenEntryPrice <= 0 || frozenRiskPoints <= 0)
+                return;
+
+            precoEntradaAtual = frozenEntryPrice;
+            riscoPrecoAtual = frozenRiskPoints;
+            dayQtyCache = qtyAbs;
+
+            double stopTicks2;
+            double targetTicks2;
+            double stopDollarsPerContract;
+            ComputeBracketMetrics(out stopTicks2, out targetTicks2, out stopDollarsPerContract);
+
+            double riskDollars = (frozenStopPrice > 0)
+                ? ComputeRiskDollars(frozenEntryPrice, frozenStopPrice, qtyAbs)
+                : stopDollarsPerContract * qtyAbs;
+            dayStopDollars = riskDollars > 0 ? riskDollars.ToString("0.00") : "-";
+
+            double targetDollars = riskDollars * TargetFactor;
+            dayTargetDollars = targetDollars > 0 ? targetDollars.ToString("0.00") : "-";
+
+            dayBreakevenDollars = "-";
+
+            string throttleKey = $"DAYRESUM_HYDRATE_{tradingDay:yyyyMMdd}_{bracketCycleId}_{side}_{qtyAbs}";
+            if (!ShouldThrottleAudit(throttleKey, LogThrottleSeconds))
+            {
+                Audit("DayResumHydrated",
+                    $"side={side} qty={qtyAbs} entry={F0(frozenEntryPrice)} riskPx={F(frozenRiskPoints)} stop$={dayStopDollars} target$={dayTargetDollars} reason={reason} ctx={context} mode={GetModeTag()} env={GetEnvTag()}");
+            }
+
+            PublishPanelSnapshot("DayResum_Hydrated");
+        }
+
         private void RecalcPnLIfNeeded()
         {
             try
@@ -5513,7 +5601,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 ordemTPLong = null;
                 ordemTPShort = null;
 
-                dayQtyCache = null;
+                // Mantém caches do resumo do dia até ResetDayCaches().
                 dayStatus = tradedToday ? "Closed" : "Waiting";
 
                 string autoCloseLatency = "n/a";
@@ -5543,7 +5631,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
 
             dayStatus = "Open";
-            dayQtyCache = Math.Abs(position.Quantity);
 
             int posQtyAbs = Math.Abs(position.Quantity);
             if (posQtyAbs <= 0) return;
@@ -5583,7 +5670,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 || stopBad
                 || tpBad;
 
-            double tickSize = Instrument.MasterInstrument.TickSize;
             double stopTicks;
             double targetTicks;
             double stopDollars;
@@ -5591,25 +5677,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             EnsureCycleSynced(position, averagePrice);
 
-            if (frozenEntryPrice <= 0)
-                frozenEntryPrice = averagePrice;
-            if (frozenRiskPoints <= 0)
-            {
-                frozenRiskPoints = stopTicks * tickSize;
-                frozenStopPrice = position.MarketPosition == MarketPosition.Long
-                    ? frozenEntryPrice - frozenRiskPoints
-                    : frozenEntryPrice + frozenRiskPoints;
-            }
+            if (!IsDayResumHydrated(posQtyAbs))
+                HydrateDayResumOnOpen(position.MarketPosition, posQtyAbs, averagePrice, tradingDay, "OnPositionUpdate", "DayResum");
 
-            riscoPrecoAtual = frozenRiskPoints;
-            precoEntradaAtual = frozenEntryPrice;
             breakevenAtivado = false;
-
-            double riskDollars = stopDollars * posQtyAbs;
-            dayStopDollars = riskDollars > 0 ? riskDollars.ToString("0.00") : "-";
-            double targetDollars = riskDollars * TargetFactor;
-            dayTargetDollars = targetDollars > 0 ? targetDollars.ToString("0.00") : "-";
-            dayBreakevenDollars = "-";
 
             lastOpenSide = position.MarketPosition.ToString();
             lastOpenQty = posQtyAbs;
@@ -5783,6 +5854,16 @@ namespace NinjaTrader.NinjaScript.Strategies
                 {
                     activeEntrySignal = orderName;
                     activeEntrySignalDay = GetTradingDay(time);
+                }
+            }
+
+            if (Position != null && Position.MarketPosition != MarketPosition.Flat)
+            {
+                int qtyAbs = Math.Abs(Position.Quantity);
+                if (!IsDayResumHydrated(qtyAbs))
+                {
+                    DateTime tradingDay = GetTradingDay(time);
+                    HydrateDayResumOnOpen(Position.MarketPosition, qtyAbs, Position.AveragePrice, tradingDay, "OnExecutionUpdate", "DayResumFallback");
                 }
             }
 
