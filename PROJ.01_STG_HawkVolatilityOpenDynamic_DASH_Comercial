@@ -131,7 +131,7 @@ namespace NinjaTrader.NinjaScript
         private readonly Brush StopLossBrush = Brushes.Red;
         private const double RiskWarningBulletSize = 16.0;
 
-        public string PanelTitle { get; set; } = "Hawk";
+        public string PanelTitle { get; set; } = "Hawk - Volatility Open (HVO)";
 
         private TextBlock _titleCenter;
         private WpfEllipse _mainStateBullet;
@@ -213,12 +213,19 @@ namespace NinjaTrader.NinjaScript
             var main = new Grid { Margin = new Thickness(2) };
             main.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             main.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-            main.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            main.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto, MinHeight = 60 });
             main.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto, MinHeight = 20 });
 
-            var contentPanel = new StackPanel { Orientation = Orientation.Vertical };
-            Grid.SetRow(contentPanel, 0);
-            main.Children.Add(contentPanel);
+            var contentGrid = new Grid();
+            int contentRowIndex = 0;
+            Action<UIElement> addContentRow = element =>
+            {
+                contentGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                Grid.SetRow(element, contentRowIndex++);
+                contentGrid.Children.Add(element);
+            };
+            Grid.SetRow(contentGrid, 0);
+            main.Children.Add(contentGrid);
 
             // Header
             var header = new Grid { Margin = new Thickness(0, 0, 0, 6) };
@@ -264,7 +271,7 @@ namespace NinjaTrader.NinjaScript
             rightHeader.Children.Add(_tbMainToggle);
             header.Children.Add(rightHeader); Grid.SetColumn(rightHeader, 2);
 
-            contentPanel.Children.Add(header);
+            addContentRow(header);
 
             // Entry/Stop/Exit row
             var threeCol = new Grid { Margin = new Thickness(0, 0, 0, 6) };
@@ -292,7 +299,7 @@ namespace NinjaTrader.NinjaScript
             exitCol.Children.Add(_txtExit);
             threeCol.Children.Add(exitCol); Grid.SetColumn(exitCol, 2);
 
-            contentPanel.Children.Add(threeCol);
+            addContentRow(threeCol);
 
             // BE Row
             var beRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
@@ -300,11 +307,11 @@ namespace NinjaTrader.NinjaScript
             var beLabel = new TextBlock { Text = "BE", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center, Cursor = Cursors.Hand, TextTrimming = TextTrimming.None };
             beRow.Children.Add(_bulletBe);
             beRow.Children.Add(beLabel);
-            contentPanel.Children.Add(beRow);
+            addContentRow(beRow);
 
             _beStateText = new TextBlock { Text = "Off", FontSize = CompactFontSize, Foreground = Brushes.Gray, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 2) };
             _beStateText.MouseLeftButtonUp += (s, e) => ToggleBE();
-            contentPanel.Children.Add(_beStateText);
+            addContentRow(_beStateText);
 
             // Qty Row
             var qtyRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
@@ -312,12 +319,12 @@ namespace NinjaTrader.NinjaScript
             var qtyLabel = new TextBlock { Text = "Qty", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center, Cursor = Cursors.Hand, TextTrimming = TextTrimming.None };
             qtyRow.Children.Add(_bulletQty);
             qtyRow.Children.Add(qtyLabel);
-            contentPanel.Children.Add(qtyRow);
+            addContentRow(qtyRow);
 
             _txtQty = new TextBlock { Text = _qty.ToString(), Width = 36, TextAlignment = TextAlignment.Center, Background = Brushes.Black, Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 6, 0), FontSize = CompactFontSize };
             var qtyInline = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 2), HorizontalAlignment = HorizontalAlignment.Center };
             qtyInline.Children.Add(_txtQty);
-            contentPanel.Children.Add(qtyInline);
+            addContentRow(qtyInline);
 
             // Stop / Take
             var stopTakeRow = new Grid { Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 2) };
@@ -347,7 +354,7 @@ namespace NinjaTrader.NinjaScript
             takeStack.Children.Add(_txtTake);
             stopTakeRow.Children.Add(takeStack); Grid.SetColumn(takeStack, 1);
 
-            contentPanel.Children.Add(stopTakeRow);
+            addContentRow(stopTakeRow);
 
             // ATR Row
             var atrRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
@@ -355,10 +362,10 @@ namespace NinjaTrader.NinjaScript
             var atrLbl = new TextBlock { Text = "ATR", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.None };
             atrRow.Children.Add(_bulletAtr);
             atrRow.Children.Add(atrLbl);
-            contentPanel.Children.Add(atrRow);
+            addContentRow(atrRow);
 
             _atrValueText = new TextBlock { Text = "-", Foreground = LightGrayBrush, FontSize = CompactFontSize, Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 2), HorizontalAlignment = HorizontalAlignment.Center, TextWrapping = TextWrapping.Wrap };
-            contentPanel.Children.Add(_atrValueText);
+            addContentRow(_atrValueText);
 
             // PnL Row
             var pnlRow = new Grid { Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 2) };
@@ -399,7 +406,7 @@ namespace NinjaTrader.NinjaScript
             pnlTotalStack.Children.Add(_pnlTotalText);
             pnlRow.Children.Add(pnlTotalStack); Grid.SetColumn(pnlTotalStack, 2);
 
-            contentPanel.Children.Add(pnlRow);
+            addContentRow(pnlRow);
 
             // Streaks
             var streakRow = new Grid { Margin = new Thickness(0, RowSpacing, 0, RowSpacing) };
@@ -488,7 +495,7 @@ namespace NinjaTrader.NinjaScript
             streakStack.Children.Add(_hedgeStateText);
             streakRow.Children.Add(streakStack); Grid.SetColumn(streakStack, 2);
 
-            contentPanel.Children.Add(streakRow);
+            addContentRow(streakRow);
 
             // Risk warning row (mesclado em 3 colunas, abaixo do EndDay)
             var riskRow = new Grid { Margin = new Thickness(0, 2, 0, 4), VerticalAlignment = VerticalAlignment.Top };
@@ -556,8 +563,8 @@ namespace NinjaTrader.NinjaScript
                 Foreground = BronzeBrush,
                 FontSize = 9.0,
                 HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(0, 6, 0, 4),
+                VerticalAlignment = VerticalAlignment.Bottom,
+                Margin = new Thickness(0, 6, 0, 6),
                 TextTrimming = TextTrimming.None,
                 TextWrapping = TextWrapping.NoWrap
             };
@@ -1055,7 +1062,6 @@ namespace NinjaTrader.NinjaScript
     public class HVO_PanelHelper
     {
         private const int AttachPollMs = 1000;
-        private const double EmbedHeightPx = 399.0;
 
         private ChartControl chartControl;
         private NinjaTrader.Gui.Chart.Chart chartWindow;
@@ -1254,7 +1260,7 @@ namespace NinjaTrader.NinjaScript
                     CornerRadius = new CornerRadius(3),
                     SnapsToDevicePixels = true,
                     VerticalAlignment = VerticalAlignment.Top,
-                    MaxHeight = EmbedHeightPx + 8,
+                    MaxHeight = double.PositiveInfinity,
                     Margin = new Thickness(0, 0, 0, 4),
                     Background = new LinearGradientBrush(
                         new GradientStopCollection {
@@ -1728,7 +1734,7 @@ namespace NinjaTrader.NinjaScript
                 double finalWidth = Math.Min(Math.Max(190.0 * 1.20, fallbackWidth), 280.0);
 
                 try { embeddedWrapper.Width = finalWidth; } catch { }
-                try { embeddedWrapper.MaxHeight = EmbedHeightPx; } catch { }
+                try { embeddedWrapper.MaxHeight = double.PositiveInfinity; } catch { }
                 try { Panel.SetZIndex(embeddedWrapper, 9999); } catch { }
 
                 try { embeddedControl?.ApplyResponsiveLayout(finalWidth); } catch { }
