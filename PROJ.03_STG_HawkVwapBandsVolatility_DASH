@@ -139,6 +139,8 @@ namespace NinjaTrader.NinjaScript
 		private readonly Brush InactiveBulletBrush = new SolidColorBrush(Color.FromRgb(150, 150, 150));
 		private readonly Brush MainOnBrush = new SolidColorBrush(Color.FromRgb(60, 200, 120));
 		private readonly Brush StopLossBrush = new SolidColorBrush(Color.FromRgb(220, 80, 80));
+		// Padrão DashFlix: AlertRedBrush = RGB(220,80,80)
+		private readonly Brush AlertRedBrush = new SolidColorBrush(Color.FromRgb(220, 80, 80));
 
 		public string PanelTitle { get; set; } = "Hawk – Vwap Bands (HVB)";
 
@@ -244,7 +246,7 @@ namespace NinjaTrader.NinjaScript
 		{
 			Background = Brushes.Transparent;
 			Margin = new Thickness(6);
-			MinHeight = Math.Ceiling(399 * 1.10);
+			MinHeight = Math.Ceiling(399 * 1.05);
 
 			var main = new Grid { Margin = new Thickness(2) };
 			main.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -468,17 +470,22 @@ namespace NinjaTrader.NinjaScript
 			main.Children.Add(mainContent);
 
 			// Row: Risk Warning
-			_riskWarningRow = new Grid { Margin = new Thickness(0, 4, 0, 8) };
+			_riskWarningRow = new Grid { Margin = new Thickness(0, 4, 0, 8), MinHeight = 64 };
 			_riskWarningRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 			_riskWarningRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 			_riskWarningRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+			_riskWarningRow.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto, MinHeight = 16 });
+			_riskWarningRow.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto, MinHeight = 16 });
+			_riskWarningRow.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto, MinHeight = 16 });
 
-			var wrap = new StackPanel
+			var wrap = new Grid
 			{
-				Orientation = Orientation.Vertical,
 				HorizontalAlignment = HorizontalAlignment.Center,
 				VerticalAlignment = VerticalAlignment.Center
 			};
+			wrap.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+			wrap.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+			wrap.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 			var head = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
 
 			_riskWarningBullet = CreateRiskWarningBullet(RiskWarningBulletSize);
@@ -487,8 +494,9 @@ namespace NinjaTrader.NinjaScript
 				Text = "Atenção",
 				FontSize = RiskWarningLabelSize,
 				FontWeight = FontWeights.SemiBold,
-				Foreground = StopLossBrush,
-				VerticalAlignment = VerticalAlignment.Center
+				Foreground = AlertRedBrush,
+				VerticalAlignment = VerticalAlignment.Center,
+				TextTrimming = TextTrimming.None
 			};
 			head.Children.Add(_riskWarningBullet);
 			head.Children.Add(_riskWarningLabel);
@@ -497,28 +505,33 @@ namespace NinjaTrader.NinjaScript
 			{
 				Text = "automação ligada fora do horário operacional.",
 				FontSize = RiskWarningTextPrimarySize,
-				Foreground = StopLossBrush,
+				Foreground = AlertRedBrush,
 				TextAlignment = TextAlignment.Center,
 				HorizontalAlignment = HorizontalAlignment.Center,
 				Margin = new Thickness(0, 2, 0, 0),
-				TextWrapping = TextWrapping.Wrap
+				TextWrapping = TextWrapping.Wrap,
+				TextTrimming = TextTrimming.None
 			};
 
 			_riskWarningLineSecondary = new TextBlock
 			{
 				Text = "monitore possíveis falhas de stop e alvo.",
 				FontSize = RiskWarningTextSecondarySize,
-				Foreground = StopLossBrush,
+				Foreground = AlertRedBrush,
 				FontStyle = FontStyles.Italic,
 				TextAlignment = TextAlignment.Center,
 				HorizontalAlignment = HorizontalAlignment.Center,
 				Margin = new Thickness(0, 2, 0, 0),
-				TextWrapping = TextWrapping.Wrap
+				TextWrapping = TextWrapping.Wrap,
+				TextTrimming = TextTrimming.None
 			};
 
 			wrap.Children.Add(head);
+			Grid.SetRow(head, 0);
 			wrap.Children.Add(_riskWarningLinePrimary);
+			Grid.SetRow(_riskWarningLinePrimary, 1);
 			wrap.Children.Add(_riskWarningLineSecondary);
+			Grid.SetRow(_riskWarningLineSecondary, 2);
 
 			Grid.SetColumn(wrap, 0);
 			Grid.SetColumnSpan(wrap, 3);
@@ -752,12 +765,13 @@ namespace NinjaTrader.NinjaScript
 			_riskWarningLinePrimary.Text = string.IsNullOrWhiteSpace(line1) ? "" : line1;
 			_riskWarningLineSecondary.Text = string.IsNullOrWhiteSpace(line2) ? "" : line2;
 
-			_riskWarningLabel.Foreground = isAttention ? StopLossBrush : Brushes.LightGreen;
-			_riskWarningLinePrimary.Foreground = isAttention ? StopLossBrush : Brushes.LightGreen;
-			_riskWarningLineSecondary.Foreground = isAttention ? StopLossBrush : Brushes.LightGreen;
+			var activeBrush = isAttention ? AlertRedBrush : Brushes.LightGreen;
+			_riskWarningLabel.Foreground = activeBrush;
+			_riskWarningLinePrimary.Foreground = activeBrush;
+			_riskWarningLineSecondary.Foreground = activeBrush;
 
 			if (_riskWarningBullet != null)
-				_riskWarningBullet.Fill = isAttention ? StopLossBrush : Brushes.LightGreen;
+				_riskWarningBullet.Fill = activeBrush;
 
 			_riskWarningLineSecondary.Visibility = string.IsNullOrWhiteSpace(line2) ? Visibility.Collapsed : Visibility.Visible;
 		}
@@ -1064,7 +1078,9 @@ namespace NinjaTrader.NinjaScript
 	public class HVB_PanelHelper
 	{
 		private const int AttachPollMs = 1000;
-		private static readonly double EmbedMinHeightPx = Math.Ceiling(399 * 1.10);
+		private static readonly double EmbedMinHeightPx = Math.Ceiling(399 * 1.05);
+		private const double EmbedMaxWidthPx = 341.0;
+		private const double EmbedMinWidthPx = 266.0;
 
 		private ChartControl chartControl;
 		private NinjaTrader.Gui.Chart.Chart chartWindow;
@@ -1750,21 +1766,21 @@ namespace NinjaTrader.NinjaScript
 				embeddedWrapper.VerticalAlignment = VerticalAlignment.Top;
 				embeddedWrapper.Margin = new Thickness(left, top, 0, 0);
 
-				double fallbackWidth = 310.0;
+				double fallbackWidth = EmbedMaxWidthPx;
 				try
 				{
 					if (chartControl.ChartPanels != null && chartControl.ChartPanels.Count > 0)
 					{
 						var cp = chartControl.ChartPanels[0];
 						if (cp != null && cp.W > 0)
-							fallbackWidth = Math.Min(cp.W * 0.28, 310.0);
+							fallbackWidth = Math.Min(cp.W * 0.30, EmbedMaxWidthPx);
 					}
 					else if (parentPanel.ActualWidth > 0)
-						fallbackWidth = Math.Min(parentPanel.ActualWidth * 0.28, 310.0);
+						fallbackWidth = Math.Min(parentPanel.ActualWidth * 0.30, EmbedMaxWidthPx);
 				}
-				catch { fallbackWidth = 310.0; }
+				catch { fallbackWidth = EmbedMaxWidthPx; }
 
-				double finalWidth = Math.Min(Math.Max(190.0 * 1.40, fallbackWidth), 310.0);
+				double finalWidth = Math.Min(Math.Max(EmbedMinWidthPx, fallbackWidth), EmbedMaxWidthPx);
 
 				try { embeddedWrapper.Width = finalWidth; } catch { }
 				try { embeddedWrapper.MinHeight = EmbedMinHeightPx; } catch { }
@@ -3700,7 +3716,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			var snap = new HVB_PanelStateHub.PanelSnapshot();
 			snap.LastUpdatedUtc = (State == State.Historical) ? Time[0].ToUniversalTime() : DateTime.UtcNow;
 			snap.StrategyName = PanelTitle;
-			snap.PanelTitle = "Hawk – Vwap Bands (HVB)";
+			snap.PanelTitle = PanelTitle;
 			snap.StrategyKey = cacheKey;
 
 			string status = statusOverride ?? dayStatus;
