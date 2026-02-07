@@ -145,7 +145,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         private readonly Brush InactiveBulletBrush = new SolidColorBrush(Color.FromRgb(150, 150, 150));
         private readonly Brush MainOnBrush = new SolidColorBrush(Color.FromRgb(60, 200, 120));
 
-        public string PanelTitle { get; set; } = "Hawk";
+        public string PanelTitle { get; set; } = "Hawk - Midas Bands (HMB)";
 
         private TextBlock _titleCenter;
         private WpfEllipse _mainStateBullet;
@@ -470,7 +470,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 Text = "Status",
                 Foreground = Brushes.LightGreen,
-                FontSize = CompactFontSize + 1,
+                FontSize = CompactFontSize + 2,
                 FontWeight = FontWeights.SemiBold,
                 VerticalAlignment = VerticalAlignment.Center
             };
@@ -547,7 +547,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (_titleCenter == null) return;
             _titleCenter.Inlines.Clear();
 
-            string title = string.IsNullOrEmpty(PanelTitle) ? "Hawk" : PanelTitle;
+            string title = string.IsNullOrEmpty(PanelTitle) ? "Hawk - Midas Bands (HMB)" : PanelTitle;
             string goldPart = "Hawk";
             string grayPart = "";
 
@@ -573,7 +573,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         public void ApplyPanelTitle(string title)
         {
-            PanelTitle = string.IsNullOrEmpty(title) ? "Hawk" : title;
+            PanelTitle = string.IsNullOrEmpty(title) ? "Hawk - Midas Bands (HMB)" : title;
             RefreshTitleRuns();
         }
 
@@ -667,10 +667,9 @@ namespace NinjaTrader.NinjaScript.Strategies
             setFont(_txtMaxGain);
             setFont(_txtMaxLoss);
             setFont(_drSentence, Math.Max(8.5, font - 1.0));
-            setFont(_riskWarningText);
             if (_lblDayResum != null) _lblDayResum.FontSize = font;
-            if (_riskWarningTitle != null) _riskWarningTitle.FontSize = font + 1;
-            if (_panelHeader != null) _panelHeader.FontSize = font + 2;
+            if (_riskWarningTitle != null) _riskWarningTitle.FontSize = font + 2;
+            if (_riskWarningText != null) _riskWarningText.FontSize = font;
         }
 
         private void SetDayResumBulletAndTitleColor(bool hasTradeOrOpen)
@@ -1473,8 +1472,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             try
             {
-                string titleFromSnap = SanitizeStrategyName(!string.IsNullOrEmpty(snap.StrategyName) ? snap.StrategyName : (instrumentName ?? "Hawk"));
-                embeddedControl.ApplyPanelTitle($"Hawk - {titleFromSnap}");
+                embeddedControl.ApplyPanelTitle("Hawk - Midas Bands (HMB)");
 
                 if (snap.EntryPrice.HasValue)
                     embeddedControl.SetEntryFromPosition(snap.EntryPrice.Value);
