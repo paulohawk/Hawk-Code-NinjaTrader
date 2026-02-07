@@ -203,7 +203,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         private const double _responsiveMinDelta = 6.0;
         // Base visual height aligned with Volatility / VWAP panels (Dashflix standard).
         public const double PanelBaseHeight = 390.0;
-        public const double PanelMinHeight = PanelBaseHeight * 1.05;
+        public const double PanelMinHeight = PanelBaseHeight * 1.10;
 
         public HawkEmbeddedControl(HawkPanelHelper parent)
         {
@@ -459,7 +459,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 Text = "Status",
                 Foreground = Brushes.LightGreen,
-                FontSize = CompactFontSize + 2,
+                FontSize = CompactFontSize + 3,
                 FontWeight = FontWeights.SemiBold,
                 VerticalAlignment = VerticalAlignment.Center
             };
@@ -472,7 +472,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 Text = "- sistema ativo e monitorando condições de mercado.",
                 Foreground = Brushes.LightGreen,
-                FontSize = CompactFontSize,
+                FontSize = CompactFontSize + 1,
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, RowSpacing, 0, 0),
                 HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -500,7 +500,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 Foreground = BronzeBrush,
                 FontSize = CompactFontSize - 1,
                 HorizontalAlignment = HorizontalAlignment.Center,
-                Margin = new Thickness(0, 4, 0, 0),
+                Margin = new Thickness(0, RowSpacing * 2, 0, 0),
                 TextTrimming = TextTrimming.None
             };
             main.Children.Add(footer);
@@ -657,8 +657,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             setFont(_txtMaxLoss);
             setFont(_drSentence, Math.Max(8.5, font - 1.0));
             if (_lblDayResum != null) _lblDayResum.FontSize = font;
-            var riskWarningTitleFont = Math.Max(CompactFontSize + 2, font + 3);
-            var riskWarningTextFont = Math.Max(CompactFontSize, font + 1);
+            var riskWarningTitleFont = Math.Max(CompactFontSize + 3, font + 4);
+            var riskWarningTextFont = Math.Max(CompactFontSize + 1, font + 2);
             if (_riskWarningTitle != null) _riskWarningTitle.FontSize = riskWarningTitleFont;
             if (_riskWarningText != null)
             {
