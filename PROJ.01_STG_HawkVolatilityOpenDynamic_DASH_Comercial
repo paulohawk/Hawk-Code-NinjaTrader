@@ -212,7 +212,7 @@ namespace NinjaTrader.NinjaScript
 
             var main = new Grid { Margin = new Thickness(2) };
             main.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            main.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            main.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             main.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto, MinHeight = 60 });
             main.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto, MinHeight = 20 });
 
@@ -559,7 +559,7 @@ namespace NinjaTrader.NinjaScript
 
             _footerText = new TextBlock
             {
-                Text = "Produto Oficial Dashflix",
+                Text = "- Produto Oficial DashFlix -",
                 Foreground = BronzeBrush,
                 FontSize = 9.0,
                 HorizontalAlignment = HorizontalAlignment.Center,
@@ -1724,14 +1724,14 @@ namespace NinjaTrader.NinjaScript
                     {
                         var cp = chartControl.ChartPanels[0];
                         if (cp != null && cp.W > 0)
-                            fallbackWidth = Math.Min(cp.W * 0.26, 280.0);
+                            fallbackWidth = Math.Min(cp.W * 0.28, 310.0);
                     }
                     else if (parentPanel.ActualWidth > 0)
-                        fallbackWidth = Math.Min(parentPanel.ActualWidth * 0.26, 280.0);
+                        fallbackWidth = Math.Min(parentPanel.ActualWidth * 0.28, 310.0);
                 }
                 catch { fallbackWidth = 260.0; }
 
-                double finalWidth = Math.Min(Math.Max(190.0 * 1.20, fallbackWidth), 280.0);
+                double finalWidth = Math.Min(Math.Max(190.0 * 1.30, fallbackWidth), 310.0);
 
                 try { embeddedWrapper.Width = finalWidth; } catch { }
                 try { embeddedWrapper.MaxHeight = double.PositiveInfinity; } catch { }
