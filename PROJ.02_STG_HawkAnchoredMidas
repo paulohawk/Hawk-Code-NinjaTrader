@@ -191,7 +191,6 @@ namespace NinjaTrader.NinjaScript.Strategies
         private TextBlock _riskWarningTitle;
         private WpfEllipse _riskWarningBullet;
         private TextBlock _riskWarningText;
-        private TextBlock _panelHeader;
 
         private int _qty = 1;
         private bool _beEnabled = false;
@@ -222,16 +221,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             Background = Brushes.Transparent;
             Margin = new Thickness(6);
             var main = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(2) };
-            _panelHeader = new TextBlock
-            {
-                Text = "Hawk - Midas Bands (HMB)",
-                FontSize = CompactFontSize + 2,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = BronzeBrush,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                Margin = new Thickness(0, 0, 0, RowSpacing)
-            };
-            main.Children.Add(_panelHeader);
             var header = new Grid { Margin = new Thickness(0, 0, 0, 6) };
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -668,8 +657,15 @@ namespace NinjaTrader.NinjaScript.Strategies
             setFont(_txtMaxLoss);
             setFont(_drSentence, Math.Max(8.5, font - 1.0));
             if (_lblDayResum != null) _lblDayResum.FontSize = font;
-            if (_riskWarningTitle != null) _riskWarningTitle.FontSize = font + 2;
-            if (_riskWarningText != null) _riskWarningText.FontSize = font;
+            var riskWarningTitleFont = Math.Max(CompactFontSize + 2, font + 3);
+            var riskWarningTextFont = Math.Max(CompactFontSize, font + 1);
+            if (_riskWarningTitle != null) _riskWarningTitle.FontSize = riskWarningTitleFont;
+            if (_riskWarningText != null)
+            {
+                _riskWarningText.FontSize = riskWarningTextFont;
+                _riskWarningText.TextWrapping = TextWrapping.Wrap;
+                _riskWarningText.MaxWidth = width * 0.78;
+            }
         }
 
         private void SetDayResumBulletAndTitleColor(bool hasTradeOrOpen)
