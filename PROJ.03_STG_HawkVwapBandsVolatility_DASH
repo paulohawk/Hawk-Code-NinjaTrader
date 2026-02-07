@@ -494,7 +494,7 @@ namespace NinjaTrader.NinjaScript
 				Text = "Atenção",
 				FontSize = RiskWarningLabelSize,
 				FontWeight = FontWeights.SemiBold,
-				Foreground = AlertRedBrush,
+				Foreground = DashflixAttentionRed,
 				VerticalAlignment = VerticalAlignment.Center,
 				TextTrimming = TextTrimming.None
 			};
@@ -505,7 +505,7 @@ namespace NinjaTrader.NinjaScript
 			{
 				Text = "automação ligada fora do horário operacional.",
 				FontSize = RiskWarningTextPrimarySize,
-				Foreground = AlertRedBrush,
+				Foreground = DashflixAttentionRed,
 				TextAlignment = TextAlignment.Center,
 				HorizontalAlignment = HorizontalAlignment.Center,
 				Margin = new Thickness(0, 2, 0, 0),
@@ -517,7 +517,7 @@ namespace NinjaTrader.NinjaScript
 			{
 				Text = "monitore possíveis falhas de stop e alvo.",
 				FontSize = RiskWarningTextSecondarySize,
-				Foreground = AlertRedBrush,
+				Foreground = DashflixAttentionRed,
 				FontStyle = FontStyles.Italic,
 				TextAlignment = TextAlignment.Center,
 				HorizontalAlignment = HorizontalAlignment.Center,
@@ -3748,7 +3748,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			TimeSpan endSession = GetAutoCloseTimeBrt(snapshotBrt.Date);
 			snap.EndDayText = endSession.ToString(@"hh\:mm");
 
-			snap.MainEnabled = Enabled;
+			snap.MainEnabled = State == State.Realtime;
 
 			if (EnablePanelDebugLog)
 			{
