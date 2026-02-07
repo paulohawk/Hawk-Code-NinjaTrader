@@ -392,6 +392,22 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             main.Children.Add(pnlRow);
 
+            var endDayRow = new Grid { Margin = new Thickness(0, RowSpacing, 0, RowSpacing) };
+            endDayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            endDayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            endDayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            var endDayLeft = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Left };
+            var endDayLabelWithBullet = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
+            _bulletEndDay = CreateBullet();
+            var endTxt = new TextBlock { Text = "EndDay", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center };
+            endDayLabelWithBullet.Children.Add(_bulletEndDay); endDayLabelWithBullet.Children.Add(endTxt);
+            endDayLeft.Children.Add(endDayLabelWithBullet);
+            _tbEndDayValue = new TextBlock { Text = "-", Foreground = Brushes.Gray, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 6, 0) };
+            endDayLeft.Children.Add(_tbEndDayValue);
+            endDayRow.Children.Add(endDayLeft); Grid.SetColumn(endDayLeft, 0);
+            main.Children.Add(endDayRow);
+
             var streakRow = new Grid { Margin = new Thickness(0, RowSpacing, 0, RowSpacing) };
             streakRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             streakRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -409,21 +425,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             main.Children.Add(streakRow);
 
-            var endDayRow = new Grid { Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 1.5) };
-            endDayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            endDayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            endDayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-            var endDayLeft = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Left };
-            var endDayLabelWithBullet = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
-            _bulletEndDay = CreateBullet();
-            var endTxt = new TextBlock { Text = "EndDay", Foreground = LightGrayBrush, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center };
-            endDayLabelWithBullet.Children.Add(_bulletEndDay); endDayLabelWithBullet.Children.Add(endTxt);
-            endDayLeft.Children.Add(endDayLabelWithBullet);
-            _tbEndDayValue = new TextBlock { Text = "-", Foreground = Brushes.Gray, FontSize = CompactFontSize, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 6, 0) };
-            endDayLeft.Children.Add(_tbEndDayValue);
-            endDayRow.Children.Add(endDayLeft); Grid.SetColumn(endDayLeft, 0);
-            main.Children.Add(endDayRow);
+            var riskWarningBlock = new Grid
+            {
+                Height = 42,
+                Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 2)
+            };
+            riskWarningBlock.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            riskWarningBlock.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
             var dayTitleRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, RowSpacing) };
             _bulletDayResum = CreateBullet(8);
@@ -437,18 +445,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             };
             dayTitleRow.Children.Add(_bulletDayResum);
             dayTitleRow.Children.Add(_lblDayResum);
-            main.Children.Add(dayTitleRow);
-
-            _drSentence = new TextBlock
-            {
-                Text = "-",
-                Foreground = Brushes.White,
-                FontSize = Math.Max(8.5, CompactFontSize - 1.0),
-                TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 2)
-            };
-            main.Children.Add(_drSentence);
-
             var riskWarningTitleRow = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
@@ -466,7 +462,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             };
             riskWarningTitleRow.Children.Add(_riskWarningBullet);
             riskWarningTitleRow.Children.Add(_riskWarningTitle);
-            main.Children.Add(riskWarningTitleRow);
+            riskWarningBlock.Children.Add(riskWarningTitleRow);
+            Grid.SetRow(riskWarningTitleRow, 0);
 
             _riskWarningText = new TextBlock
             {
@@ -474,9 +471,23 @@ namespace NinjaTrader.NinjaScript.Strategies
                 Foreground = Brushes.LightGreen,
                 FontSize = Math.Max(8.5, CompactFontSize - 1.0),
                 TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 2)
+                Margin = new Thickness(0, RowSpacing, 0, 0)
             };
-            main.Children.Add(_riskWarningText);
+            riskWarningBlock.Children.Add(_riskWarningText);
+            Grid.SetRow(_riskWarningText, 1);
+
+            main.Children.Add(riskWarningBlock);
+            main.Children.Add(dayTitleRow);
+
+            _drSentence = new TextBlock
+            {
+                Text = "-",
+                Foreground = Brushes.White,
+                FontSize = Math.Max(8.5, CompactFontSize - 1.0),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, RowSpacing, 0, RowSpacing)
+            };
+            main.Children.Add(_drSentence);
 
             var footer = new TextBlock
             {
