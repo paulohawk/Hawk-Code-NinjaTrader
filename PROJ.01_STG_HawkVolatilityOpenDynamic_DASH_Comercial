@@ -208,7 +208,7 @@ namespace NinjaTrader.NinjaScript
         {
             Background = Brushes.Transparent;
             Margin = new Thickness(6);
-            MinHeight = 399;
+            MinHeight = Math.Ceiling(399 * 1.05);
 
             var main = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(2) };
 
@@ -545,7 +545,8 @@ namespace NinjaTrader.NinjaScript
                 FontSize = 9.0,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 Margin = new Thickness(0, 2, 0, 0),
-                TextTrimming = TextTrimming.None
+                TextTrimming = TextTrimming.None,
+                TextWrapping = TextWrapping.NoWrap
             };
             main.Children.Add(_footerText);
 
@@ -1710,7 +1711,7 @@ namespace NinjaTrader.NinjaScript
                 }
                 catch { fallbackWidth = 260.0; }
 
-                double finalWidth = Math.Min(Math.Max(190.0, fallbackWidth), 280.0);
+                double finalWidth = Math.Min(Math.Max(190.0 * 1.10, fallbackWidth), 280.0);
 
                 try { embeddedWrapper.Width = finalWidth; } catch { }
                 try { embeddedWrapper.MaxHeight = EmbedHeightPx; } catch { }
