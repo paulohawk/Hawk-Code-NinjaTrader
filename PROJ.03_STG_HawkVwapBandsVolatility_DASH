@@ -246,7 +246,7 @@ namespace NinjaTrader.NinjaScript
 		{
 			Background = Brushes.Transparent;
 			Margin = new Thickness(6);
-			MinHeight = Math.Ceiling(399 * 1.05);
+			MinHeight = Math.Ceiling(399);
 
 			var main = new Grid { Margin = new Thickness(2) };
 			main.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -1077,7 +1077,7 @@ namespace NinjaTrader.NinjaScript
 	public class HVB_PanelHelper
 	{
 		private const int AttachPollMs = 1000;
-		private static readonly double EmbedMinHeightPx = Math.Ceiling(399 * 1.05);
+		private static readonly double EmbedMinHeightPx = Math.Ceiling(399);
 		private const double EmbedMaxWidthPx = 341.0;
 		private const double EmbedMinWidthPx = 266.0;
 
