@@ -455,7 +455,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             _riskWarningBullet = CreateBullet(8);
             _riskWarningTitle = new TextBlock
             {
-                Text = "STATUS",
+                Text = "Status",
                 Foreground = Brushes.LightGreen,
                 FontSize = CompactFontSize,
                 FontWeight = FontWeights.SemiBold,
@@ -727,7 +727,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 _txtMaxLoss.Text = "Max loss: -";
 
                 SetDayResum(null, null, null, null, null, null, null);
-                SetRiskWarning("STATUS", "- sistema ativo e monitorando condições de mercado.", Brushes.LightGreen, Brushes.LightGreen);
+                SetRiskWarning("Status", "- sistema ativo e monitorando condições de mercado.", Brushes.LightGreen, Brushes.LightGreen);
             }
             catch { }
         }
@@ -762,7 +762,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             if (_riskWarningTitle != null)
             {
-                _riskWarningTitle.Text = string.IsNullOrWhiteSpace(title) ? "STATUS" : title;
+                _riskWarningTitle.Text = string.IsNullOrWhiteSpace(title) ? "Status" : title;
                 _riskWarningTitle.Foreground = color ?? Brushes.LightGreen;
             }
             if (_riskWarningText != null)
@@ -1624,14 +1624,14 @@ namespace NinjaTrader.NinjaScript.Strategies
                     {
                         var cp = chartControl.ChartPanels[0];
                         if (cp != null && cp.W > 0)
-                            fallbackWidth = Math.Min(cp.W * 0.26, 280.0);
+                            fallbackWidth = Math.Min(cp.W * 0.28, 310.0);
                     }
                     else if (parentPanel.ActualWidth > 0)
-                        fallbackWidth = Math.Min(parentPanel.ActualWidth * 0.26, 280.0);
+                        fallbackWidth = Math.Min(parentPanel.ActualWidth * 0.28, 310.0);
                 }
                 catch { fallbackWidth = 260.0; }
 
-                double finalWidth = Math.Min(Math.Max(190.0, fallbackWidth), 280.0);
+                double finalWidth = Math.Min(Math.Max(247.0, fallbackWidth), 310.0);
 
                 try { embeddedWrapper.Width = finalWidth; } catch { }
                 try { System.Windows.Controls.Panel.SetZIndex(embeddedWrapper, 9999); } catch { }
@@ -2036,7 +2036,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         private TimeSpan? overlayStartCached = null;
         private TimeSpan? overlayEndCached = null;
         private DateTime strategyEnableTimeLocal = Core.Globals.MinDate;
-        private string riskWarningTitle = "STATUS";
+        private string riskWarningTitle = "Status";
         private string riskWarningText = "- sistema ativo e monitorando condições de mercado.";
         private Brush riskWarningColor = Brushes.LightGreen;
         private Brush riskWarningBulletFill = Brushes.LightGreen;
@@ -3403,14 +3403,14 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             if (isAttention)
             {
-                riskWarningTitle = "ATENÇÃO";
+                riskWarningTitle = "Atenção";
                 riskWarningText = "- automação ligada fora do horário operacional.\n- monitore possíveis falhas de stop e alvo.";
                 riskWarningColor = Brushes.Red;
                 riskWarningBulletFill = Brushes.Red;
             }
             else
             {
-                riskWarningTitle = "STATUS";
+                riskWarningTitle = "Status";
                 riskWarningText = "- sistema ativo e monitorando condições de mercado.";
                 riskWarningColor = Brushes.LightGreen;
                 riskWarningBulletFill = Brushes.LightGreen;
