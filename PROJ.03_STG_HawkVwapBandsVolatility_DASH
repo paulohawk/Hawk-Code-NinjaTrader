@@ -470,18 +470,18 @@ namespace NinjaTrader.NinjaScript
 			main.Children.Add(mainContent);
 
 			// Row: Risk Warning
-			_riskWarningRow = new Grid { Margin = new Thickness(0, 4, 0, 0), MinHeight = 50 };
+			_riskWarningRow = new Grid { Margin = new Thickness(0, 2, 0, 0), VerticalAlignment = VerticalAlignment.Top };
 			_riskWarningRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 			_riskWarningRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 			_riskWarningRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-			_riskWarningRow.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto, MinHeight = 14 });
-			_riskWarningRow.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto, MinHeight = 14 });
-			_riskWarningRow.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto, MinHeight = 14 });
+			_riskWarningRow.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+			_riskWarningRow.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+			_riskWarningRow.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
 			var wrap = new Grid
 			{
 				HorizontalAlignment = HorizontalAlignment.Center,
-				VerticalAlignment = VerticalAlignment.Center
+				VerticalAlignment = VerticalAlignment.Top
 			};
 			wrap.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 			wrap.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
