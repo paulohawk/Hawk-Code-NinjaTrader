@@ -2221,11 +2221,11 @@ namespace NinjaTrader.NinjaScript.Strategies
         #region State
         private int ResolveVersionSelection()
         {
-            if (Version1Fixo || (!Version2Dinamico && !Version3Agressivo))
+            if (Version1Fixo)
                 return 1;
-            if (Version2Dinamico && !Version3Agressivo)
+            if (Version2Dinamico)
                 return 2;
-            if (Version3Agressivo && !Version2Dinamico)
+            if (Version3Agressivo)
                 return 3;
             return 1;
         }
@@ -2330,6 +2330,56 @@ namespace NinjaTrader.NinjaScript.Strategies
             LineLengthBars = 30;
         }
 
+        private void ApplyPresetV3()
+        {
+            Contratos = 10;
+            HorarioInicioNormal = "11:00";
+            HorarioInicioDstUsa = "10:00";
+            HorarioEncerramento = "16:30";
+            EncerramentoOffsetMin = 5;
+
+            AnchorBarIndex = 1;
+            VWAPTimeFrameMin = 60;
+
+            LimitOffsetTicks = 10;
+            CancelLimitsAtHHmm = "16:00";
+            ClosePositionsAtHHmm = "16:30";
+            ExecutionMode = ExecutionModeType.HistoricalSafe;
+            AllowMidasCacheFallbackForEntry = true;
+
+            StopTypeIsATR = false;
+            ATRPeriod = 14;
+            ATRTimeFrameMin = 5;
+            ATRMultiplier = 1.5;
+            FixedStopTicks = 200;
+            FixedQuantity = 5;
+            MaxRiskPerTradeCurrency = 500.0;
+            TPFactor = 5.0;
+            BE_TriggerMultiple = 4.0;
+            BE_ProtectMultiple = 3.0;
+            SlippageCushionTicksForRisk = 1;
+
+            AllowLong = true;
+            AllowShort = true;
+
+            ThrottleMaxSubs = 8;
+            ThrottleWindowSec = 60;
+            MinLimitPriceDeltaTicks = 1;
+
+            UseSuperTrendFilter = true;
+            ST_Mode = SuperTrendMode.ATR;
+            ST_Length = 14;
+            ST_Multiplier = 2.618;
+            ST_MAType = MovingAverageType.HMA;
+            ST_Smooth = 14;
+            ST_TimeFrameMin = 60;
+            ST_InvertSignal = true;
+            UseHedgeSuperTrend = false;
+
+            PlotExitLines = true;
+            LineLengthBars = 30;
+        }
+
         private void ApplyVersionPresets()
         {
             int resolved = ResolveVersionSelection();
@@ -2337,6 +2387,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 ApplyPresetV1();
             else if (resolved == 2)
                 ApplyPresetV2();
+            else if (resolved == 3)
+                ApplyPresetV3();
         }
 
         protected override void OnStateChange()
@@ -2359,6 +2411,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 Version1Fixo = true;
                 Version2Dinamico = false;
                 Version3Agressivo = false;
+                ApplyVersionPresets();
             }
             else if (State == State.Configure)
             {
@@ -2378,6 +2431,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
             else if (State == State.DataLoaded)
             {
+                ApplyVersionPresets();
                 tickSize = Instrument.MasterInstrument.TickSize;
                 pontoValor = Instrument.MasterInstrument.PointValue;
 
