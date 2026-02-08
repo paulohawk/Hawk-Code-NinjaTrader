@@ -1860,108 +1860,117 @@ namespace NinjaTrader.NinjaScript.Strategies
     public class HawkMidasBandsSTG : Strategy
     {
         #region Parâmetros
-        [NinjaScriptProperty, Display(Name = "Contratos", GroupName = "Configuração", Order = 100)]
-        public int Contratos { get; set; } = 1;
-        [NinjaScriptProperty, Display(Name = "Horário Início Normal (HH:mm)", GroupName = "Configuração", Order = 110)]
-        public string HorarioInicioNormal { get; set; } = "11:00";
-        [NinjaScriptProperty, Display(Name = "Horário Início DST EUA (HH:mm)", GroupName = "Configuração", Order = 120)]
-        public string HorarioInicioDstUsa { get; set; } = "10:00";
-        [NinjaScriptProperty, Display(Name = "Horário Encerramento (HH:mm)", GroupName = "Configuração", Order = 130)]
-        public string HorarioEncerramento { get; set; } = "17:00";
-        [NinjaScriptProperty, Display(Name = "Offset p/ Encerramento (min)", GroupName = "Configuração", Order = 140)]
-        public int EncerramentoOffsetMin { get; set; } = 15;
+        [NinjaScriptProperty, Display(Name = "V1 (FIXO)", GroupName = "Versionamento Comercial", Order = 10)]
+        public bool Version1Fixo { get; set; } = true;
 
-        [NinjaScriptProperty, Display(Name = "Barra Âncora (nº da sessão)", GroupName = "VWAP", Order = 200)]
+        [NinjaScriptProperty, Display(Name = "V2 (DINÂMICO)", GroupName = "Versionamento Comercial", Order = 20)]
+        public bool Version2Dinamico { get; set; } = false;
+
+        [NinjaScriptProperty, Display(Name = "V3 (AGRESSIVO)", GroupName = "Versionamento Comercial", Order = 30)]
+        public bool Version3Agressivo { get; set; } = false;
+
+        [Browsable(false)]
+        public int Contratos { get; set; } = 10;
+        [Browsable(false)]
+        public string HorarioInicioNormal { get; set; } = "11:00";
+        [Browsable(false)]
+        public string HorarioInicioDstUsa { get; set; } = "10:00";
+        [Browsable(false)]
+        public string HorarioEncerramento { get; set; } = "16:30";
+        [Browsable(false)]
+        public int EncerramentoOffsetMin { get; set; } = 5;
+
+        [Browsable(false)]
         public int AnchorBarIndex { get; set; } = 1;
-        [NinjaScriptProperty, Display(Name = "VWAP Timeframe (min)", GroupName = "VWAP", Order = 220)]
+        [Browsable(false)]
         public int VWAPTimeFrameMin { get; set; } = 60;
 
-        [NinjaScriptProperty, Display(Name = "Offset Limite (ticks)", GroupName = "Execução", Order = 300)]
+        [Browsable(false)]
         public int LimitOffsetTicks { get; set; } = 10;
 
-        [NinjaScriptProperty, Display(Name = "Cancelar Limites às (HH:mm)", GroupName = "Execução", Order = 310)]
-        public string CancelLimitsAtHHmm { get; set; } = "16:45";
+        [Browsable(false)]
+        public string CancelLimitsAtHHmm { get; set; } = "16:00";
 
-        [NinjaScriptProperty, Display(Name = "Fechar Posições às (HH:mm)", GroupName = "Execução", Order = 320)]
-        public string ClosePositionsAtHHmm { get; set; } = "17:00";
+        [Browsable(false)]
+        public string ClosePositionsAtHHmm { get; set; } = "16:30";
 
-        [NinjaScriptProperty, Display(Name = "Execution Mode", GroupName = "Execução", Order = 335)]
+        [Browsable(false)]
         public ExecutionModeType ExecutionMode { get; set; } = ExecutionModeType.HistoricalSafe;
 
-        [NinjaScriptProperty, Display(Name = "Permitir MIDAS cache na entrada", GroupName = "Execução", Order = 336)]
+        [Browsable(false)]
         public bool AllowMidasCacheFallbackForEntry { get; set; } = true;
 
-        [NinjaScriptProperty, Display(Name = "Stop por ATR?", GroupName = "Risco", Order = 400)]
-        public bool StopTypeIsATR { get; set; } = true;
+        [Browsable(false)]
+        public bool StopTypeIsATR { get; set; } = false;
 
-        [NinjaScriptProperty, Display(Name = "Período ATR", GroupName = "Risco", Order = 410)]
+        [Browsable(false)]
         public int ATRPeriod { get; set; } = 14;
 
-        [NinjaScriptProperty, Display(Name = "ATR Timeframe (min)", GroupName = "Risco", Order = 420)]
+        [Browsable(false)]
         public int ATRTimeFrameMin { get; set; } = 5;
 
-        [NinjaScriptProperty, Display(Name = "Multiplicador ATR", GroupName = "Risco", Order = 430)]
-        public double ATRMultiplier { get; set; } = 1.0;
+        [Browsable(false)]
+        public double ATRMultiplier { get; set; } = 1.5;
 
-        [NinjaScriptProperty, Display(Name = "Stop Fixo (ticks)", GroupName = "Risco", Order = 440)]
-        public int FixedStopTicks { get; set; } = 100;
+        [Browsable(false)]
+        public int FixedStopTicks { get; set; } = 200;
 
-        [NinjaScriptProperty, Display(Name = "Quantidade Fixa", GroupName = "Risco", Order = 450)]
-        public int FixedQuantity { get; set; } = 1;
+        [Browsable(false)]
+        public int FixedQuantity { get; set; } = 3;
 
-        [NinjaScriptProperty, Display(Name = "Risco Máx por Trade (moeda)", GroupName = "Risco", Order = 460)]
-        public double MaxRiskPerTradeCurrency { get; set; } = 200.0;
+        [Browsable(false)]
+        public double MaxRiskPerTradeCurrency { get; set; } = 300.0;
 
-        [NinjaScriptProperty, Display(Name = "Fator TP", GroupName = "Risco", Order = 470)]
-        public double TPFactor { get; set; } = 3.0;
+        [Browsable(false)]
+        public double TPFactor { get; set; } = 5.0;
 
-        [NinjaScriptProperty, Display(Name = "BE Trigger (multiplicador)", GroupName = "Risco", Order = 480)]
+        [Browsable(false)]
         public double BE_TriggerMultiple { get; set; } = 4.0;
 
-        [NinjaScriptProperty, Display(Name = "BE Proteção (multiplicador)", GroupName = "Risco", Order = 490)]
-        public double BE_ProtectMultiple { get; set; } = 1.0;
+        [Browsable(false)]
+        public double BE_ProtectMultiple { get; set; } = 3.0;
 
-        [NinjaScriptProperty, Display(Name = "Permitir Long", GroupName = "Geral", Order = 500)]
+        [Browsable(false)]
         public bool AllowLong { get; set; } = true;
-        [NinjaScriptProperty, Display(Name = "Permitir Short", GroupName = "Geral", Order = 510)]
+        [Browsable(false)]
         public bool AllowShort { get; set; } = true;
 
-        [NinjaScriptProperty, Display(Name = "Modo Debug", GroupName = "Geral", Order = 520)]
+        [NinjaScriptProperty, Display(Name = "Modo Debug", GroupName = "Diagnóstico", Order = 805)]
         public bool DebugMode { get; set; } = true;
 
-        [NinjaScriptProperty, Display(Name = "Throttle Máx Submissões", GroupName = "Execução", Order = 330)]
+        [Browsable(false)]
         public int ThrottleMaxSubs { get; set; } = 8;
-        [NinjaScriptProperty, Display(Name = "Throttle Janela (s)", GroupName = "Execução", Order = 331)]
+        [Browsable(false)]
         public int ThrottleWindowSec { get; set; } = 60;
-        [NinjaScriptProperty, Display(Name = "Delta mín. preço limite (ticks)", GroupName = "Execução", Order = 332)]
+        [Browsable(false)]
         public int MinLimitPriceDeltaTicks { get; set; } = 1;
 
-        [NinjaScriptProperty, Display(Name = "Colchão slippage p/ sizing (ticks)", GroupName = "Risco", Order = 491)]
-        public int SlippageCushionTicksForRisk { get; set; } = 0;
+        [Browsable(false)]
+        public int SlippageCushionTicksForRisk { get; set; } = 1;
 
-        [NinjaScriptProperty, Display(Name = "Usar filtro SuperTrend", GroupName = "Filtros", Order = 600)]
-        public bool UseSuperTrendFilter { get; set; } = false;
-        [NinjaScriptProperty, Display(Name = "SuperTrend Mode", GroupName = "Filtros", Order = 605)]
+        [Browsable(false)]
+        public bool UseSuperTrendFilter { get; set; } = true;
+        [Browsable(false)]
         public SuperTrendMode ST_Mode { get; set; } = SuperTrendMode.ATR;
-        [NinjaScriptProperty, Display(Name = "ST Length", GroupName = "Filtros", Order = 610)]
+        [Browsable(false)]
         public int ST_Length { get; set; } = 14;
-        [NinjaScriptProperty, Display(Name = "ST Multiplier", GroupName = "Filtros", Order = 615)]
+        [Browsable(false)]
         public double ST_Multiplier { get; set; } = 2.618;
-        [NinjaScriptProperty, Display(Name = "ST MA Type", GroupName = "Filtros", Order = 620)]
+        [Browsable(false)]
         public MovingAverageType ST_MAType { get; set; } = MovingAverageType.HMA;
-        [NinjaScriptProperty, Display(Name = "ST Smooth", GroupName = "Filtros", Order = 625)]
+        [Browsable(false)]
         public int ST_Smooth { get; set; } = 14;
-        [NinjaScriptProperty, Display(Name = "ST Timeframe (min)", GroupName = "Filtros", Order = 626)]
-        public int ST_TimeFrameMin { get; set; } = 5;
-        [NinjaScriptProperty, Display(Name = "SuperTrend Invertido", GroupName = "Filtros", Order = 630)]
-        public bool ST_InvertSignal { get; set; } = false;
-        [NinjaScriptProperty, Display(Name = "Usar Hedge SuperTrend", GroupName = "Filtros", Order = 635)]
+        [Browsable(false)]
+        public int ST_TimeFrameMin { get; set; } = 60;
+        [Browsable(false)]
+        public bool ST_InvertSignal { get; set; } = true;
+        [Browsable(false)]
         public bool UseHedgeSuperTrend { get; set; } = false;
 
-        [NinjaScriptProperty, Display(Name = "Plotar linhas de SL/BE/TP", GroupName = "Visual", Order = 700)]
+        [Browsable(false)]
         public bool PlotExitLines { get; set; } = true;
 
-        [NinjaScriptProperty, Display(Name = "LineLengthBars", GroupName = "Visual", Order = 701)]
+        [Browsable(false)]
         public int LineLengthBars { get; set; } = 30;
 
         // ------------------- Diagnóstico painel -------------------
@@ -2210,6 +2219,74 @@ namespace NinjaTrader.NinjaScript.Strategies
         #endregion
 
         #region State
+        private int ResolveVersionSelection()
+        {
+            if (Version1Fixo || (!Version2Dinamico && !Version3Agressivo))
+                return 1;
+            if (Version2Dinamico && !Version3Agressivo)
+                return 2;
+            if (Version3Agressivo && !Version2Dinamico)
+                return 3;
+            return 1;
+        }
+
+        private void ApplyPresetV1()
+        {
+            Contratos = 10;
+            HorarioInicioNormal = "11:00";
+            HorarioInicioDstUsa = "10:00";
+            HorarioEncerramento = "16:30";
+            EncerramentoOffsetMin = 5;
+
+            AnchorBarIndex = 1;
+            VWAPTimeFrameMin = 60;
+
+            LimitOffsetTicks = 10;
+            CancelLimitsAtHHmm = "16:00";
+            ClosePositionsAtHHmm = "16:30";
+            ExecutionMode = ExecutionModeType.HistoricalSafe;
+            AllowMidasCacheFallbackForEntry = true;
+
+            StopTypeIsATR = false;
+            ATRPeriod = 14;
+            ATRTimeFrameMin = 5;
+            ATRMultiplier = 1.5;
+            FixedStopTicks = 200;
+            FixedQuantity = 3;
+            MaxRiskPerTradeCurrency = 300.0;
+            TPFactor = 5.0;
+            BE_TriggerMultiple = 4.0;
+            BE_ProtectMultiple = 3.0;
+            SlippageCushionTicksForRisk = 1;
+
+            AllowLong = true;
+            AllowShort = true;
+
+            ThrottleMaxSubs = 8;
+            ThrottleWindowSec = 60;
+            MinLimitPriceDeltaTicks = 1;
+
+            UseSuperTrendFilter = true;
+            ST_Mode = SuperTrendMode.ATR;
+            ST_Length = 14;
+            ST_Multiplier = 2.618;
+            ST_MAType = MovingAverageType.HMA;
+            ST_Smooth = 14;
+            ST_TimeFrameMin = 60;
+            ST_InvertSignal = true;
+            UseHedgeSuperTrend = false;
+
+            PlotExitLines = true;
+            LineLengthBars = 30;
+        }
+
+        private void ApplyVersionPresets()
+        {
+            int resolved = ResolveVersionSelection();
+            if (resolved == 1)
+                ApplyPresetV1();
+        }
+
         protected override void OnStateChange()
         {
             if (State == State.SetDefaults)
@@ -2219,14 +2296,21 @@ namespace NinjaTrader.NinjaScript.Strategies
                 ExecutionMode = ExecutionModeType.HistoricalSafe;
                 EntriesPerDirection = 1;
                 EntryHandling = EntryHandling.AllEntries;
-                IsExitOnSessionCloseStrategy = false;
-                ExitOnSessionCloseSeconds = 0;
-                Slippage = 0;
+                IsExitOnSessionCloseStrategy = true;
+                ExitOnSessionCloseSeconds = 30;
+                IsFillLimitOnTouch = true;
+                Slippage = 1;
                 StartBehavior = StartBehavior.WaitUntilFlat;
                 TraceOrders = true;
+                BarsRequiredToTrade = 20;
+                MaximumBarsLookBack = MaximumBarsLookBack.TwoHundredFiftySix;
+                Version1Fixo = true;
+                Version2Dinamico = false;
+                Version3Agressivo = false;
             }
             else if (State == State.Configure)
             {
+                ApplyVersionPresets();
                 instanceId = Guid.NewGuid().ToString("N");
 
                 Calculate = ExecutionMode == ExecutionModeType.RealtimePrecise
