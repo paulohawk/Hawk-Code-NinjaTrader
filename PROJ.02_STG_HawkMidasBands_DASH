@@ -2157,6 +2157,14 @@ namespace NinjaTrader.NinjaScript.Strategies
         private bool initialConsolidationDone = false;
         private bool performanceFinalizedForThisLoad = false;
         private string instanceId;
+        private bool versionContextResolved = false;
+        private int resolvedVersion;
+        private string resolvedVersionLabel = "V1";
+        private string presetName = "FIXO";
+        private string riskMode = "FIXED";
+        private string contractsMode = "FIXED";
+        private DateTime versionResolvedAtUtc = Core.Globals.MinDate;
+        private readonly Dictionary<string, DateTime> lastDecisionLogAt = new Dictionary<string, DateTime>();
 
         private DateTime tradingDayAnchor = Core.Globals.MinDate;
         private bool tradingDayAnchorSet = false;
@@ -2216,6 +2224,55 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (ExecutionMode == ExecutionModeType.RealtimePrecise)
                 Print("[HawkRP] " + msg);
         }
+
+        private string VersionTag()
+        {
+            if (!versionContextResolved)
+                ResolveVersionContext();
+
+            return $"version={resolvedVersionLabel}";
+        }
+
+        private void LogDecision(string tag, string reason)
+        {
+            string key = $"{tag}|{reason}";
+            DateTime now = Core.Globals.Now;
+            if (lastDecisionLogAt.TryGetValue(key, out var lastTime))
+            {
+                if ((now - lastTime).TotalMinutes < 1)
+                    return;
+            }
+
+            lastDecisionLogAt[key] = now;
+            Print($"[HawkDecision][{tag}] {VersionTag()} reason={reason}");
+        }
+
+        private void LogRiskSnapshot(double riskCurrency, double atrValue, double stopTicks, int contractsCalculated, int contractsFinal)
+        {
+            Print($"[HawkRisk] {VersionTag()} mode={riskMode} riskCurrency={riskCurrency.ToString(CultureInfo.InvariantCulture)} atrValue={atrValue.ToString(CultureInfo.InvariantCulture)} stopTicks={stopTicks.ToString(CultureInfo.InvariantCulture)} contractsCalculated={contractsCalculated} contractsFinal={contractsFinal}");
+        }
+
+        private void LogOrder(string tag, string orderType, double price, int qty, string reason = null)
+        {
+            string reasonText = string.IsNullOrWhiteSpace(reason) ? "" : $" reason={reason}";
+            Print($"[HawkOrder][{tag}] orderType={orderType} price={price.ToString(CultureInfo.InvariantCulture)} qty={qty} {VersionTag()}{reasonText}");
+        }
+
+        private void LogExecution(double price, int qty)
+        {
+            Print($"[HawkExec][FILL] price={price.ToString(CultureInfo.InvariantCulture)} qty={qty} {VersionTag()}");
+        }
+
+        private void LogPosition(string tag, string side, int qty, string reason = null)
+        {
+            string reasonText = string.IsNullOrWhiteSpace(reason) ? "" : $" reason={reason}";
+            Print($"[HawkPosition][{tag}] side={side} qty={qty} {VersionTag()}{reasonText}");
+        }
+
+        private void LogWindow(string tag, string reason, DateTime time)
+        {
+            Print($"[HawkWindow][{tag}] reason={reason} time={time:HH:mm} {VersionTag()}");
+        }
         #endregion
 
         #region State
@@ -2228,6 +2285,35 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (Version3Agressivo)
                 return 3;
             return 1;
+        }
+
+        private void ResolveVersionContext()
+        {
+            if (versionContextResolved)
+                return;
+
+            resolvedVersion = ResolveVersionSelection();
+            resolvedVersionLabel = $"V{resolvedVersion}";
+            presetName = resolvedVersion == 1 ? "FIXO" : resolvedVersion == 2 ? "DINAMICO" : "AGRESSIVO";
+            riskMode = StopTypeIsATR ? "ATR" : "FIXED";
+            contractsMode = StopTypeIsATR ? "AUTO_ATR" : "FIXED";
+            versionResolvedAtUtc = DateTime.UtcNow;
+            versionContextResolved = true;
+        }
+
+        private void LogInitHeader()
+        {
+            Print("[Hawk][INIT]");
+            Print("strategy=HawkMidasBandsSTG");
+            Print($"instanceId={instanceId}");
+            Print($"resolvedVersion={resolvedVersionLabel}");
+            Print($"preset={presetName}");
+            Print($"riskMode={riskMode}");
+            Print($"contractsMode={contractsMode}");
+            Print($"timestamp={versionResolvedAtUtc:O}");
+            Print($"toggles: V1={(Version1Fixo ? 1 : 0)} V2={(Version2Dinamico ? 1 : 0)} V3={(Version3Agressivo ? 1 : 0)}");
+            if (!StopTypeIsATR)
+                Print($"[HawkRisk] {VersionTag()} mode=FIXED note=ATR_DISABLED");
         }
 
         private void ApplyPresetV1()
@@ -2432,6 +2518,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             else if (State == State.DataLoaded)
             {
                 ApplyVersionPresets();
+                ResolveVersionContext();
                 tickSize = Instrument.MasterInstrument.TickSize;
                 pontoValor = Instrument.MasterInstrument.PointValue;
 
@@ -2445,6 +2532,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     chartToken = "HEADLESS";
 
                 Print($"[HawkDiag][KEY] cacheKey={GetCacheKey()} instanceId={instanceId} chartToken={chartToken} InstanceTag={InstanceTag}");
+                LogInitHeader();
 
                 try
                 {
@@ -3298,13 +3386,16 @@ namespace NinjaTrader.NinjaScript.Strategies
                 {
                     blockedAfterCloseLogged = true;
                     Print($"[HawkDiag][BLOCKED_AFTER_CLOSE] barTime={Times[vwapBip][0]:O}");
+                    LogWindow("BLOCK", "AfterClose", Times[vwapBip][0]);
                 }
+                LogDecision("ENTRY_BLOCKED", "AfterClose");
                 EntryDiag("BLOCKED_AFTER_CLOSE", BuildEntryDiagContext(null, null));
                 return;
             }
 
             if (CurrentBars.Length <= vwapBip || CurrentBars[vwapBip] <= 0)
             {
+                LogDecision("ENTRY_BLOCKED", "VwapBarsNotReady");
                 EntryDiag("GATE_VWAP_BARS", BuildEntryDiagContext(null, null, "reason=vwap_bars_not_ready"));
                 return;
             }
@@ -3319,6 +3410,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
             if (CurrentBars[0] < BarsRequiredToTrade)
             {
+                LogDecision("ENTRY_BLOCKED", "PrimaryBarsNotReady");
                 EntryDiag("GATE_PRIMARY_BARS", BuildEntryDiagContext(null, null, $"reason=primary_bars_not_ready barsRequired={BarsRequiredToTrade}"));
                 return;
             }
@@ -3334,6 +3426,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (agoraPrimary < inicioHojeAllowed)
             {
                 statusText = "Waiting (aguardando)";
+                LogWindow("BLOCK", "BeforeStart", agoraPrimary);
+                LogDecision("ENTRY_BLOCKED", "BeforeStart");
                 EntryDiag("GATE_BEFORE_START", BuildEntryDiagContext(inicioHojeAllowed, horarioZeraDT));
                 return;
             }
@@ -3344,6 +3438,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 statusText = "Blocked (após zera)";
                 CancelAndClearWorkingOrders();
                 sideLatched = LatchedSide.None; qtyLatched = 0;
+                LogWindow("BLOCK", "AfterClose", agoraPrimary);
+                LogDecision("ENTRY_BLOCKED", "AfterClose");
                 EntryDiag("GATE_AFTER_CLOSE", BuildEntryDiagContext(inicioHojeAllowed, horarioZeraDT));
                 return;
             }
@@ -3351,6 +3447,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (vwap == null)
             {
                 statusText = "VWAP não pronto";
+                LogDecision("ENTRY_BLOCKED", "VwapNull");
                 EntryDiag("GATE_VWAP_NULL", BuildEntryDiagContext(inicioHojeAllowed, horarioZeraDT));
                 return;
             }
@@ -3360,6 +3457,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 statusText = "MIDAS indisponível";
                 ClearPendingSnapshot();
                 RPLog("[MIDAS] source=NONE handle=HandleMidasBar action=skip");
+                LogDecision("ENTRY_BLOCKED", "MidasUnavailable");
                 EntryDiag("MIDAS_FAIL", BuildEntryDiagContext(inicioHojeAllowed, horarioZeraDT, $"source={source} allowCache={AllowMidasCacheFallbackForEntry}"));
                 return;
             }
@@ -3380,12 +3478,14 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (st == null)
                 {
                     statusText = "ST null";
+                    LogDecision("ENTRY_BLOCKED", "SuperTrendNull");
                     EntryDiag("GATE_ST_NULL", BuildEntryDiagContext(inicioHojeAllowed, horarioZeraDT));
                     return;
                 }
                 if (CurrentBars.Length <= stBip || CurrentBars[stBip] < Math.Max(ST_Length, ST_Smooth) + 2)
                 {
                     statusText = "ST não pronto";
+                    LogDecision("ENTRY_BLOCKED", "SuperTrendNotReady");
                     EntryDiag("GATE_ST_NOT_READY", BuildEntryDiagContext(inicioHojeAllowed, horarioZeraDT));
                     return;
                 }
@@ -3416,6 +3516,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             pendingRiskCurrency = riscoPorContrato;
             pendingRiskTicks = riscoPrecoEstimado / tickSize;
+            if (StopTypeIsATR && sideLatched != LatchedSide.None)
+            {
+                double atrVal = (atrInd != null) ? atrInd[0] * ATRMultiplier : 0.0;
+                double stopTicks = riscoPrecoEstimado > 0 ? (riscoPrecoEstimado / tickSize) : 0.0;
+                LogRiskSnapshot(MaxRiskPerTradeCurrency, atrVal, stopTicks, qtyCalc, qtyCalc);
+            }
 
             CancelPendingLimitsIfAny();
 
@@ -3423,6 +3529,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 statusText = $"Waiting (sem contexto){midasTag}";
                 ClearPendingSnapshot();
+                LogDecision("ENTRY_BLOCKED", "NoContext");
                 EntryDiag("GATE_NO_CONTEXT", BuildEntryDiagContext(inicioHojeAllowed, horarioZeraDT, $"midasSource={source}"));
                 return;
             }
@@ -3430,6 +3537,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 statusText = $"Posição aberta{midasTag}";
                 ClearPendingSnapshot();
+                LogDecision("ENTRY_BLOCKED", "PositionOpen");
                 EntryDiag("GATE_POSITION_OPEN", BuildEntryDiagContext(inicioHojeAllowed, horarioZeraDT, $"midasSource={source} pos={Position.MarketPosition} qty={Position.Quantity}"));
                 return;
             }
@@ -3438,6 +3546,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 double precoLimiteCompra = Instrument.MasterInstrument.RoundToTickSize(vwapMedian + LimitOffsetTicks * tickSize);
                 statusText = $"Contexto Long (pendente){midasTag}";
+                LogDecision("ENTRY_ALLOWED", "AllConditionsMet");
                 EntryDiag("SUBMIT", BuildEntryDiagContext(inicioHojeAllowed, horarioZeraDT, $"side={sideLatched} qty={qtyCalc} limit={precoLimiteCompra} vwapM={vwapMedian} source={source}"));
                 SubmitOrReplaceLimitOrderSafe(true, qtyCalc, precoLimiteCompra, "LongAuto");
             }
@@ -3445,6 +3554,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 double precoLimiteVenda = Instrument.MasterInstrument.RoundToTickSize(vwapMedian - LimitOffsetTicks * tickSize);
                 statusText = $"Contexto Short (pendente){midasTag}";
+                LogDecision("ENTRY_ALLOWED", "AllConditionsMet");
                 EntryDiag("SUBMIT", BuildEntryDiagContext(inicioHojeAllowed, horarioZeraDT, $"side={sideLatched} qty={qtyCalc} limit={precoLimiteVenda} vwapM={vwapMedian} source={source}"));
                 SubmitOrReplaceLimitOrderSafe(false, qtyCalc, precoLimiteVenda, "ShortAuto");
             }
@@ -3463,6 +3573,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             riscoPrecoEstimado = 0.0;
             riscoPorContrato = 0.0;
 
+            // Quando StopTypeIsATR == true, os campos FixedStopTicks e FixedQuantity são ignorados intencionalmente.
+            // O sizing é determinado exclusivamente por ATR + risco monetário máximo.
             if (!StopTypeIsATR || MaxRiskPerTradeCurrency <= 0 || atrInd == null || CurrentBars.Length <= atrBip || CurrentBars[atrBip] <= ATRPeriod || side == LatchedSide.None)
                 return Math.Max(1, FixedQuantity);
 
@@ -3742,6 +3854,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                         lastLimitStored = roundedLimit;
                         pendingEntryPrice = roundedLimit;
                         pendingQty = qty;
+                        LogOrder("SUBMIT", "LIMIT", roundedLimit, qty);
                         PrintCurrentOrdersState("AFTER_ENTRY_SUBMIT");
                         return;
                     }
@@ -3766,6 +3879,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 lastLimitStored = roundedLimit;
                 pendingEntryPrice = roundedLimit;
                 pendingQty = qty;
+                LogOrder("SUBMIT", "LIMIT", roundedLimit, qty);
                 PrintCurrentOrdersState("AFTER_ENTRY_SUBMIT");
             }
             catch (Exception ex)
@@ -3819,6 +3933,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                         ChangeOrder(ordemRef, qty, 0, roundedStop);
                         lastStopStored = roundedStop;
                         LogStopEvent(ordemRef?.Name ?? signalName, roundedStop, ordemRef?.FromEntrySignal ?? string.Empty);
+                        LogOrder("SUBMIT", "STOP", roundedStop, qty);
                         return;
                     }
                     catch { ordemRef = null; }
@@ -3831,6 +3946,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 lastStopStored = roundedStop;
                 LogStopEvent(ordemRef?.Name ?? signalName, roundedStop, ordemRef?.FromEntrySignal ?? string.Empty);
+                LogOrder("SUBMIT", "STOP", roundedStop, qty);
             }
             catch (Exception ex)
             {
@@ -3935,7 +4051,12 @@ namespace NinjaTrader.NinjaScript.Strategies
                     Print($"[HawkORDER_REAL] orderTime={orderTime:O} cbTime={time:O} source=order.Time name={order.Name} id={order.OrderId} state={orderState} action={order.OrderAction} type={order.OrderType} qty={order.Quantity} filled={order.Filled} avgFill={order.AverageFillPrice} limit={order.LimitPrice} stop={order.StopPrice} oco={order.Oco} error={error} nativeError={nativeError}");
                     if (orderState == OrderState.Rejected)
                     {
+                        LogOrder("REJECT", order.OrderType.ToString().ToUpperInvariant(), order.OrderType == OrderType.StopMarket ? order.StopPrice : order.LimitPrice, order.Quantity, error.ToString());
                         RPLog($"[ORDER_REJECT] name={order.Name} id={order.OrderId} action={order.OrderAction} type={order.OrderType} qty={order.Quantity} filled={order.Filled} avgFill={order.AverageFillPrice} limit={order.LimitPrice} stop={order.StopPrice} orderTime={orderTime:O} cbTime={time:O} source=order.Time error={error} nativeError={nativeError} pos={Position.MarketPosition} posQty={Position.Quantity} entry={currentEntryPrice} plannedStop={currentPlannedStop} plannedTarget={currentPlannedTarget}");
+                    }
+                    else if (orderState == OrderState.Cancelled)
+                    {
+                        LogOrder("CANCEL", order.OrderType.ToString().ToUpperInvariant(), order.OrderType == OrderType.StopMarket ? order.StopPrice : order.LimitPrice, order.Quantity);
                     }
                 }
             }
@@ -3961,6 +4082,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                         AddLedgerItem(currentEntryPrice.Value, averagePrice, lastKnownPositionQty > 0, currentPlannedStop, currentPlannedTarget);
                     }
 
+                    string closeSide = lastKnownPositionQty > 0 ? "LONG" : lastKnownPositionQty < 0 ? "SHORT" : "FLAT";
+                    LogPosition("CLOSE", closeSide, Math.Abs(lastKnownPositionQty), "PositionFlat");
                     CancelAndClearWorkingOrders();
                     stopAlvoConfigurados = false;
                     bracketQtyLatched = 0;
@@ -4006,6 +4129,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     currentEntryPrice = currentEntryPrice ?? averagePrice;
 
                     statusText = marketPosition == MarketPosition.Long ? "Posição Long" : "Posição Short";
+                    LogPosition("OPEN", marketPosition == MarketPosition.Long ? "LONG" : "SHORT", desiredQty);
                     return;
                 }
 
@@ -4032,6 +4156,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     stopAlvoConfigurados = true; ordemLimiteCompra = null; compraFeitaNaSessao = true;
 
                     statusText = "Posição Long";
+                    LogPosition("OPEN", "LONG", desiredQty);
                     PrintCurrentOrdersState("AFTER_STOP_TARGET_SETUP");
                     ClearPendingSnapshot();
                 }
@@ -4052,6 +4177,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     stopAlvoConfigurados = true; ordemLimiteVenda = null; vendaFeitaNaSessao = true;
 
                     statusText = "Posição Short";
+                    LogPosition("OPEN", "SHORT", desiredQty);
                     PrintCurrentOrdersState("AFTER_STOP_TARGET_SETUP");
                     ClearPendingSnapshot();
                 }
@@ -4104,6 +4230,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (execution?.Order != null && quantity > 0)
                 {
                     Print($"[HawkEXEC_REAL] execTime={execTime:O} source=execution.Time orderName={execution.Order.Name} orderAction={execution.Order.OrderAction} orderType={execution.Order.OrderType} orderState={execution.Order.OrderState} filledQty={quantity} fillPrice={price} mpArg={marketPosition} posNow={Position.MarketPosition} posQty={Position.Quantity} posAvg={Position.AveragePrice} oco={execution.Order.Oco} fromSignal={execution.Order.FromEntrySignal}");
+                    LogExecution(price, quantity);
                     if (IsStopOrder(execution.Order))
                     {
                         LogStopEvent(execution.Order.Name, price, execution.Order.FromEntrySignal);
