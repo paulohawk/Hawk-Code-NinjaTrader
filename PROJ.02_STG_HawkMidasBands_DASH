@@ -1857,7 +1857,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         RealtimePrecise
     }
 
-    public class HawkAnchoredMidas : Strategy
+    public class HawkMidasBandsSTG : Strategy
     {
         #region Parâmetros
         [NinjaScriptProperty, Display(Name = "Contratos", GroupName = "Configuração", Order = 100)]
@@ -2214,7 +2214,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             if (State == State.SetDefaults)
             {
-                Name = "HawkAnchoredMidas";
+                Name = "HawkMidasBandsSTG";
                 Calculate = Calculate.OnBarClose;
                 ExecutionMode = ExecutionModeType.HistoricalSafe;
                 EntriesPerDirection = 1;
