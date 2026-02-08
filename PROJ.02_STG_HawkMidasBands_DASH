@@ -2165,6 +2165,8 @@ namespace NinjaTrader.NinjaScript.Strategies
         private string contractsMode = "FIXED";
         private DateTime versionResolvedAtUtc = Core.Globals.MinDate;
         private readonly Dictionary<string, DateTime> lastDecisionLogAt = new Dictionary<string, DateTime>();
+        private readonly Dictionary<string, DateTime> lastEntryDiagLogAt = new Dictionary<string, DateTime>();
+        private readonly TimeSpan entryDiagThrottleWindow = TimeSpan.FromMinutes(30);
 
         private DateTime tradingDayAnchor = Core.Globals.MinDate;
         private bool tradingDayAnchorSet = false;
@@ -2198,6 +2200,13 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             if (!DebugMode) return;
             if (ExecutionMode == ExecutionModeType.RealtimePrecise && !IsFirstTickOfBar) return;
+            DateTime now = Core.Globals.Now;
+            if (lastEntryDiagLogAt.TryGetValue(tag, out var lastTime))
+            {
+                if ((now - lastTime) < entryDiagThrottleWindow)
+                    return;
+            }
+            lastEntryDiagLogAt[tag] = now;
             Print($"[HawkEntryDiag][{tag}] {msg}");
         }
 
@@ -3385,7 +3394,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (!blockedAfterCloseLogged)
                 {
                     blockedAfterCloseLogged = true;
-                    Print($"[HawkDiag][BLOCKED_AFTER_CLOSE] barTime={Times[vwapBip][0]:O}");
                     LogWindow("BLOCK", "AfterClose", Times[vwapBip][0]);
                 }
                 LogDecision("ENTRY_BLOCKED", "AfterClose");
@@ -3527,7 +3535,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             if (sideLatched == LatchedSide.None)
             {
-                statusText = $"Waiting (sem contexto){midasTag}";
+                statusText = $"Waiting (no valid MIDAS context){midasTag}";
                 ClearPendingSnapshot();
                 LogDecision("ENTRY_BLOCKED", "NoContext");
                 EntryDiag("GATE_NO_CONTEXT", BuildEntryDiagContext(inicioHojeAllowed, horarioZeraDT, $"midasSource={source}"));
@@ -4965,10 +4973,12 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             try
             {
+                bool hadAction = Position.MarketPosition != MarketPosition.Flat || HasActiveOrders();
                 if (Position.MarketPosition == MarketPosition.Long) ExitLong("CloseByTime", "LongAuto");
                 if (Position.MarketPosition == MarketPosition.Short) ExitShort("CloseByTime", "ShortAuto");
                 CancelPendingLimitsIfAny();
-                PrintCurrentOrdersState("AFTER_CLOSE_ALL");
+                if (hadAction)
+                    PrintCurrentOrdersState("AFTER_CLOSE_ALL");
             }
             catch (Exception ex) { Log("[Strategy] CloseAllAndCancel error: " + ex.Message, LogLevel.Error); }
         }
@@ -4978,6 +4988,26 @@ namespace NinjaTrader.NinjaScript.Strategies
             int ano = dataBrasilia.Year;
             (DateTime inicioDst, DateTime fimDst) = GetUsaDstRange(ano);
             return dataBrasilia.Date >= inicioDst && dataBrasilia.Date < fimDst;
+        }
+
+        private bool IsOrderActive(NinjaTrader.Cbi.Order order)
+        {
+            if (order == null) return false;
+            return order.OrderState == OrderState.Working
+                || order.OrderState == OrderState.Accepted
+                || order.OrderState == OrderState.Submitted;
+        }
+
+        private bool HasActiveOrders()
+        {
+            return IsOrderActive(ordemLimiteCompra)
+                || IsOrderActive(ordemLimiteVenda)
+                || IsOrderActive(ordemHedgeBuyStop)
+                || IsOrderActive(ordemHedgeSellStop)
+                || IsOrderActive(ordemStopLong)
+                || IsOrderActive(ordemStopShort)
+                || IsOrderActive(ordemTargetLong)
+                || IsOrderActive(ordemTargetShort);
         }
 
         private (DateTime inicio, DateTime fim) GetUsaDstRange(int year)
