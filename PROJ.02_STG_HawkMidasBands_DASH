@@ -2280,11 +2280,63 @@ namespace NinjaTrader.NinjaScript.Strategies
             LineLengthBars = 30;
         }
 
+        private void ApplyPresetV2()
+        {
+            Contratos = 10;
+            HorarioInicioNormal = "11:00";
+            HorarioInicioDstUsa = "10:00";
+            HorarioEncerramento = "17:00";
+            EncerramentoOffsetMin = 5;
+
+            AnchorBarIndex = 1;
+            VWAPTimeFrameMin = 60;
+
+            LimitOffsetTicks = 10;
+            CancelLimitsAtHHmm = "16:45";
+            ClosePositionsAtHHmm = "17:00";
+            ExecutionMode = ExecutionModeType.HistoricalSafe;
+            AllowMidasCacheFallbackForEntry = true;
+
+            StopTypeIsATR = true;
+            ATRPeriod = 14;
+            ATRTimeFrameMin = 5;
+            ATRMultiplier = 1.5;
+            FixedStopTicks = 100;
+            FixedQuantity = 5;
+            MaxRiskPerTradeCurrency = 350.0;
+            TPFactor = 5.0;
+            BE_TriggerMultiple = 4.0;
+            BE_ProtectMultiple = 3.0;
+            SlippageCushionTicksForRisk = 1;
+
+            AllowLong = true;
+            AllowShort = true;
+
+            ThrottleMaxSubs = 8;
+            ThrottleWindowSec = 60;
+            MinLimitPriceDeltaTicks = 1;
+
+            UseSuperTrendFilter = true;
+            ST_Mode = SuperTrendMode.ATR;
+            ST_Length = 14;
+            ST_Multiplier = 2.618;
+            ST_MAType = MovingAverageType.HMA;
+            ST_Smooth = 14;
+            ST_TimeFrameMin = 60;
+            ST_InvertSignal = true;
+            UseHedgeSuperTrend = false;
+
+            PlotExitLines = true;
+            LineLengthBars = 30;
+        }
+
         private void ApplyVersionPresets()
         {
             int resolved = ResolveVersionSelection();
             if (resolved == 1)
                 ApplyPresetV1();
+            else if (resolved == 2)
+                ApplyPresetV2();
         }
 
         protected override void OnStateChange()
