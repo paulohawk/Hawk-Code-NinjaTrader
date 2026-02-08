@@ -2060,6 +2060,19 @@ namespace NinjaTrader.NinjaScript.Strategies
         private LatchedSide sideLatched = LatchedSide.None;
         private int qtyLatched = 0;
 
+        private Order pendingBeStopOrder = null;
+        private Order pendingStopToCancel = null;
+        private double? pendingBeStopPrice = null;
+        private bool stopReplaceInProgress = false;
+        private DateTime stopReplaceStartedAt = Core.Globals.MinDate;
+        private string stopReplaceSide = "";
+        private string stopReplaceSource = "";
+        private DateTime stopReplaceMarketTime = Core.Globals.MinDate;
+
+        private int stopMissingConsecutive = 0;
+        private readonly int stopMissingMaxCycles = 2;
+        private DateTime lastStopMissingLogUtc = DateTime.MinValue;
+
         private HawkPanelHelper panelHelper;
         private RiskOverlayHelper _riskOverlay;
         private DateTime overlayPenaltyArmedDate = Core.Globals.MinDate;
@@ -2370,6 +2383,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (BarsInProgress == beBip)
             {
                 EvaluateBreakEvenFromSecondarySeries();
+                EvaluateStopReplaceTimeout();
+                EvaluateStopMissingWatchdog();
                 return;
             }
 
@@ -2382,6 +2397,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             // este método atua apenas como fallback extremo.
             EvaluateRealtimeBracketWatchdog();
             EvaluateRealtimeBracketConsolidation();
+            EvaluateStopReplaceTimeout();
+            EvaluateStopMissingWatchdog();
 
             if (State == State.Realtime)
             {
@@ -3708,6 +3725,21 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 if (order == null) return;
                 DateTime orderTime = order.Time;
+                if (stopReplaceInProgress && pendingBeStopOrder != null && order == pendingBeStopOrder)
+                {
+                    if (orderState == OrderState.Working)
+                    {
+                        CommitBreakEvenReplace(order);
+                    }
+                    else if (orderState == OrderState.Filled)
+                    {
+                        ClearBreakEvenReplaceState();
+                    }
+                    else if (orderState == OrderState.Rejected || orderState == OrderState.Cancelled)
+                    {
+                        FailBreakEvenReplace(order, orderState, error, nativeError);
+                    }
+                }
                 if (orderState == OrderState.Filled || orderState == OrderState.Cancelled || orderState == OrderState.Rejected)
                 {
                     Print($"[HawkORDER_REAL] orderTime={orderTime:O} cbTime={time:O} source=order.Time name={order.Name} id={order.OrderId} state={orderState} action={order.OrderAction} type={order.OrderType} qty={order.Quantity} filled={order.Filled} avgFill={order.AverageFillPrice} limit={order.LimitPrice} stop={order.StopPrice} oco={order.Oco} error={error} nativeError={nativeError}");
@@ -3746,6 +3778,15 @@ namespace NinjaTrader.NinjaScript.Strategies
                     ordemStopLong = null; ordemStopShort = null;
                     ordemTargetLong = null; ordemTargetShort = null;
                     breakevenAtivado = false;
+                    stopReplaceInProgress = false;
+                    pendingBeStopOrder = null;
+                    pendingStopToCancel = null;
+                    pendingBeStopPrice = null;
+                    stopReplaceStartedAt = Core.Globals.MinDate;
+                    stopReplaceSide = "";
+                    stopReplaceSource = "";
+                    stopReplaceMarketTime = Core.Globals.MinDate;
+                    stopMissingConsecutive = 0;
                     lastKnownPositionQty = 0;
                     entryStopTicksUsed = 0;
                     sideLatched = LatchedSide.None;
@@ -4116,7 +4157,17 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             try
             {
-                if (Position.MarketPosition == MarketPosition.Flat || breakevenAtivado) return;
+                if (Position.MarketPosition == MarketPosition.Flat) return;
+                if (breakevenAtivado)
+                {
+                    Print($"[HawkBE][SKIP_ALREADY_ACTIVATED] time={eventTime:O} source={source} side={Position.MarketPosition} pendingStop={pendingBeStopPrice}");
+                    return;
+                }
+                if (stopReplaceInProgress)
+                {
+                    Print($"[HawkBE][REPLACE_SKIP] time={eventTime:O} source={source} reason=in_progress side={Position.MarketPosition} pendingStop={pendingBeStopPrice}");
+                    return;
+                }
 
                 string side = Position.MarketPosition == MarketPosition.Long ? "Long" : "Short";
                 string prevStopText = currentPlannedStop.HasValue ? currentPlannedStop.Value.ToString(CultureInfo.InvariantCulture) : "null";
@@ -4126,31 +4177,41 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 if (Position.MarketPosition == MarketPosition.Long)
                 {
-                    if (ordemStopLong != null && ordemStopLong.OrderState == OrderState.Working)
-                    {
-                        Print($"[HawkBE][CANCEL_PREV_STOP] time={eventTime:O} source={source} side=Long orderId={ordemStopLong.OrderId} stopPrice={ordemStopLong.StopPrice}");
-                        CancelOrder(ordemStopLong);
-                        ordemStopLong = null;
-                    }
-
-                    ordemStopLong = ExitLongStopMarket(0, true, Position.Quantity, newStop, "BE_Stop", "LongAuto");
-                    LogStopEvent(ordemStopLong?.Name ?? "BE_Stop", newStop, ordemStopLong?.FromEntrySignal ?? string.Empty);
+                    pendingStopToCancel = ordemStopLong;
+                    pendingBeStopOrder = ExitLongStopMarket(0, true, Position.Quantity, newStop, "BE_Stop", "LongAuto");
                 }
                 else
                 {
-                    if (ordemStopShort != null && ordemStopShort.OrderState == OrderState.Working)
-                    {
-                        Print($"[HawkBE][CANCEL_PREV_STOP] time={eventTime:O} source={source} side=Short orderId={ordemStopShort.OrderId} stopPrice={ordemStopShort.StopPrice}");
-                        CancelOrder(ordemStopShort);
-                        ordemStopShort = null;
-                    }
-
-                    ordemStopShort = ExitShortStopMarket(0, true, Position.Quantity, newStop, "BE_Stop", "ShortAuto");
-                    LogStopEvent(ordemStopShort?.Name ?? "BE_Stop", newStop, ordemStopShort?.FromEntrySignal ?? string.Empty);
+                    pendingStopToCancel = ordemStopShort;
+                    pendingBeStopOrder = ExitShortStopMarket(0, true, Position.Quantity, newStop, "BE_Stop", "ShortAuto");
                 }
 
-                currentPlannedStop = newStop;
-                breakevenAtivado = true;
+                if (pendingBeStopOrder == null)
+                {
+                    Print($"[HawkBE][STOP_REPLACE_FAILED] time={eventTime:O} source={source} side={side} state=SubmitNull pendingStop={newStop}");
+                    RPLog($"[HawkRisk][STOP_REPLACE_FAILED] time0={eventTime:O} source={source} side={side} state=SubmitNull pendingStop={newStop}");
+                    bool hasFallbackStop = HasActiveStopForPosition();
+                    pendingStopToCancel = null;
+                    pendingBeStopOrder = null;
+                    pendingBeStopPrice = null;
+                    stopReplaceInProgress = false;
+                    stopReplaceStartedAt = Core.Globals.MinDate;
+                    stopReplaceSide = "";
+                    stopReplaceSource = "";
+                    stopReplaceMarketTime = Core.Globals.MinDate;
+                    if (!hasFallbackStop && Position.MarketPosition != MarketPosition.Flat)
+                        ArmEmergencyStop("REPLACE_SUBMIT_NULL");
+                    return;
+                }
+
+                pendingBeStopPrice = newStop;
+                stopReplaceInProgress = true;
+                stopReplaceStartedAt = Core.Globals.Now;
+                stopReplaceSide = side;
+                stopReplaceSource = source;
+                stopReplaceMarketTime = eventTime;
+                Print($"[HawkBE][STOP_REPLACE_PREPARE] time={eventTime:O} source={source} side={side} pendingStop={newStop} prevStop={(pendingStopToCancel != null ? pendingStopToCancel.StopPrice.ToString(CultureInfo.InvariantCulture) : "null")} pendingOrderId={pendingBeStopOrder?.OrderId}");
+                LogStopEvent(pendingBeStopOrder?.Name ?? "BE_Stop", newStop, pendingBeStopOrder?.FromEntrySignal ?? string.Empty);
 
                 double? targetPrice = currentPlannedTarget
                     ?? (Position.MarketPosition == MarketPosition.Long ? ordemTargetLong?.LimitPrice : ordemTargetShort?.LimitPrice);
@@ -4161,6 +4222,156 @@ namespace NinjaTrader.NinjaScript.Strategies
                 RPLog($"[BE_TRIGGER] time0={eventTime:O} source={source} pos={Position.MarketPosition} entry={Position.AveragePrice} probePrice={priceUsed} triggerPrice={triggerPrice} newStop={newStop} baseStopTicks={baseStopTicks} triggerTicks={triggerTicks} protectTicks={protectTicks}");
             }
             catch (Exception ex) { Log("[Strategy] BE error: " + ex.Message, LogLevel.Error); }
+        }
+
+        private bool IsOrderActive(Order order)
+        {
+            if (order == null) return false;
+            return order.OrderState == OrderState.Working
+                || order.OrderState == OrderState.Accepted;
+        }
+
+        private bool HasActiveStopForPosition()
+        {
+            if (Position.MarketPosition == MarketPosition.Long)
+                return IsOrderActive(ordemStopLong) || IsOrderActive(pendingBeStopOrder);
+            if (Position.MarketPosition == MarketPosition.Short)
+                return IsOrderActive(ordemStopShort) || IsOrderActive(pendingBeStopOrder);
+            return true;
+        }
+
+        private void CommitBreakEvenReplace(Order acceptedOrder)
+        {
+            if (!stopReplaceInProgress) return;
+
+            if (Position.MarketPosition == MarketPosition.Long)
+                ordemStopLong = acceptedOrder;
+            else if (Position.MarketPosition == MarketPosition.Short)
+                ordemStopShort = acceptedOrder;
+
+            if (pendingStopToCancel != null && IsOrderActive(pendingStopToCancel))
+            {
+                Print($"[HawkBE][STOP_REPLACE_COMMIT] time={stopReplaceMarketTime:O} source={stopReplaceSource} side={stopReplaceSide} cancelPrevId={pendingStopToCancel.OrderId} prevStop={pendingStopToCancel.StopPrice} newStop={pendingBeStopPrice}");
+                CancelOrder(pendingStopToCancel);
+            }
+            else
+            {
+                Print($"[HawkBE][STOP_REPLACE_COMMIT] time={stopReplaceMarketTime:O} source={stopReplaceSource} side={stopReplaceSide} cancelPrevId=null prevStop=null newStop={pendingBeStopPrice}");
+            }
+
+            currentPlannedStop = pendingBeStopPrice;
+            breakevenAtivado = true;
+            ClearBreakEvenReplaceState();
+            PrintCurrentOrdersState("AFTER_BE_COMMIT");
+        }
+
+        private void FailBreakEvenReplace(Order failedOrder, OrderState state, ErrorCode error, string nativeError)
+        {
+            Print($"[HawkBE][STOP_REPLACE_FAILED] time={stopReplaceMarketTime:O} source={stopReplaceSource} side={stopReplaceSide} state={state} error={error} nativeError={nativeError} pendingStop={pendingBeStopPrice}");
+            RPLog($"[HawkRisk][STOP_REPLACE_FAILED] time0={stopReplaceMarketTime:O} source={stopReplaceSource} side={stopReplaceSide} state={state} error={error} nativeError={nativeError} pendingStop={pendingBeStopPrice}");
+
+            bool hasFallbackStop = HasActiveStopForPosition();
+            ClearBreakEvenReplaceState();
+
+            if (!hasFallbackStop && Position.MarketPosition != MarketPosition.Flat)
+            {
+                ArmEmergencyStop("REPLACE_FAILED");
+            }
+        }
+
+        private void ClearBreakEvenReplaceState()
+        {
+            pendingBeStopOrder = null;
+            pendingStopToCancel = null;
+            pendingBeStopPrice = null;
+            stopReplaceInProgress = false;
+            stopReplaceStartedAt = Core.Globals.MinDate;
+            stopReplaceSide = "";
+            stopReplaceSource = "";
+            stopReplaceMarketTime = Core.Globals.MinDate;
+        }
+
+        private void EvaluateStopMissingWatchdog()
+        {
+            if (Position.MarketPosition == MarketPosition.Flat)
+            {
+                stopMissingConsecutive = 0;
+                return;
+            }
+
+            if (stopReplaceInProgress)
+                return;
+
+            if (HasActiveStopForPosition())
+            {
+                stopMissingConsecutive = 0;
+                return;
+            }
+
+            stopMissingConsecutive++;
+            if (stopMissingConsecutive < stopMissingMaxCycles)
+                return;
+
+            stopMissingConsecutive = 0;
+            if ((DateTime.UtcNow - lastStopMissingLogUtc).TotalSeconds < 1)
+                return;
+
+            lastStopMissingLogUtc = DateTime.UtcNow;
+            Print($"[HawkRisk][STOP_MISSING_EMERGENCY] time0={(CurrentBar >= 0 ? Time[0] : Core.Globals.Now):O} pos={Position.MarketPosition} qty={Position.Quantity} entry={Position.AveragePrice}");
+            RPLog($"[HawkRisk][STOP_MISSING_EMERGENCY] time0={(CurrentBar >= 0 ? Time[0] : Core.Globals.Now):O} pos={Position.MarketPosition} qty={Position.Quantity} entry={Position.AveragePrice}");
+            ArmEmergencyStop("STOP_MISSING");
+        }
+
+        private void EvaluateStopReplaceTimeout()
+        {
+            if (!stopReplaceInProgress)
+                return;
+
+            if (stopReplaceStartedAt == Core.Globals.MinDate)
+                return;
+
+            TimeSpan elapsed = Core.Globals.Now - stopReplaceStartedAt;
+            if (elapsed.TotalSeconds <= 5)
+                return;
+
+            Print($"[HawkBE][STOP_REPLACE_TIMEOUT] time0={(CurrentBar >= 0 ? Time[0] : Core.Globals.Now):O} elapsedSec={elapsed.TotalSeconds:F1} side={stopReplaceSide} pendingStop={pendingBeStopPrice}");
+            RPLog($"[HawkRisk][STOP_REPLACE_TIMEOUT] time0={(CurrentBar >= 0 ? Time[0] : Core.Globals.Now):O} elapsedSec={elapsed.TotalSeconds:F1} side={stopReplaceSide} pendingStop={pendingBeStopPrice}");
+
+            bool hasFallbackStop = HasActiveStopForPosition();
+            ClearBreakEvenReplaceState();
+
+            if (!hasFallbackStop && Position.MarketPosition != MarketPosition.Flat)
+            {
+                ArmEmergencyStop("REPLACE_TIMEOUT");
+            }
+        }
+
+        private void ArmEmergencyStop(string reason)
+        {
+            if (Position.MarketPosition == MarketPosition.Flat) return;
+            if (HasActiveStopForPosition()) return;
+
+            double entry = Position.AveragePrice > 0 ? Position.AveragePrice : currentEntryPrice ?? 0;
+            if (entry <= 0) return;
+
+            int stopTicks = entryStopTicksUsed > 0 ? entryStopTicksUsed : FixedStopTicks;
+            double stopPrice = Position.MarketPosition == MarketPosition.Long
+                ? entry - stopTicks * tickSize
+                : entry + stopTicks * tickSize;
+            stopPrice = Instrument.MasterInstrument.RoundToTickSize(stopPrice);
+
+            if (Position.MarketPosition == MarketPosition.Long)
+            {
+                ordemStopLong = ExitLongStopMarket(0, true, Math.Abs(Position.Quantity), stopPrice, "StopLoss_Emergency", "LongAuto");
+            }
+            else if (Position.MarketPosition == MarketPosition.Short)
+            {
+                ordemStopShort = ExitShortStopMarket(0, true, Math.Abs(Position.Quantity), stopPrice, "StopLoss_Emergency", "ShortAuto");
+            }
+
+            currentPlannedStop = stopPrice;
+            Print($"[HawkRisk][STOP_EMERGENCY_ARMED] reason={reason} side={Position.MarketPosition} stopPrice={stopPrice} qty={Position.Quantity}");
+            LogStopEvent(Position.MarketPosition == MarketPosition.Long ? ordemStopLong?.Name ?? "StopLoss_Emergency" : ordemStopShort?.Name ?? "StopLoss_Emergency", stopPrice, Position.MarketPosition == MarketPosition.Long ? "LongAuto" : "ShortAuto");
         }
 
         private int CalculateStopTicksByATR()
