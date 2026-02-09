@@ -1505,17 +1505,17 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		public HawkVolumeProfileShowScaleType ShowScale
 		{get; set;}
 		
-		[Display(ResourceType = typeof(Custom.Resource), Name = "Show POC", Description=" ",  Order = 15, GroupName = "NinjaScriptParameters")]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "Show POC", Description=" ",  Order = 1, GroupName = "POC")]
 		public bool ShowPoc
 		{ get; set; }
 
 		[Range(1, int.MaxValue)]
-		[Display(ResourceType = typeof(Custom.Resource), Name = "POC Line Width", Description=" ",  Order = 16, GroupName = "POC")]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "POC Line Width", Description=" ",  Order = 3, GroupName = "POC")]
 		public int PocLineWidth
 		{ get; set; }
 
 		[Range(0, 100)]
-		[Display(ResourceType = typeof(Custom.Resource), Name = "POC Opacity", Description=" ",  Order = 17, GroupName = "POC")]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "POC Opacity", Description=" ",  Order = 4, GroupName = "POC")]
 		public double PocOpacity
 		{ get; set; }
 		
@@ -1701,7 +1701,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		}
 
 		[XmlIgnore]
-		[Display(ResourceType = typeof(Custom.Resource), Name = "POC Color", Order = 37, GroupName = "NinjaScriptParameters")]
+		[Display(ResourceType = typeof(Custom.Resource), Name = "POC Color", Order = 2, GroupName = "POC")]
 		public Brush PocColorBrush { get; set; }
 
 		[Browsable(false)]
