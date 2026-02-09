@@ -2068,6 +2068,13 @@ namespace NinjaTrader.NinjaScript.Strategies
         private enum LatchedSide { None, Long, Short }
         private LatchedSide sideLatched = LatchedSide.None;
         private int qtyLatched = 0;
+        private enum TradeState
+        {
+            Idle,
+            Armed,
+            PositionOpen
+        }
+        private TradeState currentState = TradeState.Idle;
 
         private Order pendingBeStopOrder = null;
         private Order pendingStopToCancel = null;
@@ -3508,13 +3515,57 @@ namespace NinjaTrader.NinjaScript.Strategies
                 stReady = stBull || stBear;
             }
 
+            if (Position.MarketPosition != MarketPosition.Flat)
+            {
+                statusText = $"Posição aberta{midasTag}";
+                ClearPendingSnapshot();
+                LogDecision("ENTRY_BLOCKED", "PositionOpen");
+                EntryDiag("GATE_POSITION_OPEN", BuildEntryDiagContext(inicioHojeAllowed, horarioZeraDT, $"midasSource={source} pos={Position.MarketPosition} qty={Position.Quantity}"));
+                return;
+            }
+
+            if (IsOrderWorking(ordemHedgeBuyStop) || IsOrderWorking(ordemHedgeSellStop))
+            {
+                if (IsOrderWorking(ordemHedgeBuyStop)) CancelOrder(ordemHedgeBuyStop);
+                if (IsOrderWorking(ordemHedgeSellStop)) CancelOrder(ordemHedgeSellStop);
+                ordemHedgeBuyStop = null;
+                ordemHedgeSellStop = null;
+                LogDecision("SAFETY", "KilledHedgeStopWhileFlat");
+            }
+
+            if (HasWorkingEntryLimit())
+            {
+                currentState = TradeState.Armed;
+                statusText = $"Contexto armado (reprecificando){midasTag}";
+                RepriceWorkingEntryToMidasMedian(vwapMedian, midasTag, inicioHojeAllowed, horarioZeraDT, source);
+                return;
+            }
+
             bool contextoCompra = AllowLong && aboveBands && stReady && (!UseSuperTrendFilter || stBull);
             bool contextoVenda = AllowShort && belowBands && stReady && (!UseSuperTrendFilter || stBear);
 
-            if (sideLatched == LatchedSide.None)
+            if (currentState == TradeState.Idle)
             {
-                if (contextoCompra) sideLatched = LatchedSide.Long;
-                else if (contextoVenda) sideLatched = LatchedSide.Short;
+                if (contextoCompra)
+                {
+                    sideLatched = LatchedSide.Long;
+                    currentState = TradeState.Armed;
+                }
+                else if (contextoVenda)
+                {
+                    sideLatched = LatchedSide.Short;
+                    currentState = TradeState.Armed;
+                }
+                else
+                {
+                    sideLatched = LatchedSide.None;
+                    qtyLatched = 0;
+                    statusText = $"Waiting (no valid MIDAS context){midasTag}";
+                    ClearPendingSnapshot();
+                    LogDecision("ENTRY_BLOCKED", "NoContext");
+                    EntryDiag("GATE_NO_CONTEXT", BuildEntryDiagContext(inicioHojeAllowed, horarioZeraDT, $"midasSource={source}"));
+                    return;
+                }
             }
 
             double riscoPrecoEstimado = 0.0, riscoPorContrato = 0.0;
@@ -3533,23 +3584,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             CancelPendingLimitsIfAny();
 
-            if (sideLatched == LatchedSide.None)
-            {
-                statusText = $"Waiting (no valid MIDAS context){midasTag}";
-                ClearPendingSnapshot();
-                LogDecision("ENTRY_BLOCKED", "NoContext");
-                EntryDiag("GATE_NO_CONTEXT", BuildEntryDiagContext(inicioHojeAllowed, horarioZeraDT, $"midasSource={source}"));
-                return;
-            }
-            if (Position.MarketPosition != MarketPosition.Flat)
-            {
-                statusText = $"Posição aberta{midasTag}";
-                ClearPendingSnapshot();
-                LogDecision("ENTRY_BLOCKED", "PositionOpen");
-                EntryDiag("GATE_POSITION_OPEN", BuildEntryDiagContext(inicioHojeAllowed, horarioZeraDT, $"midasSource={source} pos={Position.MarketPosition} qty={Position.Quantity}"));
-                return;
-            }
-
             if (sideLatched == LatchedSide.Long)
             {
                 double precoLimiteCompra = Instrument.MasterInstrument.RoundToTickSize(vwapMedian + LimitOffsetTicks * tickSize);
@@ -3557,14 +3591,23 @@ namespace NinjaTrader.NinjaScript.Strategies
                 LogDecision("ENTRY_ALLOWED", "AllConditionsMet");
                 EntryDiag("SUBMIT", BuildEntryDiagContext(inicioHojeAllowed, horarioZeraDT, $"side={sideLatched} qty={qtyCalc} limit={precoLimiteCompra} vwapM={vwapMedian} source={source}"));
                 SubmitOrReplaceLimitOrderSafe(true, qtyCalc, precoLimiteCompra, "LongAuto");
+                currentState = TradeState.Armed;
             }
-            else
+            else if (sideLatched == LatchedSide.Short)
             {
                 double precoLimiteVenda = Instrument.MasterInstrument.RoundToTickSize(vwapMedian - LimitOffsetTicks * tickSize);
                 statusText = $"Contexto Short (pendente){midasTag}";
                 LogDecision("ENTRY_ALLOWED", "AllConditionsMet");
                 EntryDiag("SUBMIT", BuildEntryDiagContext(inicioHojeAllowed, horarioZeraDT, $"side={sideLatched} qty={qtyCalc} limit={precoLimiteVenda} vwapM={vwapMedian} source={source}"));
                 SubmitOrReplaceLimitOrderSafe(false, qtyCalc, precoLimiteVenda, "ShortAuto");
+                currentState = TradeState.Armed;
+            }
+            else
+            {
+                statusText = $"Waiting (no latched side){midasTag}";
+                ClearPendingSnapshot();
+                LogDecision("ENTRY_BLOCKED", "LatchedSideNone");
+                EntryDiag("GATE_NO_LATCH", BuildEntryDiagContext(inicioHojeAllowed, horarioZeraDT, $"midasSource={source}"));
             }
         }
 
@@ -4006,6 +4049,13 @@ namespace NinjaTrader.NinjaScript.Strategies
                 || orderName.IndexOf("Target", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
+        private bool IsAutoCloseOrder(NinjaTrader.Cbi.Order order)
+        {
+            if (order == null) return false;
+            string orderName = order.Name ?? string.Empty;
+            return orderName.IndexOf("AutoClose", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
         private bool IsMainEntryOrder(NinjaTrader.Cbi.Order order)
         {
             if (order == null) return false;
@@ -4038,6 +4088,12 @@ namespace NinjaTrader.NinjaScript.Strategies
             try
             {
                 if (order == null) return;
+                if (IsMainEntryOrder(order) && order.OrderType != OrderType.Limit)
+                {
+                    LogDecision("ENTRY_BLOCKED", $"BlockedMarketOrder type={order.OrderType}");
+                    CancelOrder(order);
+                    return;
+                }
                 DateTime orderTime = order.Time;
                 if (stopReplaceInProgress && pendingBeStopOrder != null && order == pendingBeStopOrder)
                 {
@@ -4079,6 +4135,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 if (marketPosition == MarketPosition.Flat)
                 {
+                    currentState = TradeState.Idle;
                     if (lastKnownPositionQty != 0 && currentEntryPrice.HasValue)
                     {
                         lastTradeQty = Math.Abs(lastKnownPositionQty);
@@ -4132,6 +4189,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 if (ExecutionMode == ExecutionModeType.RealtimePrecise)
                 {
+                    currentState = TradeState.PositionOpen;
                     // Em modo RealtimePrecise o bracket é configurado apenas no fill final
                     // (OnExecutionUpdate com OrderState.Filled), evitando churn em PartFilled.
                     currentEntryPrice = currentEntryPrice ?? averagePrice;
@@ -4149,6 +4207,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 if (marketPosition == MarketPosition.Long)
                 {
+                    currentState = TradeState.PositionOpen;
                     double stopBase = StopTypeIsATR ? vwapLow - atrVal : averagePrice - FixedStopTicks * tickSize;
                     double stopPrice = Instrument.MasterInstrument.RoundToTickSize(stopBase - cushion);
                     double riscoPreco = averagePrice - stopPrice;
@@ -4170,6 +4229,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }
                 else if (marketPosition == MarketPosition.Short)
                 {
+                    currentState = TradeState.PositionOpen;
                     double stopBase = StopTypeIsATR ? vwapHigh + atrVal : averagePrice + FixedStopTicks * tickSize;
                     double stopPrice = Instrument.MasterInstrument.RoundToTickSize(stopBase + cushion);
                     double riscoPreco = stopPrice - averagePrice;
@@ -4242,6 +4302,27 @@ namespace NinjaTrader.NinjaScript.Strategies
                     if (IsStopOrder(execution.Order))
                     {
                         LogStopEvent(execution.Order.Name, price, execution.Order.FromEntrySignal);
+                    }
+                }
+
+                if (execution.Order != null && execution.Order.OrderState == OrderState.Filled)
+                {
+                    bool isExitOrder = IsStopOrder(execution.Order)
+                        || IsTargetOrder(execution.Order)
+                        || IsAutoCloseOrder(execution.Order);
+                    if (isExitOrder)
+                    {
+                        sideLatched = LatchedSide.None;
+                        qtyLatched = 0;
+                        currentState = TradeState.Idle;
+                        if (IsOrderWorking(ordemLimiteCompra)) CancelOrder(ordemLimiteCompra);
+                        if (IsOrderWorking(ordemLimiteVenda)) CancelOrder(ordemLimiteVenda);
+                        ordemLimiteCompra = null;
+                        ordemLimiteVenda = null;
+                        if (IsOrderWorking(ordemHedgeBuyStop)) CancelOrder(ordemHedgeBuyStop);
+                        if (IsOrderWorking(ordemHedgeSellStop)) CancelOrder(ordemHedgeSellStop);
+                        ordemHedgeBuyStop = null;
+                        ordemHedgeSellStop = null;
                     }
                 }
 
@@ -4977,6 +5058,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (Position.MarketPosition == MarketPosition.Long) ExitLong("CloseByTime", "LongAuto");
                 if (Position.MarketPosition == MarketPosition.Short) ExitShort("CloseByTime", "ShortAuto");
                 CancelPendingLimitsIfAny();
+                currentState = TradeState.Idle;
+                sideLatched = LatchedSide.None;
+                qtyLatched = 0;
                 if (hadAction)
                     PrintCurrentOrdersState("AFTER_CLOSE_ALL");
             }
@@ -4996,6 +5080,55 @@ namespace NinjaTrader.NinjaScript.Strategies
             return order.OrderState == OrderState.Working
                 || order.OrderState == OrderState.Accepted
                 || order.OrderState == OrderState.Submitted;
+        }
+
+        private bool HasWorkingEntryLimit()
+        {
+            return IsOrderWorking(ordemLimiteCompra) || IsOrderWorking(ordemLimiteVenda);
+        }
+
+        private void RepriceWorkingEntryToMidasMedian(double vwapMedian, string midasTag, DateTime inicioHojeAllowed, DateTime horarioZeraDT, string source)
+        {
+            // IMPORTANTE:
+            // Reprice NÃO reavalia contexto. Contexto só é avaliado em TradeState.Idle.
+            bool hasBuy = IsOrderWorking(ordemLimiteCompra);
+            bool hasSell = IsOrderWorking(ordemLimiteVenda);
+
+            if (hasBuy && hasSell)
+            {
+                CancelOrder(ordemLimiteVenda);
+                ordemLimiteVenda = null;
+                hasSell = false;
+            }
+
+            if (hasBuy)
+            {
+                sideLatched = LatchedSide.Long;
+                int qty = ordemLimiteCompra?.Quantity ?? qtyLatched;
+                if (qty < 1) qty = Math.Max(1, FixedQuantity);
+                double precoLimiteCompra = Instrument.MasterInstrument.RoundToTickSize(vwapMedian + LimitOffsetTicks * tickSize);
+                LogDecision("ENTRY_ALLOWED", "RepriceWorkingLong");
+                EntryDiag("SUBMIT", BuildEntryDiagContext(inicioHojeAllowed, horarioZeraDT, $"side=Long qty={qty} limit={precoLimiteCompra} vwapM={vwapMedian} source={source}"));
+                SubmitOrReplaceLimitOrderSafe(true, qty, precoLimiteCompra, "LongAuto");
+                return;
+            }
+
+            if (hasSell)
+            {
+                sideLatched = LatchedSide.Short;
+                int qty = ordemLimiteVenda?.Quantity ?? qtyLatched;
+                if (qty < 1) qty = Math.Max(1, FixedQuantity);
+                double precoLimiteVenda = Instrument.MasterInstrument.RoundToTickSize(vwapMedian - LimitOffsetTicks * tickSize);
+                LogDecision("ENTRY_ALLOWED", "RepriceWorkingShort");
+                EntryDiag("SUBMIT", BuildEntryDiagContext(inicioHojeAllowed, horarioZeraDT, $"side=Short qty={qty} limit={precoLimiteVenda} vwapM={vwapMedian} source={source}"));
+                SubmitOrReplaceLimitOrderSafe(false, qty, precoLimiteVenda, "ShortAuto");
+                return;
+            }
+
+            statusText = $"Waiting (no working entry){midasTag}";
+            ClearPendingSnapshot();
+            LogDecision("ENTRY_BLOCKED", "NoWorkingEntry");
+            EntryDiag("GATE_NO_WORKING_ENTRY", BuildEntryDiagContext(inicioHojeAllowed, horarioZeraDT, $"midasSource={source}"));
         }
 
         private bool HasActiveOrders()
