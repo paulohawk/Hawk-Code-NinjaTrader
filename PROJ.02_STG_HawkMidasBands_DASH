@@ -4056,14 +4056,24 @@ namespace NinjaTrader.NinjaScript.Strategies
             return orderName.IndexOf("AutoClose", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
-        private bool IsMainEntryOrder(NinjaTrader.Cbi.Order order)
+        private bool IsPureEntryOrder(NinjaTrader.Cbi.Order order)
         {
             if (order == null) return false;
             string name = order.Name ?? string.Empty;
-            string signal = order.FromEntrySignal ?? string.Empty;
             return name.Equals("LongAuto", StringComparison.OrdinalIgnoreCase)
-                || name.Equals("ShortAuto", StringComparison.OrdinalIgnoreCase)
-                || signal.Equals("LongAuto", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("ShortAuto", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool IsEntryDerivedOrder(NinjaTrader.Cbi.Order order)
+        {
+            return IsStopOrder(order) || IsTargetOrder(order) || IsAutoCloseOrder(order);
+        }
+
+        private bool IsFromMainSignal(NinjaTrader.Cbi.Order order)
+        {
+            if (order == null) return false;
+            string signal = order.FromEntrySignal ?? string.Empty;
+            return signal.Equals("LongAuto", StringComparison.OrdinalIgnoreCase)
                 || signal.Equals("ShortAuto", StringComparison.OrdinalIgnoreCase);
         }
 
@@ -4088,9 +4098,28 @@ namespace NinjaTrader.NinjaScript.Strategies
             try
             {
                 if (order == null) return;
-                if (IsMainEntryOrder(order) && order.OrderType != OrderType.Limit)
+                bool isEntryDerived = IsEntryDerivedOrder(order);
+                if (isEntryDerived)
                 {
-                    LogDecision("ENTRY_BLOCKED", $"BlockedMarketOrder type={order.OrderType}");
+                    LogDecision("ORDER_DERIVED", $"name={order.Name}");
+                }
+                if (!isEntryDerived && IsPureEntryOrder(order))
+                {
+                    if (order.OrderType != OrderType.Limit)
+                    {
+                        LogDecision("ENTRY_BLOCKED", $"BlockedMarketOrder type={order.OrderType}");
+                        CancelOrder(order);
+                        return;
+                    }
+                    return;
+                }
+
+                if (!isEntryDerived
+                    && IsFromMainSignal(order)
+                    && order.OrderState != OrderState.Filled
+                    && order.OrderState != OrderState.PartFilled)
+                {
+                    LogDecision("ENTRY_BLOCKED", $"InvalidMainSignalOrder type={order.OrderType}");
                     CancelOrder(order);
                     return;
                 }
@@ -4340,9 +4369,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                        → comportamento inalterado.
                     */
                     bool isEntryAction = execution.Order.OrderAction == OrderAction.Buy || execution.Order.OrderAction == OrderAction.SellShort;
-                    bool isMainEntry = IsMainEntryOrder(execution.Order);
-                    bool isStopOrTarget = IsStopOrder(execution.Order) || IsTargetOrder(execution.Order);
-                    bool isEntryCandidate = isEntryAction && isMainEntry && !isStopOrTarget;
+                    bool isEntryCandidate = isEntryAction && IsPureEntryOrder(execution.Order);
 
                     if (isEntryCandidate && marketPosition != MarketPosition.Flat && quantity > 0
                         && (execution.Order.OrderState == OrderState.PartFilled || execution.Order.OrderState == OrderState.Filled)
