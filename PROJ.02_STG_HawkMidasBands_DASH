@@ -1992,6 +1992,9 @@ namespace NinjaTrader.NinjaScript.Strategies
         private int atrBip = 3;
         private int beBip = 4;
         private int stBip = 5;
+        private const int BeMaxReplaceAttempts = 2;
+        private const int BeMinBufferTicksDefault = 1;
+        private const int BeMinBufferTicksRetry = 2;
 
         private AnchoredMidasIndicator vwap;
         private Indicators.ATR atrInd;
@@ -2024,6 +2027,14 @@ namespace NinjaTrader.NinjaScript.Strategies
         private double precoEntradaAtual = 0;
         private double riscoPrecoAtual = 0;
         private bool breakevenAtivado = false;
+        private bool beArmed = false;
+        private bool beTriggered = false;
+        private bool beGiveUp = false;
+        private int beReplaceAttemptCount = 0;
+        private DateTime lastBeAttemptTime = Core.Globals.MinDate;
+        private double? lastBeTargetStopPrice = null;
+        private string lastBeFailReason = "";
+        private bool lastBeFailInvalid = false;
         private bool stopAlvoConfigurados = false;
         // INVARIANTE:
         // bracketQtyLatched representa a quantidade atualmente protegida pelo bracket
@@ -2056,6 +2067,16 @@ namespace NinjaTrader.NinjaScript.Strategies
         private DateTime lastResetTradingDay = Core.Globals.MinDate;
         private DateTime lastBEEvalLogUtc = DateTime.MinValue;
         private DateTime lastResetDate = Core.Globals.MinDate;
+        private int beEvalCount = 0;
+        private int beTouchCount = 0;
+        private int beTriggerCount = 0;
+        private int beReplaceReqCount = 0;
+        private int beReplaceSuccessCount = 0;
+        private int beReplaceFailInvalidCount = 0;
+        private int beReplaceFailRejectCount = 0;
+        private int beReplaceFailSubmitNullCount = 0;
+        private int beRetrySuccessCount = 0;
+        private int beGiveUpCount = 0;
         private bool hasValidMidasToday = false;
         private double lastMidasHigh = double.NaN;
         private double lastMidasMid = double.NaN;
@@ -2743,6 +2764,12 @@ namespace NinjaTrader.NinjaScript.Strategies
                 DateTime prevDate = lastResetDate;
                 string prevStatus = statusText;
                 bool prevBlocked = blockedAfterClose;
+
+                if (prevDate != Core.Globals.MinDate)
+                {
+                    Print($"[HawkBE][DAY_SUMMARY] date={prevDate:yyyy-MM-dd} eval={beEvalCount} touch={beTouchCount} trigger={beTriggerCount} req={beReplaceReqCount} ok={beReplaceSuccessCount} failInvalid={beReplaceFailInvalidCount} failReject={beReplaceFailRejectCount} failNull={beReplaceFailSubmitNullCount} retryOk={beRetrySuccessCount} giveUp={beGiveUpCount}");
+                }
+                ResetBreakEvenDailyCounters();
 
                 lastResetDate = dateKey;
                 if (currentTradingDay != Core.Globals.MinDate)
@@ -4098,6 +4125,12 @@ namespace NinjaTrader.NinjaScript.Strategies
             try
             {
                 if (order == null) return;
+                bool isBEOrder = false;
+                if (!string.IsNullOrEmpty(order.Name))
+                    isBEOrder = order.Name.IndexOf("BE", StringComparison.OrdinalIgnoreCase) >= 0
+                        || order.Name.IndexOf("BreakEven", StringComparison.OrdinalIgnoreCase) >= 0;
+                if (isBEOrder)
+                    Print($"[HawkBE][ORDER_CLASS] name={order.Name} classified=StopDerived");
                 bool isEntryDerived = IsEntryDerivedOrder(order);
                 if (isEntryDerived)
                 {
@@ -4177,6 +4210,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     }
 
                     string closeSide = lastKnownPositionQty > 0 ? "LONG" : lastKnownPositionQty < 0 ? "SHORT" : "FLAT";
+                    Print($"[HawkBE][TRADE_SUMMARY] entry={lastTradeEntry} side={closeSide} beApplied={(breakevenAtivado ? 1 : 0)} attempts={beReplaceAttemptCount} failReason={(string.IsNullOrEmpty(lastBeFailReason) ? "-" : lastBeFailReason)}");
                     LogPosition("CLOSE", closeSide, Math.Abs(lastKnownPositionQty), "PositionFlat");
                     CancelAndClearWorkingOrders();
                     stopAlvoConfigurados = false;
@@ -4185,6 +4219,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     ordemStopLong = null; ordemStopShort = null;
                     ordemTargetLong = null; ordemTargetShort = null;
                     breakevenAtivado = false;
+                    ResetBreakEvenTradeState();
                     stopReplaceInProgress = false;
                     pendingBeStopOrder = null;
                     pendingStopToCancel = null;
@@ -4244,6 +4279,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                     precoEntradaAtual = averagePrice; riscoPrecoAtual = riscoPreco; breakevenAtivado = false;
                     entryStopTicksUsed = Math.Max(1, (int)Math.Round((precoEntradaAtual - stopPrice) / tickSize));
+                    ResetBreakEvenTradeState();
+                    beArmed = true;
 
                     EnsureLongStopsTargets(desiredQty, stopPrice, alvoPrice);
                     currentPlannedStop = stopPrice;
@@ -4266,6 +4303,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                     precoEntradaAtual = averagePrice; riscoPrecoAtual = riscoPreco; breakevenAtivado = false;
                     entryStopTicksUsed = Math.Max(1, (int)Math.Round((stopPrice - precoEntradaAtual) / tickSize));
+                    ResetBreakEvenTradeState();
+                    beArmed = true;
 
                     EnsureShortStopsTargets(desiredQty, stopPrice, alvoPrice);
                     currentPlannedStop = stopPrice;
@@ -4526,8 +4565,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (State != State.Realtime) return;
                 if (marketDataUpdate.MarketDataType != MarketDataType.Last) return;
                 if (Position.MarketPosition == MarketPosition.Flat || breakevenAtivado || !stopAlvoConfigurados) return;
-
-                EvaluateBreakEven("TICK_RT", marketDataUpdate.Price, double.NaN, double.NaN, marketDataUpdate.Time);
+                // Break-even deve ser avaliado apenas no fechamento do candle 1M (BIP dedicado).
             }
             catch (Exception ex)
             {
@@ -4538,20 +4576,20 @@ namespace NinjaTrader.NinjaScript.Strategies
         private void EvaluateBreakEvenFromSecondarySeries()
         {
             if (Position.MarketPosition == MarketPosition.Flat || breakevenAtivado || !stopAlvoConfigurados) return;
-
-            bool isHistoricalLike = State == State.Historical || State == State.Transition;
-            if (!isHistoricalLike) return;
+            if (Calculate != Calculate.OnBarClose && !IsFirstTickOfBar) return;
 
             double high = Highs[beBip][0];
             double low = Lows[beBip][0];
-            double lastProxy = Position.MarketPosition == MarketPosition.Long ? high : low;
-            EvaluateBreakEven("BIP_1M_HIST", lastProxy, high, low, Times[beBip][0]);
+            double lastClose = Closes[beBip][0];
+            EvaluateBreakEven("BIP_1M_CLOSE", lastClose, high, low, Times[beBip][0]);
         }
 
         private void EvaluateBreakEven(string source, double priceUsed, double high, double low, DateTime eventTime)
         {
             if (BE_TriggerMultiple <= 0 || BE_ProtectMultiple <= 0) return;
             if (Position.MarketPosition == MarketPosition.Flat || breakevenAtivado) return;
+
+            beEvalCount++;
 
             int baseStopTicks = entryStopTicksUsed;
             if (baseStopTicks <= 0)
@@ -4568,9 +4606,10 @@ namespace NinjaTrader.NinjaScript.Strategies
                 : entry - (protectTicks * tickSize);
             beStopPrice = Instrument.MasterInstrument.RoundToTickSize(beStopPrice);
 
+            bool hasHighLow = !double.IsNaN(high) && !double.IsNaN(low);
             bool touched = Position.MarketPosition == MarketPosition.Long
-                ? ((source == "BIP_1M_HIST" && !double.IsNaN(high)) ? high >= triggerPrice : priceUsed >= triggerPrice)
-                : ((source == "BIP_1M_HIST" && !double.IsNaN(low)) ? low <= triggerPrice : priceUsed <= triggerPrice);
+                ? (hasHighLow ? high >= triggerPrice : priceUsed >= triggerPrice)
+                : (hasHighLow ? low <= triggerPrice : priceUsed <= triggerPrice);
 
             bool shouldLogEval = touched || (DateTime.UtcNow - lastBEEvalLogUtc).TotalSeconds >= 5;
             if (shouldLogEval)
@@ -4579,14 +4618,64 @@ namespace NinjaTrader.NinjaScript.Strategies
                 Print($"[HawkBE][EVAL] time={eventTime:O} source={source} side={Position.MarketPosition} last={priceUsed} high={high} low={low} triggerPrice={triggerPrice} beStopPrice={beStopPrice} touched={(touched ? 1 : 0)} posQty={Position.Quantity}");
             }
 
-            if (!touched) return;
+            if (touched)
+                beTouchCount++;
 
-            ApplyBreakEvenStop(source, eventTime, priceUsed, triggerPrice, beStopPrice, baseStopTicks, triggerTicks, protectTicks);
+            if (!beTriggered && touched && beArmed)
+            {
+                beTriggered = true;
+                beArmed = false;
+                beTriggerCount++;
+            }
+
+            if (!beTriggered || beGiveUp)
+                return;
+
+            if (stopReplaceInProgress)
+            {
+                Print($"[HawkBE][REPLACE_SKIP] time={eventTime:O} source={source} reason=in_progress side={Position.MarketPosition} pendingStop={pendingBeStopPrice}");
+                return;
+            }
+
+            if (beReplaceAttemptCount >= BeMaxReplaceAttempts)
+                return;
+
+            if (lastBeAttemptTime != Core.Globals.MinDate && eventTime <= lastBeAttemptTime)
+                return;
+
+            int bufferTicks = (beReplaceAttemptCount > 0 && lastBeFailInvalid) ? BeMinBufferTicksRetry : BeMinBufferTicksDefault;
+            ApplyBreakEvenStop(source, eventTime, priceUsed, triggerPrice, beStopPrice, baseStopTicks, triggerTicks, protectTicks, bufferTicks, beReplaceAttemptCount > 0);
         }
 
 
         #region BreakEven (com log padronizado)
-        private void ApplyBreakEvenStop(string source, DateTime eventTime, double priceUsed, double triggerPrice, double newStop, int baseStopTicks, double triggerTicks, double protectTicks)
+        private void ResetBreakEvenTradeState()
+        {
+            beArmed = false;
+            beTriggered = false;
+            beGiveUp = false;
+            beReplaceAttemptCount = 0;
+            lastBeAttemptTime = Core.Globals.MinDate;
+            lastBeTargetStopPrice = null;
+            lastBeFailReason = "";
+            lastBeFailInvalid = false;
+        }
+
+        private void ResetBreakEvenDailyCounters()
+        {
+            beEvalCount = 0;
+            beTouchCount = 0;
+            beTriggerCount = 0;
+            beReplaceReqCount = 0;
+            beReplaceSuccessCount = 0;
+            beReplaceFailInvalidCount = 0;
+            beReplaceFailRejectCount = 0;
+            beReplaceFailSubmitNullCount = 0;
+            beRetrySuccessCount = 0;
+            beGiveUpCount = 0;
+        }
+
+        private void ApplyBreakEvenStop(string source, DateTime eventTime, double priceUsed, double triggerPrice, double newStop, int baseStopTicks, double triggerTicks, double protectTicks, int minBufferTicks, bool isRetry)
         {
             try
             {
@@ -4596,17 +4685,87 @@ namespace NinjaTrader.NinjaScript.Strategies
                     Print($"[HawkBE][SKIP_ALREADY_ACTIVATED] time={eventTime:O} source={source} side={Position.MarketPosition} pendingStop={pendingBeStopPrice}");
                     return;
                 }
-                if (stopReplaceInProgress)
-                {
-                    Print($"[HawkBE][REPLACE_SKIP] time={eventTime:O} source={source} reason=in_progress side={Position.MarketPosition} pendingStop={pendingBeStopPrice}");
-                    return;
-                }
 
                 string side = Position.MarketPosition == MarketPosition.Long ? "Long" : "Short";
                 string prevStopText = currentPlannedStop.HasValue ? currentPlannedStop.Value.ToString(CultureInfo.InvariantCulture) : "null";
                 string prevTargetText = currentPlannedTarget.HasValue ? currentPlannedTarget.Value.ToString(CultureInfo.InvariantCulture) : "null";
+                newStop = Instrument.MasterInstrument.RoundToTickSize(newStop);
 
-                Print($"[HawkBE][TRIGGER] time={eventTime:O} source={source} side={side} priceUsed={priceUsed} triggerPrice={triggerPrice} beStopPrice={newStop} entryPrice={Position.AveragePrice} baseStopTicks={baseStopTicks} triggerMultiple={BE_TriggerMultiple} protectMultiple={BE_ProtectMultiple} prevStop={prevStopText} prevTarget={prevTargetText} posQty={Position.Quantity}");
+                if (!isRetry)
+                {
+                    Print($"[HawkBE][TRIGGER] time={eventTime:O} source={source} side={side} priceUsed={priceUsed} triggerPrice={triggerPrice} beStopPrice={newStop} entryPrice={Position.AveragePrice} baseStopTicks={baseStopTicks} triggerMultiple={BE_TriggerMultiple} protectMultiple={BE_ProtectMultiple} prevStop={prevStopText} prevTarget={prevTargetText} posQty={Position.Quantity}");
+                }
+                else if (!lastBeFailInvalid)
+                {
+                    Print($"[HawkBE][RETRY_OTHER] time={eventTime:O} source={source} side={side} prevReason={(string.IsNullOrEmpty(lastBeFailReason) ? "-" : lastBeFailReason)}");
+                }
+
+                beReplaceAttemptCount++;
+                lastBeAttemptTime = eventTime;
+                lastBeTargetStopPrice = newStop;
+
+                double bufferPrice = minBufferTicks * tickSize;
+                bool validPrice = Position.MarketPosition == MarketPosition.Long
+                    ? newStop <= priceUsed - bufferPrice
+                    : newStop >= priceUsed + bufferPrice;
+
+                if (!validPrice)
+                {
+                    lastBeFailInvalid = true;
+                    lastBeFailReason = "invalid_price";
+                    beReplaceFailInvalidCount++;
+                    Print($"[HawkBE][SKIP_INVALID_PRICE] time={eventTime:O} source={source} side={side} last={priceUsed} minBufferTicks={minBufferTicks} beStopPrice={newStop} triggerPrice={triggerPrice} prevStop={prevStopText}");
+                    if (beReplaceAttemptCount >= BeMaxReplaceAttempts)
+                    {
+                        beGiveUp = true;
+                        beGiveUpCount++;
+                        Print($"[HawkBE][GIVE_UP] time={eventTime:O} source={source} side={side} attempts={beReplaceAttemptCount} reason=invalid_price keepOriginalStop=1");
+                    }
+                    return;
+                }
+
+                lastBeFailInvalid = false;
+                lastBeFailReason = "";
+                Order existingStop = Position.MarketPosition == MarketPosition.Long ? ordemStopLong : ordemStopShort;
+                if (existingStop != null && IsOrderWorking(existingStop) && Math.Abs(existingStop.StopPrice - newStop) <= tickSize * 0.5)
+                {
+                    Print($"[HawkBE][REPLACE_SKIP] time={eventTime:O} source={source} reason=already_at_price side={side} stopPrice={existingStop.StopPrice}");
+                    breakevenAtivado = true;
+                    beReplaceSuccessCount++;
+                    lastBeFailReason = "";
+                    lastBeFailInvalid = false;
+                    return;
+                }
+                beReplaceReqCount++;
+                bool canModify = existingStop != null
+                    && IsOrderWorking(existingStop)
+                    && (existingStop.OrderType == OrderType.StopMarket || existingStop.OrderType == OrderType.StopLimit)
+                    && Math.Abs(existingStop.StopPrice - newStop) > tickSize * 0.5;
+
+                if (canModify)
+                {
+                    Print($"[HawkBE][REPLACE_REQUEST] time={eventTime:O} mode=Modify source={source} side={side} existingStop={existingStop.OrderId} oldStop={existingStop.StopPrice} newStop={newStop}");
+                    pendingStopToCancel = null;
+                    pendingBeStopOrder = existingStop;
+                    pendingBeStopPrice = newStop;
+                    stopReplaceInProgress = true;
+                    stopReplaceStartedAt = Core.Globals.Now;
+                    stopReplaceSide = side;
+                    stopReplaceSource = source;
+                    stopReplaceMarketTime = eventTime;
+                    try
+                    {
+                        ChangeOrder(existingStop, existingStop.Quantity, 0, newStop);
+                        return;
+                    }
+                    catch (Exception ex)
+                    {
+                        Print($"[HawkBE][REPLACE_MODIFY_FAILED] time={eventTime:O} source={source} side={side} error={ex.Message}");
+                        ClearBreakEvenReplaceState();
+                    }
+                }
+
+                Print($"[HawkBE][REPLACE_REQUEST] time={eventTime:O} mode=Submit source={source} side={side} oldStop={(existingStop != null ? existingStop.StopPrice.ToString(CultureInfo.InvariantCulture) : "null")} newStop={newStop}");
 
                 if (Position.MarketPosition == MarketPosition.Long)
                 {
@@ -4621,17 +4780,18 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 if (pendingBeStopOrder == null)
                 {
+                    lastBeFailReason = "submit_null";
+                    beReplaceFailSubmitNullCount++;
                     Print($"[HawkBE][STOP_REPLACE_FAILED] time={eventTime:O} source={source} side={side} state=SubmitNull pendingStop={newStop}");
                     RPLog($"[HawkRisk][STOP_REPLACE_FAILED] time0={eventTime:O} source={source} side={side} state=SubmitNull pendingStop={newStop}");
                     bool hasFallbackStop = HasActiveStopForPosition();
-                    pendingStopToCancel = null;
-                    pendingBeStopOrder = null;
-                    pendingBeStopPrice = null;
-                    stopReplaceInProgress = false;
-                    stopReplaceStartedAt = Core.Globals.MinDate;
-                    stopReplaceSide = "";
-                    stopReplaceSource = "";
-                    stopReplaceMarketTime = Core.Globals.MinDate;
+                    ClearBreakEvenReplaceState();
+                    if (beReplaceAttemptCount >= BeMaxReplaceAttempts)
+                    {
+                        beGiveUp = true;
+                        beGiveUpCount++;
+                        Print($"[HawkBE][GIVE_UP] time={eventTime:O} source={source} side={side} attempts={beReplaceAttemptCount} reason=submit_null keepOriginalStop=1");
+                    }
                     if (!hasFallbackStop && Position.MarketPosition != MarketPosition.Flat)
                         ArmEmergencyStop("REPLACE_SUBMIT_NULL");
                     return;
@@ -4694,6 +4854,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             currentPlannedStop = pendingBeStopPrice;
             breakevenAtivado = true;
+            beGiveUp = false;
+            beReplaceSuccessCount++;
+            if (beReplaceAttemptCount > 1)
+                beRetrySuccessCount++;
+            lastBeFailReason = "";
+            lastBeFailInvalid = false;
             ClearBreakEvenReplaceState();
             PrintCurrentOrdersState("AFTER_BE_COMMIT");
         }
@@ -4703,8 +4869,20 @@ namespace NinjaTrader.NinjaScript.Strategies
             Print($"[HawkBE][STOP_REPLACE_FAILED] time={stopReplaceMarketTime:O} source={stopReplaceSource} side={stopReplaceSide} state={state} error={error} nativeError={nativeError} pendingStop={pendingBeStopPrice}");
             RPLog($"[HawkRisk][STOP_REPLACE_FAILED] time0={stopReplaceMarketTime:O} source={stopReplaceSource} side={stopReplaceSide} state={state} error={error} nativeError={nativeError} pendingStop={pendingBeStopPrice}");
 
+            if (state == OrderState.Rejected)
+                beReplaceFailRejectCount++;
+            lastBeFailReason = state == OrderState.Rejected ? "reject" : "cancel";
+            lastBeFailInvalid = false;
+
             bool hasFallbackStop = HasActiveStopForPosition();
             ClearBreakEvenReplaceState();
+
+            if (beReplaceAttemptCount >= BeMaxReplaceAttempts && !breakevenAtivado)
+            {
+                beGiveUp = true;
+                beGiveUpCount++;
+                Print($"[HawkBE][GIVE_UP] time={stopReplaceMarketTime:O} source={stopReplaceSource} side={stopReplaceSide} attempts={beReplaceAttemptCount} reason={lastBeFailReason} keepOriginalStop=1");
+            }
 
             if (!hasFallbackStop && Position.MarketPosition != MarketPosition.Flat)
             {
@@ -5003,6 +5181,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             currentEntryPrice = entryPrice;
             stopAlvoConfigurados = true;
             bracketQtyLatched = qty;
+            ResetBreakEvenTradeState();
+            beArmed = true;
 
             string entrySignal = marketPosition == MarketPosition.Long ? "LongAuto" : "ShortAuto";
             DateTime marketTs = marketTime ?? (CurrentBar >= 0 ? Time[0] : Core.Globals.Now);
