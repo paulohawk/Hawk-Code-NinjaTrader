@@ -1910,6 +1910,10 @@ namespace NinjaTrader.NinjaScript.Strategies
         private bool pendingWatchdogRebuild = false;
         private string lastWatchdogReason = "";
         private string lastWatchdogContext = "";
+        private bool bracketModificationInProgress = false;
+        private DateTime bracketModificationStartedUtc = Core.Globals.MinDate;
+        private const int BracketModificationTimeoutSeconds = 5;
+        private long breakEvenAppliedCycleId = 0;
 
         // Safe Mode / Recovery / Heartbeats (Paper Codex)
         private bool safeModeEnabled = false;
@@ -2212,6 +2216,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             stopWorking = false;
             targetWorking = false;
             breakEvenApplied = false;
+            breakEvenAppliedCycleId = 0;
             bracketCreateAttempts = 0;
             lastBracketCreateAttemptUtc = Core.Globals.MinDate;
 
@@ -2238,6 +2243,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             lastBracketCreateAttemptUtc = Core.Globals.MinDate;
             breakEvenArmed = false;
             breakEvenApplied = false;
+            breakEvenAppliedCycleId = 0;
             entryPrice = 0.0;
             initialRiskPoints = 0.0;
             beTriggerPrice = 0.0;
@@ -2268,10 +2274,10 @@ namespace NinjaTrader.NinjaScript.Strategies
             bracketCreateArmed = true;
 
             bool stopMissing = cycleSide == MarketPosition.Long ? !IsOrderActive(ordemStopLong) : !IsOrderActive(ordemStopShort);
-            if (breakEvenApplied && stopMissing)
+            if (stopMissing && breakEvenAppliedCycleId == bracketCycleId)
             {
-                breakEvenApplied = false;
-                breakEvenArmed = true;
+                breakEvenApplied = true;
+                breakEvenArmed = false;
             }
         }
 
@@ -2391,7 +2397,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         private void ApplyRealtimeLiveBreakEven(double lastPrice)
         {
-            if (!breakEvenArmed || breakEvenApplied)
+            if (!breakEvenArmed || breakEvenApplied || breakEvenAppliedCycleId == bracketCycleId)
                 return;
 
             if (Position == null || Position.MarketPosition == MarketPosition.Flat)
@@ -2441,8 +2447,11 @@ namespace NinjaTrader.NinjaScript.Strategies
                 ? frozenEntryPrice + frozenRiskPoints * effectiveLockRR
                 : frozenEntryPrice - frozenRiskPoints * effectiveLockRR;
 
-            Log("BE_CALC",
-                $"cycleId={bracketCycleId} side={cycleSide} entry={F0(frozenEntryPrice)} stop0={F0(frozenStopPrice)} riskPx={F(frozenRiskPoints)} trigger={F0(beTriggerPrice)} stopNew={F0(beStopPrice)} mode={GetModeTag()} env={GetEnvTag()}");
+            if (!ShouldThrottleAudit($"BE_CALC_{bracketCycleId}", 2))
+            {
+                Log("BE_CALC",
+                    $"cycleId={bracketCycleId} side={cycleSide} entry={F0(frozenEntryPrice)} stop0={F0(frozenStopPrice)} riskPx={F(frozenRiskPoints)} trigger={F0(beTriggerPrice)} stopNew={F0(beStopPrice)} mode={GetModeTag()} env={GetEnvTag()}");
+            }
 
             bool triggerHit = cycleSide == MarketPosition.Long
                 ? lastPrice >= beTriggerPrice
@@ -2491,6 +2500,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (!changeOk)
             {
                 BracketLog("DENY_CHANGE", "BreakEvenAdjust", "RealtimeLive", $"side={cycleSide}");
+                BeginBracketModification("CancelOrder", "BreakEvenAdjust");
                 try { CancelOrder(stopOrder); } catch { }
 
                 string fromSignal = GetActiveEntrySignal(GetTradingDay(GetSafeTime()));
@@ -2504,6 +2514,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
 
             breakEvenApplied = true;
+            breakEvenAppliedCycleId = bracketCycleId;
             breakEvenArmed = false;
             breakevenAtivado = true;
             stopWorking = false;
@@ -2573,6 +2584,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 return false;
 
             BracketLog("CANCEL", reason, source, $"order={order.Name} state={order.OrderState}");
+            BeginBracketModification(reason, source);
             try { CancelOrder(order); } catch { }
             return true;
         }
@@ -2589,6 +2601,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
 
             BracketLog("CHANGE_STOP", reason, source, $"order={order.Name} qty={qty} newStop={F0(newStop)}");
+            BeginBracketModification(reason, source);
             try
             {
                 ChangeOrder(order, qty, order.LimitPrice, newStop);
@@ -3483,6 +3496,9 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (Position == null || Position.MarketPosition == MarketPosition.Flat)
                 return false;
 
+            if (IsBracketModificationInProgress())
+                return false;
+
             int posQtyAbs = Math.Abs(Position.Quantity);
             if (posQtyAbs <= 0)
                 return true;
@@ -3494,19 +3510,17 @@ namespace NinjaTrader.NinjaScript.Strategies
             Order stop = isLong ? ordemStopLong : ordemStopShort;
             Order tp = isLong ? ordemTPLong : ordemTPShort;
 
-            if (stop == null || tp == null)
+            if (stop == null && tp == null)
                 return true;
 
-            if (stop.OrderState == OrderState.Cancelled || stop.OrderState == OrderState.Rejected)
-                return true;
-            if (tp.OrderState == OrderState.Cancelled || tp.OrderState == OrderState.Rejected)
+            bool stopLive = IsOrderLiveOrPending(stop);
+            bool tpLive = IsOrderLiveOrPending(tp);
+
+            if (!stopLive && !tpLive)
                 return true;
 
-            bool stopActive = IsOrderActive(stop);
-            bool tpActive = IsOrderActive(tp);
-
-            if (!stopActive || !tpActive)
-                return true;
+            if (!stopLive || !tpLive)
+                return false;
 
             if (Math.Abs(stop.Quantity) != posQtyAbs || Math.Abs(tp.Quantity) != posQtyAbs)
                 return true;
@@ -3559,6 +3573,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         private void SubmitBracketOrders(Position position, double averagePrice, int posQtyAbs, DateTime tradingDay, double stopTicks,
             double targetTicks, double stopDollars, string reason, string context, bool isWatchdog)
         {
+            BeginBracketModification(reason, context);
             bool cancelDenied = false;
             if (ordemStopLong != null && !TryCancelBracketOrder(ordemStopLong, reason, "BracketController")) cancelDenied = true;
             if (ordemStopShort != null && !TryCancelBracketOrder(ordemStopShort, reason, "BracketController")) cancelDenied = true;
@@ -3705,12 +3720,67 @@ namespace NinjaTrader.NinjaScript.Strategies
             return stopFinal || tpFinal;
         }
 
+        private bool IsLiveAccount()
+        {
+            if (Account == null)
+                return false;
+
+            string name = Account.Name ?? string.Empty;
+            if (name.IndexOf("Sim", StringComparison.OrdinalIgnoreCase) >= 0)
+                return false;
+
+            return true;
+        }
+
+        private void BeginBracketModification(string reason, string source)
+        {
+            bracketModificationInProgress = true;
+            bracketModificationStartedUtc = DateTime.UtcNow;
+        }
+
+        private void EndBracketModification(string reason, string source)
+        {
+            bracketModificationInProgress = false;
+            bracketModificationStartedUtc = Core.Globals.MinDate;
+        }
+
+        private bool IsBracketModificationInProgress()
+        {
+            if (!bracketModificationInProgress)
+                return false;
+
+            if (bracketModificationStartedUtc != Core.Globals.MinDate &&
+                (DateTime.UtcNow - bracketModificationStartedUtc).TotalSeconds > BracketModificationTimeoutSeconds)
+            {
+                bracketModificationInProgress = false;
+                bracketModificationStartedUtc = Core.Globals.MinDate;
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool IsOrderLiveOrPending(Order order)
+        {
+            if (order == null)
+                return false;
+
+            return order.OrderState == OrderState.Working
+                || order.OrderState == OrderState.Accepted
+                || order.OrderState == OrderState.Submitted
+                || order.OrderState == OrderState.PartFilled
+                || order.OrderState == OrderState.ChangeSubmitted
+                || order.OrderState == OrderState.CancelSubmitted;
+        }
+
         private void EnsureBracketAlive(string context, string reason)
         {
             if (!EnableBracketWatchdog) return;
             if (State != State.Realtime) return;
+            if (IsRealtimeLive() && IsLiveAccount()) return;
             if (Position == null || Position.MarketPosition == MarketPosition.Flat) return;
             if (IsPositionClosingFinal()) return;
+            if (IsBracketModificationInProgress()) return;
             if (pendingWatchdogRebuild)
             {
                 if (!IsBracketMissingOrDead() || !WatchdogCooldownOk())
@@ -5752,6 +5822,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
 
             bool isBracket = order == ordemStopLong || order == ordemStopShort || order == ordemTPLong || order == ordemTPShort;
+            if (isBracket && orderState != OrderState.ChangeSubmitted && orderState != OrderState.CancelSubmitted)
+                EndBracketModification("OrderUpdate", orderState.ToString());
             if ((orderState == OrderState.Rejected || orderState == OrderState.Cancelled) && isBracket)
             {
                 MarketPosition side = GetAuditMarketPosition();
@@ -5933,6 +6005,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         private void AplicarBreakEvenSeAtingiuRR()
         {
+            if (breakEvenAppliedCycleId == bracketCycleId && bracketCycleId != 0)
+                return;
+
             double high = High[0];
             double low = Low[0];
 
@@ -6023,6 +6098,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     }
 
                     breakevenAtivado = true;
+                    breakEvenAppliedCycleId = bracketCycleId;
 
                     double locked = ComputeRiskDollars(frozenEntryPrice, novoStop, Math.Abs(qty));
                     dayBreakevenDollars = locked.ToString("0.00");
@@ -6031,8 +6107,11 @@ namespace NinjaTrader.NinjaScript.Strategies
                     exitReasonHintTradingDay = GetTradingDay(Times[0][0]);
 
                     Audit("BreakEvenTriggered", $"side=Long trigger={F0(trigger)} entry={F0(frozenEntryPrice)} riskPx={F(frozenRiskPoints)} newStop={F0(novoStop)} lockedDollars={F0(locked)} rrTrigger={F(effectiveAtRR)} rrLock={F(effectiveLockRR)}");
-                    Log("BE_CALC",
-                        $"cycleId={bracketCycleId} side=Long entry={F0(frozenEntryPrice)} stop0={F0(frozenStopPrice)} riskPx={F(frozenRiskPoints)} trigger={F0(trigger)} stopNew={F0(novoStop)} mode={GetModeTag()} env={GetEnvTag()}");
+                    if (!ShouldThrottleAudit($"BE_CALC_{bracketCycleId}", 2))
+                    {
+                        Log("BE_CALC",
+                            $"cycleId={bracketCycleId} side=Long entry={F0(frozenEntryPrice)} stop0={F0(frozenStopPrice)} riskPx={F(frozenRiskPoints)} trigger={F0(trigger)} stopNew={F0(novoStop)} mode={GetModeTag()} env={GetEnvTag()}");
+                    }
 
                     PublishPanelSnapshot("BreakEven_Long");
                 }
@@ -6116,6 +6195,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     }
 
                     breakevenAtivado = true;
+                    breakEvenAppliedCycleId = bracketCycleId;
 
                     double locked = ComputeRiskDollars(frozenEntryPrice, novoStop, Math.Abs(qty));
                     dayBreakevenDollars = locked.ToString("0.00");
@@ -6124,8 +6204,11 @@ namespace NinjaTrader.NinjaScript.Strategies
                     exitReasonHintTradingDay = GetTradingDay(Times[0][0]);
 
                     Audit("BreakEvenTriggered", $"side=Short trigger={F0(trigger)} entry={F0(frozenEntryPrice)} riskPx={F(frozenRiskPoints)} newStop={F0(novoStop)} lockedDollars={F0(locked)} rrTrigger={F(effectiveAtRR)} rrLock={F(effectiveLockRR)}");
-                    Log("BE_CALC",
-                        $"cycleId={bracketCycleId} side=Short entry={F0(frozenEntryPrice)} stop0={F0(frozenStopPrice)} riskPx={F(frozenRiskPoints)} trigger={F0(trigger)} stopNew={F0(novoStop)} mode={GetModeTag()} env={GetEnvTag()}");
+                    if (!ShouldThrottleAudit($"BE_CALC_{bracketCycleId}", 2))
+                    {
+                        Log("BE_CALC",
+                            $"cycleId={bracketCycleId} side=Short entry={F0(frozenEntryPrice)} stop0={F0(frozenStopPrice)} riskPx={F(frozenRiskPoints)} trigger={F0(trigger)} stopNew={F0(novoStop)} mode={GetModeTag()} env={GetEnvTag()}");
+                    }
 
                     PublishPanelSnapshot("BreakEven_Short");
                 }
