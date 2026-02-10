@@ -4112,7 +4112,26 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             if (order == null) return false;
             string orderName = order.Name ?? string.Empty;
-            return orderName.IndexOf("AutoClose", StringComparison.OrdinalIgnoreCase) >= 0;
+            return orderName.IndexOf("AutoClose", StringComparison.OrdinalIgnoreCase) >= 0
+                || orderName.IndexOf("CloseByTime", StringComparison.OrdinalIgnoreCase) >= 0
+                || orderName.IndexOf("SaidaAutomatica", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private MarketPosition InferSideFromOrderAction(OrderAction action)
+        {
+            switch (action)
+            {
+                case OrderAction.Buy:
+                    return MarketPosition.Long;
+                case OrderAction.SellShort:
+                    return MarketPosition.Short;
+                case OrderAction.Sell:
+                    return MarketPosition.Long;
+                case OrderAction.BuyToCover:
+                    return MarketPosition.Short;
+                default:
+                    return MarketPosition.Flat;
+            }
         }
 
         private bool IsPureEntryOrder(NinjaTrader.Cbi.Order order)
@@ -4177,38 +4196,29 @@ namespace NinjaTrader.NinjaScript.Strategies
             return Position.MarketPosition;
         }
 
-        private void MarkBreakevenApplied(double prevStop, double newStop, DateTime eventTime)
+        private bool IsActivePositionStop(NinjaTrader.Cbi.Order order)
+        {
+            if (order == null) return false;
+            if (Position.MarketPosition == MarketPosition.Long)
+                return ordemStopLong != null && order.OrderId == ordemStopLong.OrderId;
+            if (Position.MarketPosition == MarketPosition.Short)
+                return ordemStopShort != null && order.OrderId == ordemStopShort.OrderId;
+            return false;
+        }
+
+        private void MarkBreakevenApplied(double prevStop, double newStop, DateTime eventTime, NinjaTrader.Cbi.Order stopOrder)
         {
             if (!tradeContext.HasTrade || tradeContext.BeApplied) return;
-            if (!tradeContext.InitialStopPrice.HasValue && !tradeContext.CurrentStopPrice.HasValue) return;
+            if (Position.MarketPosition == MarketPosition.Flat) return;
+            if (!IsActivePositionStop(stopOrder)) return;
             MarketPosition side = ResolveTradeSide("BE_APPLY");
-            double entry = tradeContext.EntryPrice;
-            double tick = tickSize > 0 ? tickSize : Instrument.MasterInstrument.TickSize;
-            double baseStop = tradeContext.InitialStopPrice
-                ?? tradeContext.CurrentStopPrice
-                ?? currentPlannedStop
-                ?? double.NaN;
-            if (double.IsNaN(baseStop)) return;
-            bool movedTowardEntry = side == MarketPosition.Long ? newStop > baseStop : newStop < baseStop;
+            if (side == MarketPosition.Flat) return;
+            bool movedTowardEntry = side == MarketPosition.Long ? newStop > prevStop : newStop < prevStop;
             if (!movedTowardEntry) return;
-            bool isBeByTarget = lastCalculatedBeStopPrice.HasValue
-                && Math.Abs(newStop - lastCalculatedBeStopPrice.Value) <= tick;
-            bool isBeByFallback = false;
-            if (!isBeByTarget && entry > 0)
-            {
-                if (side == MarketPosition.Long)
-                    isBeByFallback = newStop >= entry - tick && newStop <= entry + (2 * tick);
-                else if (side == MarketPosition.Short)
-                    isBeByFallback = newStop <= entry + tick && newStop >= entry - (2 * tick);
-            }
-            if (!isBeByTarget && !isBeByFallback) return;
-            if (isBeByFallback && !isBeByTarget)
-                Print("[HawkTrade][BE_FALLBACK_USED]");
-
             tradeContext.BeApplied = true;
             tradeContext.BeStopPrice = newStop;
             tradeContext.BeTime = eventTime;
-            Print($"[HawkTrade][BE_APPLIED] side={side} entry={entry.ToString(CultureInfo.InvariantCulture)} baseStop={baseStop.ToString(CultureInfo.InvariantCulture)} newStop={newStop.ToString(CultureInfo.InvariantCulture)} calcBe={(lastCalculatedBeStopPrice.HasValue ? lastCalculatedBeStopPrice.Value.ToString(CultureInfo.InvariantCulture) : "null")}");
+            Print($"[HawkTrade][BE_APPLIED] side={side} entry={tradeContext.EntryPrice.ToString(CultureInfo.InvariantCulture)} prevStop={prevStop.ToString(CultureInfo.InvariantCulture)} newStop={newStop.ToString(CultureInfo.InvariantCulture)}");
         }
 
         private void SetExitKindOnce(ExitKind kind)
@@ -4235,6 +4245,11 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (order == null) return;
                 if (!tradeContext.HasTrade && Position.MarketPosition != MarketPosition.Flat)
                     InitializeTradeContextIfNeeded(Position.MarketPosition, Position.AveragePrice, Position.Quantity, order.Time, "OrderUpdate");
+                if (IsAutoCloseOrder(order))
+                {
+                    LogDecision("ORDER_DERIVED", $"name={order.Name}");
+                    return;
+                }
                 if (tradeContext.HasTrade)
                 {
                     bool isStopLossOrder = !string.IsNullOrEmpty(order.Name)
@@ -4258,16 +4273,12 @@ namespace NinjaTrader.NinjaScript.Strategies
                             if (Math.Abs(next - prev) >= (tickSize > 0 ? tickSize : Instrument.MasterInstrument.TickSize))
                             {
                                 tradeContext.CurrentStopPrice = next;
-                                MarkBreakevenApplied(prev, next, order.Time);
+                                MarkBreakevenApplied(prev, next, order.Time, order);
                             }
                         }
                     }
                     else if (isBeOrder && (orderState == OrderState.Working || orderState == OrderState.Accepted))
-                    {
-                        double prev = tradeContext.CurrentStopPrice ?? order.StopPrice;
                         tradeContext.CurrentStopPrice = order.StopPrice;
-                        MarkBreakevenApplied(prev, order.StopPrice, order.Time);
-                    }
                 }
                 bool isBEOrder = false;
                 if (!string.IsNullOrEmpty(order.Name))
@@ -4557,7 +4568,14 @@ namespace NinjaTrader.NinjaScript.Strategies
                     if (isExitOrder)
                     {
                         if (!tradeContext.HasTrade)
-                            InitializeTradeContextIfNeeded(marketPosition, Position.AveragePrice > 0 ? Position.AveragePrice : price, Math.Abs(quantity), execTime, "ExitFill");
+                        {
+                            MarketPosition inferredSide = tradeContext.Side;
+                            if (inferredSide == MarketPosition.Flat)
+                                inferredSide = InferSideFromOrderAction(execution.Order.OrderAction);
+                            if (inferredSide == MarketPosition.Flat && lastKnownPositionQty != 0)
+                                inferredSide = lastKnownPositionQty > 0 ? MarketPosition.Long : MarketPosition.Short;
+                            InitializeTradeContextIfNeeded(inferredSide, Position.AveragePrice > 0 ? Position.AveragePrice : price, Math.Abs(quantity), execTime, "ExitFill");
+                        }
                         if (tradeContext.HasTrade && tradeContext.ExitKind == ExitKind.None)
                         {
                             if (IsTargetOrder(execution.Order))
@@ -4726,6 +4744,11 @@ namespace NinjaTrader.NinjaScript.Strategies
                     : kind == ExitKind.Breakeven ? Brushes.DodgerBlue
                     : kind == ExitKind.StopLoss ? Brushes.Red
                     : Brushes.Gold;
+                if (IsAutoCloseOrder(execution.Order))
+                {
+                    label = "END";
+                    brush = Brushes.Gold;
+                }
                 DrawExitWithSessionLimit(execTime, px, label, brush);
             }
             catch { }
@@ -4943,7 +4966,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 {
                     Print($"[HawkBE][REPLACE_SKIP] time={eventTime:O} source={source} reason=already_at_price side={side} stopPrice={existingStop.StopPrice}");
                     double prevStop = tradeContext.InitialStopPrice ?? existingStop.StopPrice;
-                    MarkBreakevenApplied(prevStop, existingStop.StopPrice, eventTime);
+                    MarkBreakevenApplied(prevStop, existingStop.StopPrice, eventTime, existingStop);
                     beReplaceSuccessCount++;
                     lastBeFailReason = "";
                     lastBeFailInvalid = false;
@@ -5069,7 +5092,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (pendingBeStopPrice.HasValue)
             {
                 double prevStop = tradeContext.CurrentStopPrice ?? tradeContext.InitialStopPrice ?? pendingBeStopPrice.Value;
-                MarkBreakevenApplied(prevStop, pendingBeStopPrice.Value, stopReplaceMarketTime);
+                MarkBreakevenApplied(prevStop, pendingBeStopPrice.Value, stopReplaceMarketTime, acceptedOrder);
                 tradeContext.CurrentStopPrice = pendingBeStopPrice;
             }
             beGiveUp = false;
