@@ -3630,8 +3630,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 if (ActionCooldownOk("RECREATE_HEDGE_ORDER", ActionCooldownSeconds))
                 {
-                    DateTime now = GetSafeTime();
-                    DateTime tradingDay = GetTradingDay(now);
+                    DateTime now = GetEffectiveNowMain(GetSafeTime());
+                    DateTime tradingDay = GetEffectiveHedgeTradingDay(now);
                     bool hedgeWindowOk = false;
                     DateTime hedgeTradingDay;
                     DateTime hedgeAnchorLocal;
@@ -4194,6 +4194,35 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 return time.Date;
             }
+        }
+
+        private DateTime GetEffectiveNowMain(DateTime fallback)
+        {
+            if (IsHedgeActive() && IsReplayMode())
+            {
+                try
+                {
+                    // Replay hedge: "now" é sempre o tempo do BIP principal (Times[0][0]).
+                    if (Times != null && Times.Length > 0 && Times[0] != null && Times[0].Count > 0)
+                        return Times[0][0];
+                }
+                catch
+                {
+                }
+            }
+
+            return fallback;
+        }
+
+        private DateTime GetEffectiveHedgeTradingDay(DateTime referenceTime)
+        {
+            if (IsHedgeActive() && IsReplayMode())
+            {
+                DateTime replayNow = GetEffectiveNowMain(referenceTime);
+                return GetTradingDay(replayNow);
+            }
+
+            return GetTradingDay(referenceTime);
         }
 
         private void UpdateStreaksIfClosedTradesChanged()
@@ -4972,7 +5001,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 DateTime hedgeTradingDay;
                 DateTime hedgeAnchorLocal;
                 DateTime hedgeCutoff;
-                DateTime anchorCandidateTradingDay = GetTradingDay(ninjaNow);
+                DateTime anchorCandidateTradingDay = GetEffectiveHedgeTradingDay(ninjaNow);
                 if (hedgeSessionTradingDay.Date != anchorCandidateTradingDay.Date)
                 {
                     DateTime anchorCandidate = BuildHedgeAnchorLocal(ninjaNow, anchorCandidateTradingDay);
@@ -5444,7 +5473,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             anchorLocal = hedgeSessionAnchorLocal;
             if (anchorLocal == Core.Globals.MinDate)
             {
-                tradingDay = GetTradingDay(referenceTime);
+                tradingDay = GetEffectiveHedgeTradingDay(referenceTime);
                 anchorLocal = BuildHedgeAnchorLocal(referenceTime, tradingDay);
                 cutoffLocal = BuildHedgeCutoffLocal(tradingDay);
                 return true;
@@ -5667,7 +5696,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (CurrentBars[0] < 2) return;
 
             DateTime closeTime = Times[0][0];
-            DateTime tradingDay = GetTradingDay(closeTime);
+            DateTime tradingDay = GetEffectiveHedgeTradingDay(closeTime);
 
             if (lastTradeDate != tradingDay)
             {
