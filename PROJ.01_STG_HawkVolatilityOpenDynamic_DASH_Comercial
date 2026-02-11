@@ -2197,14 +2197,9 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (State != State.Realtime)
                 return false;
 
-            try
-            {
-                return Bars != null && Bars.IsPlayback;
-            }
-            catch
-            {
-                return false;
-            }
+            // Reaproveita o mesmo critério de compatibilidade do IsRealtimeLive()
+            // (evita usar Bars.IsPlayback que não existe em alguns builds)
+            return IsPlaybackAccount();
         }
 
         private bool IsRealtimeOrReplay()
