@@ -2004,6 +2004,9 @@ namespace NinjaTrader.NinjaScript.Strategies
         private string autoCloseExitSignalName = "";
         private bool replayAutoCloseExitPending = false;
         private DateTime replayAutoCloseExitArmedTime = Core.Globals.MinDate;
+        private int replayAutoCloseAttempt = 0;
+        private DateTime replayAutoCloseLastAttemptTime = Core.Globals.MinDate;
+        private bool replayExitSubmittedOnce = false;
         private DateTime autoCloseEntryTimeLocal = Core.Globals.MinDate;
         private DateTime autoCloseEntryTradingDay = Core.Globals.MinDate;
         private DateTime hedgeSessionAnchorLocal = Core.Globals.MinDate;
@@ -4931,13 +4934,48 @@ namespace NinjaTrader.NinjaScript.Strategies
             return $"{BuildTimeTruthAudit("Overlay", nowFeed)} {BuildOverlayWindowAudit(nowFeed, overlayStartFeed, overlayEndFeed, cutoffFeed)}";
         }
 
-        // NOTE: Playback detection by account name is best-effort; if the account is renamed it may mis-detect.
-        // Prefer a stronger flag (AccountType/connection playback) when available in the environment.
         private bool IsPlaybackAccount()
         {
-            var acc = Account?.Name;
-            return !string.IsNullOrWhiteSpace(acc) &&
-                   acc.IndexOf("playback", StringComparison.OrdinalIgnoreCase) >= 0;
+            try
+            {
+                var acc = Account?.Name;
+
+                if (string.IsNullOrWhiteSpace(acc))
+                    return false;
+
+                // Detecção robusta:
+                // - Começa com Playback
+                // - Contém Playback
+                // - Ignora capitalização
+                if (acc.StartsWith("Playback", StringComparison.OrdinalIgnoreCase))
+                    return true;
+
+                if (acc.IndexOf("Playback", StringComparison.OrdinalIgnoreCase) >= 0)
+                    return true;
+
+                return false;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private bool IsReplayModeSafe()
+        {
+            // Somente em Realtime (Replay roda como realtime)
+            if (State != State.Realtime)
+                return false;
+
+            // Gate principal: ReplayMode + Conta Playback
+            // (não usar Provider como bloqueio pois pode falhar em ambientes diferentes)
+            if (!IsReplayMode())
+                return false;
+
+            if (!IsPlaybackAccount())
+                return false;
+
+            return true;
         }
 
         private void GetOverlayWindowDecision(DateTime nowDecision, out DateTime tradingDay, out DateTime overlayStart, out DateTime overlayEnd, out DateTime cutoff)
@@ -5295,13 +5333,22 @@ namespace NinjaTrader.NinjaScript.Strategies
                 string fromSignal = GetActiveEntrySignal(tradingDay);
                 autoCloseExitSignalName = fromSignal;
 
-                if (IsReplayMode())
+                if (IsReplayModeSafe())
                 {
+                    if (!replayAutoCloseExitPending)
+                    {
+                        replayAutoCloseAttempt = 0;
+                        replayAutoCloseLastAttemptTime = Core.Globals.MinDate;
+                        replayExitSubmittedOnce = false;
+                    }
+
                     replayAutoCloseExitPending = true;
                     replayAutoCloseExitArmedTime = ninjaNow;
                     autoCloseExitSentToday = true;
                     autoCloseExitSentTimeFeed = ninjaNow;
                     autoCloseExitSentTradingDay = tradingDay;
+                    autoCloseExitAttemptCountToday++;
+                    lastAutoCloseAttemptUtc = DateTime.UtcNow;
                     string replayAction = wasSentToday ? "REPLAY_EXIT_REARMED" : "REPLAY_EXIT_ARMED";
                     Audit("AutoClose", $"action={replayAction} side={Position.MarketPosition} qty={Position.Quantity} avg={F0(Position.AveragePrice)} attempt={autoCloseExitAttemptCountToday} fromSignal={autoCloseExitSignalName} armedAt={replayAutoCloseExitArmedTime:O}");
                     LogAutoCloseGate(wasSentToday ? "REPLAY_EXIT_REARMED" : "REPLAY_EXIT_ARMED", barTime, ninjaNow, entryTimeLocal, scheduledCloseLocal, tradingDay, autoCloseTriggeredToday,
@@ -5347,58 +5394,94 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         private void ProcessReplayAutoCloseExitPending(DateTime barTime, DateTime tradingDay)
         {
-            if (!IsReplayMode() || !replayAutoCloseExitPending)
+            if (!IsReplayModeSafe() || !replayAutoCloseExitPending)
                 return;
 
             DateTime armedAt = replayAutoCloseExitArmedTime == Core.Globals.MinDate ? barTime : replayAutoCloseExitArmedTime;
+
             if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
             {
                 replayAutoCloseExitPending = false;
                 replayAutoCloseExitArmedTime = Core.Globals.MinDate;
-                LogAutoCloseGate("REPLAY_EXIT_PENDING_CLEARED_FLAT", barTime, barTime, armedAt, armedAt, tradingDay, autoCloseTriggeredToday);
+                replayAutoCloseAttempt = 0;
+                replayExitSubmittedOnce = false;
+                replayAutoCloseLastAttemptTime = Core.Globals.MinDate;
+                PublishPanelSnapshot("AutoClose_replay_cleared_flat");
                 return;
             }
 
-            if (autoCloseExitAttemptCountToday >= AutoCloseMaxAttempts)
+            if (replayAutoCloseAttempt >= AutoCloseMaxAttempts)
             {
-                LogAutoCloseGate("REPLAY_EXIT_SKIP_MAX_ATTEMPTS", barTime, barTime, armedAt, armedAt, tradingDay, autoCloseTriggeredToday,
-                    $"maxAttempts={AutoCloseMaxAttempts} armedAt={armedAt:O}");
+                Audit("AutoClose", $"action=REPLAY_EXIT_MAX_ATTEMPTS armedAt={armedAt:O} attempts={replayAutoCloseAttempt} qty={Position.Quantity}");
                 replayAutoCloseExitPending = false;
                 replayAutoCloseExitArmedTime = Core.Globals.MinDate;
-                PublishPanelSnapshot("AutoClose_replay_exit_max_attempts");
+                replayAutoCloseAttempt = 0;
+                replayAutoCloseLastAttemptTime = Core.Globals.MinDate;
+                replayExitSubmittedOnce = false;
+                PublishPanelSnapshot("AutoClose_replay_max_attempts");
                 return;
             }
 
-            if (AutoCloseResendCooldownSeconds > 0 && lastAutoCloseAttemptUtc != Core.Globals.MinDate)
+            if (replayAutoCloseLastAttemptTime != Core.Globals.MinDate)
             {
-                var nowUtc = DateTime.UtcNow;
-                if ((nowUtc - lastAutoCloseAttemptUtc).TotalSeconds < AutoCloseResendCooldownSeconds)
+                if ((barTime - replayAutoCloseLastAttemptTime).TotalSeconds < 2)
                     return;
             }
+
+            replayAutoCloseLastAttemptTime = barTime;
+            replayAutoCloseAttempt++;
 
             try
             {
                 exitReasonHint = "AutoClose";
                 exitReasonHintTradingDay = tradingDay;
 
-                if (Position.MarketPosition == MarketPosition.Long && Position.Quantity > 0)
+                if (Position.MarketPosition == MarketPosition.Long)
                     ExitLong("AutoClose");
-                else if (Position.MarketPosition == MarketPosition.Short && Position.Quantity > 0)
+                else if (Position.MarketPosition == MarketPosition.Short)
                     ExitShort("AutoClose");
 
+                replayExitSubmittedOnce = true;
                 autoCloseExitSentToday = true;
                 autoCloseExitSentTradingDay = tradingDay;
                 autoCloseExitSentTimeFeed = barTime;
-                autoCloseExitAttemptCountToday++;
                 lastAutoCloseAttemptUtc = DateTime.UtcNow;
-                Audit("AutoClose", $"action=REPLAY_EXIT_SUBMITTED_BIP0 side={Position.MarketPosition} qty={Position.Quantity} avg={F0(Position.AveragePrice)} armedAt={armedAt:O} barTime={barTime:O} attempt={autoCloseExitAttemptCountToday}");
-                LogAutoCloseGate("REPLAY_EXIT_SUBMITTED_BIP0", barTime, barTime, armedAt, armedAt, tradingDay, autoCloseTriggeredToday,
-                    $"armedAt={armedAt:O} attempt={autoCloseExitAttemptCountToday}");
+                Audit("AutoClose", $"action=REPLAY_EXIT_SUBMITTED_BIP0 armedAt={armedAt:O} attempt={replayAutoCloseAttempt} qty={Position.Quantity}");
                 PublishPanelSnapshot("AutoClose_replay_exit_submitted");
             }
             catch (Exception ex)
             {
                 Log("AutoClose", $"Replay pending exit submit failed on BIP0: {ex.Message}");
+            }
+
+            if (replayExitSubmittedOnce && replayAutoCloseAttempt >= 2)
+            {
+                try
+                {
+                    Account?.Flatten(new[] { Instrument });
+                    Audit("AutoClose", $"action=REPLAY_FLATTEN_FORCED armedAt={armedAt:O} attempt={replayAutoCloseAttempt} qty={Position.Quantity}");
+                    PublishPanelSnapshot("AutoClose_replay_flatten_forced");
+
+                    try
+                    {
+                        if (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0)
+                        {
+                            replayAutoCloseExitPending = false;
+                            replayAutoCloseExitArmedTime = Core.Globals.MinDate;
+                            replayAutoCloseAttempt = 0;
+                            replayAutoCloseLastAttemptTime = Core.Globals.MinDate;
+                            replayExitSubmittedOnce = false;
+                            PublishPanelSnapshot("AutoClose_replay_forced_flat_done");
+                            return;
+                        }
+                    }
+                    catch
+                    {
+                    }
+                }
+                catch
+                {
+                }
             }
         }
 
@@ -5439,6 +5522,9 @@ namespace NinjaTrader.NinjaScript.Strategies
             autoCloseExitSignalName = "";
             replayAutoCloseExitPending = false;
             replayAutoCloseExitArmedTime = Core.Globals.MinDate;
+            replayAutoCloseAttempt = 0;
+            replayAutoCloseLastAttemptTime = Core.Globals.MinDate;
+            replayExitSubmittedOnce = false;
             hedgeSessionAnchorLocal = Core.Globals.MinDate;
             hedgeSessionTradingDay = Core.Globals.MinDate;
             hedgeCutoffLocal = Core.Globals.MinDate;
@@ -5790,7 +5876,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (!IsReplayMode() && IsHeartbeatStale())
                 EnterSafeMode("STALE_HEARTBEAT", "OnBarUpdate");
 
-            if (IsReplayMode())
+            if (IsReplayModeSafe())
                 ProcessReplayAutoCloseExitPending(closeTime, tradingDay);
 
             EvaluateInvertPlanLifecycle(closeTime, tradingDay);
