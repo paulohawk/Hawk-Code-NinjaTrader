@@ -1,0 +1,26 @@
+📄 PAPER – Correção Cirúrgica do TradingDay em Replay
+
+Alteração aplicada (Replay isolado):
+
+```csharp
+private DateTime GetReplayTradingDayOrFallback(DateTime fallbackReferenceTime)
+{
+    // Conta LIVE → mantém comportamento original
+    if (!IsReplayMode())
+        return GetTradingDay(fallbackReferenceTime);
+
+    // Replay → usa exclusivamente a data do candle principal
+    DateTime replayNow = GetReplayNowOrFallback(fallbackReferenceTime);
+    return replayNow.Date;
+}
+```
+
+Escopo preservado:
+- GetReplayNowOrFallback: não alterado
+- GetTradingDay: não alterado
+- AutoClose: não alterado
+- Hedge lifecycle: não alterado
+- Audit/Log: não alterados
+
+Resultado esperado em Replay:
+- TradingDay segue o candle principal (`Times[0][0].Date` indiretamente via `GetReplayNowOrFallback(...).Date`), evitando projeção de data futura por SessionIterator.
