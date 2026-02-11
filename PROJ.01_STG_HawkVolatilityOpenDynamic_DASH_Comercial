@@ -4221,12 +4221,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         private DateTime GetReplayTradingDayOrFallback(DateTime fallbackReferenceTime)
         {
+            // Conta LIVE → mantém comportamento original
             if (!IsReplayMode())
                 return GetTradingDay(fallbackReferenceTime);
 
+            // Replay → usa exclusivamente a data do candle principal
             DateTime replayNow = GetReplayNowOrFallback(fallbackReferenceTime);
-
-            return GetTradingDay(replayNow);
+            return replayNow.Date;
         }
 
         private void UpdateStreaksIfClosedTradesChanged()
