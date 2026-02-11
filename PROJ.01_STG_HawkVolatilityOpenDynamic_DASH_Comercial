@@ -3426,7 +3426,9 @@ namespace NinjaTrader.NinjaScript.Strategies
             try
             {
                 DateTime t = GetSafeTime();
-                string baseMsg = $"[HVO-AUDIT] time={t:O} inst={Instrument?.FullName} acc={Account?.Name} td={GetTradingDay(t):yyyy-MM-dd} state={State} bip={BarsInProgress} event={eventName} {msg}";
+                DateTime auditNow = GetReplayNowOrFallback(t);
+                DateTime auditTradingDay = GetReplayTradingDayOrFallback(auditNow);
+                string baseMsg = $"[HVO-AUDIT] time={auditNow:O} inst={Instrument?.FullName} acc={Account?.Name} td={auditTradingDay:yyyy-MM-dd} state={State} bip={BarsInProgress} event={eventName} {msg}";
                 Print(baseMsg);
                 if (LogToFile)
                 {
@@ -3630,8 +3632,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 if (ActionCooldownOk("RECREATE_HEDGE_ORDER", ActionCooldownSeconds))
                 {
-                    DateTime now = GetEffectiveNow(GetSafeTime());
-                    DateTime tradingDay = GetEffectiveTradingDay(now);
+                    DateTime now = GetReplayNowOrFallback(GetSafeTime());
+                    DateTime tradingDay = GetReplayTradingDayOrFallback(now);
                     bool hedgeWindowOk = false;
                     DateTime hedgeTradingDay;
                     DateTime hedgeAnchorLocal;
@@ -4172,7 +4174,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         private void Log(string tag, string message, DateTime? when = null)
         {
-            DateTime ts = when ?? GetSafeTime();
+            DateTime ts = when ?? GetReplayNowOrFallback(GetSafeTime());
             Print($"[HAWKLOG] {ts:yyyy-MM-dd HH:mm:ss} [{tag}] {message}");
         }
 
@@ -4196,32 +4198,35 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
         }
 
-        private DateTime GetEffectiveNow(DateTime fallback)
+        private DateTime GetReplayNowOrFallback(DateTime fallback)
         {
-            if (IsReplayMode())
+            if (!IsReplayMode())
+                return fallback;
+
+            try
             {
-                try
+                if (Times != null && Times.Length > 0 && Times[0] != null && Times[0].Count > 0)
                 {
-                    if (Times != null && Times.Length > 0 && Times[0] != null && Times[0].Count > 0)
-                        return Times[0][0];
+                    DateTime t = Times[0][0];
+                    if (t != Core.Globals.MinDate)
+                        return t;
                 }
-                catch
-                {
-                }
+            }
+            catch
+            {
             }
 
             return fallback;
         }
 
-        private DateTime GetEffectiveTradingDay(DateTime referenceTime)
+        private DateTime GetReplayTradingDayOrFallback(DateTime fallbackReferenceTime)
         {
-            if (IsReplayMode())
-            {
-                DateTime replayNow = GetEffectiveNow(referenceTime);
-                return replayNow.Date;
-            }
+            if (!IsReplayMode())
+                return GetTradingDay(fallbackReferenceTime);
 
-            return GetTradingDay(referenceTime);
+            DateTime replayNow = GetReplayNowOrFallback(fallbackReferenceTime);
+
+            return GetTradingDay(replayNow);
         }
 
         private void UpdateStreaksIfClosedTradesChanged()
@@ -4990,7 +4995,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             if (!AutoCloseEnabled) return;
 
-            DateTime ninjaNow = GetEffectiveNow(barTime);
+            DateTime ninjaNow = GetReplayNowOrFallback(barTime);
             DateTime tradingDay = Core.Globals.MinDate;
             DateTime entryTimeLocal = Core.Globals.MinDate;
             DateTime scheduledCloseLocal = Core.Globals.MinDate;
@@ -5000,7 +5005,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 DateTime hedgeTradingDay;
                 DateTime hedgeAnchorLocal;
                 DateTime hedgeCutoff;
-                DateTime anchorCandidateTradingDay = GetEffectiveTradingDay(ninjaNow);
+                DateTime anchorCandidateTradingDay = GetReplayTradingDayOrFallback(ninjaNow);
                 if (hedgeSessionTradingDay.Date != anchorCandidateTradingDay.Date)
                 {
                     DateTime anchorCandidate = BuildHedgeAnchorLocal(ninjaNow, anchorCandidateTradingDay);
@@ -5472,8 +5477,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             anchorLocal = hedgeSessionAnchorLocal;
             if (anchorLocal == Core.Globals.MinDate)
             {
-                DateTime replayNow = GetEffectiveNow(referenceTime);
-                tradingDay = GetEffectiveTradingDay(replayNow);
+                DateTime replayNow = GetReplayNowOrFallback(referenceTime);
+                tradingDay = GetReplayTradingDayOrFallback(replayNow);
                 anchorLocal = BuildHedgeAnchorLocal(replayNow, tradingDay);
                 cutoffLocal = BuildHedgeCutoffLocal(tradingDay);
                 return true;
@@ -5696,7 +5701,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (CurrentBars[0] < 2) return;
 
             DateTime closeTime = Times[0][0];
-            DateTime tradingDay = GetEffectiveTradingDay(closeTime);
+            DateTime tradingDay = GetReplayTradingDayOrFallback(closeTime);
 
             if (lastTradeDate != tradingDay)
             {
