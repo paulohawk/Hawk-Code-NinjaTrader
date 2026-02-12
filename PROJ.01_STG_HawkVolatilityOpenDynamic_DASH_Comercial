@@ -4858,6 +4858,54 @@ namespace NinjaTrader.NinjaScript.Strategies
             return true;
         }
 
+        private bool TryGetReplayAutoCloseSchedule(DateTime closeTime, out DateTime replayNow, out DateTime replayTradingDay, out DateTime entryTimeLocalReplay, out DateTime replayScheduledCloseLocal, out string failReason)
+        {
+            replayNow = Core.Globals.MinDate;
+            replayTradingDay = Core.Globals.MinDate;
+            entryTimeLocalReplay = Core.Globals.MinDate;
+            replayScheduledCloseLocal = Core.Globals.MinDate;
+            failReason = "unknown";
+
+            if (!IsReplayModeSafe())
+            {
+                failReason = "not_replay";
+                return false;
+            }
+
+            replayNow = GetReplayNowOrFallback(closeTime);
+            if (replayNow == Core.Globals.MinDate)
+            {
+                failReason = "replayNow_minDate";
+                return false;
+            }
+
+            replayTradingDay = replayNow.Date;
+
+            string entryHms = IsUsaDst(replayNow) ? EntryTimeDstUsaHHmmss : EntryTimeNormalHHmmss;
+
+            try
+            {
+                var hms = entryHms.Split(':');
+                entryTimeLocalReplay = new DateTime(
+                    replayTradingDay.Year,
+                    replayTradingDay.Month,
+                    replayTradingDay.Day,
+                    int.Parse(hms[0]),
+                    int.Parse(hms[1]),
+                    int.Parse(hms[2])
+                );
+                replayScheduledCloseLocal = entryTimeLocalReplay.Add(AutoCloseMaxDuration);
+            }
+            catch
+            {
+                failReason = "parse_fail";
+                return false;
+            }
+
+            failReason = "ok";
+            return true;
+        }
+
         private string GetDefaultAutoCloseDisplayTimeBR()
         {
             DateTime now = GetSafeTime();
@@ -5823,10 +5871,52 @@ namespace NinjaTrader.NinjaScript.Strategies
                 else
                     hasSchedule = TryGetAutoCloseSchedule(closeTime, out autoCloseTradingDay, out entryTimeLocal, out scheduledCloseLocal);
 
-                if (hasSchedule && lastInvertPlanCancelDate.Date != autoCloseTradingDay.Date)
+                if (hasSchedule)
                 {
-                    if (closeTime >= scheduledCloseLocal)
-                        CancelInvertPlan("EOD", autoCloseTradingDay);
+                    if (IsReplayModeSafe())
+                    {
+                        DateTime replayNow;
+                        DateTime replayTradingDay;
+                        DateTime entryTimeLocalReplay;
+                        DateTime replayScheduledClose;
+
+                        string replayScheduleFailReason;
+                        bool hasReplaySchedule = TryGetReplayAutoCloseSchedule(closeTime, out replayNow, out replayTradingDay, out entryTimeLocalReplay, out replayScheduledClose, out replayScheduleFailReason);
+                        if (hasReplaySchedule)
+                        {
+                            autoCloseTradingDay = replayTradingDay;
+                            scheduledCloseLocal = replayScheduledClose;
+                            entryTimeLocal = entryTimeLocalReplay;
+                        }
+
+                        DateTime replayNowForFallback = replayNow != Core.Globals.MinDate ? replayNow : GetReplayNowOrFallback(closeTime);
+
+                        if (!ShouldThrottleAudit($"AUTOCLOSE_REPLAY_SCHEDULE_{autoCloseTradingDay:yyyyMMdd}", 45))
+                        {
+                            Log("AutoCloseReplaySchedule", $"hasReplaySchedule={hasReplaySchedule} reason={replayScheduleFailReason} replayNow={replayNowForFallback:O} replayTD={replayTradingDay:yyyy-MM-dd} entryReplay={entryTimeLocalReplay:O} schedReplay={replayScheduledClose:O} closeTime={closeTime:O} fallbackSched={scheduledCloseLocal:O}");
+                        }
+
+                        if (lastInvertPlanCancelDate.Date != autoCloseTradingDay.Date)
+                        {
+                            if (hasReplaySchedule)
+                            {
+                                if (replayNow >= scheduledCloseLocal)
+                                    CancelInvertPlan("EOD", autoCloseTradingDay);
+                            }
+                            else if (replayNowForFallback != Core.Globals.MinDate && replayNowForFallback >= scheduledCloseLocal)
+                            {
+                                if (!ShouldThrottleAudit($"REPLAY_SCHEDULE_FALLBACK_USED_{autoCloseTradingDay:yyyyMMdd}", 45))
+                                    Log("REPLAY_SCHEDULE_FALLBACK_USED", $"reason={replayScheduleFailReason} replayNow={replayNowForFallback:O} scheduledClose={scheduledCloseLocal:O} closeTime={closeTime:O} tradingDay={autoCloseTradingDay:yyyy-MM-dd}");
+
+                                CancelInvertPlan("EOD", autoCloseTradingDay);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        if (lastInvertPlanCancelDate.Date != autoCloseTradingDay.Date && closeTime >= scheduledCloseLocal)
+                            CancelInvertPlan("EOD", autoCloseTradingDay);
+                    }
                 }
             }
         }
