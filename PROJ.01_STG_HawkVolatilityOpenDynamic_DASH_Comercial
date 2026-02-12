@@ -2074,15 +2074,10 @@ namespace NinjaTrader.NinjaScript.Strategies
         private bool bracketConfirmed = false;
         private bool stopWorking = false;
         private bool targetWorking = false;
-        private bool bracketCreateArmed = false;
         private int bracketCreateAttempts = 0;
         private DateTime lastBracketCreateAttemptUtc = Core.Globals.MinDate;
         private DateTime bracketNextEligibleAttemptUtc = Core.Globals.MinDate;
         private DateTime bracketTickWindowStartUtc = Core.Globals.MinDate;
-        private bool bracketBarRetryArmed = false;
-        private int attemptsTick = 0;
-        private int attemptsBar = 0;
-        private int attemptsRebuild = 0;
         private DateTime cycleFillAtUtc = Core.Globals.MinDate;
         private int cycleFillBarNumber = -1;
         private int lastBracketBarCheck = -1;
@@ -2104,6 +2099,32 @@ namespace NinjaTrader.NinjaScript.Strategies
         private double frozenRiskPoints = 0.0;
         private long lastBracketBrokenCycleId = 0;
         private string lastBracketBrokenReason = "";
+
+        private enum BracketMgrState
+        {
+            Healthy,
+            TickAttempting,
+            TickFailedCooldown,
+            BarAttempting,
+            BarFailedCooldown,
+            SafeMode
+        }
+
+        private BracketMgrState bracketMgrState = BracketMgrState.Healthy;
+        private bool bracketNeedsAttention = false;
+        private string bracketAttentionReason = "";
+        private DateTime lastBracketActionTime = Core.Globals.MinDate;
+        private const int BracketMinActionIntervalSeconds = 10;
+        private bool tickAttemptUsedThisCycle = false;
+        private DateTime tickDisabledUntil = Core.Globals.MinDate;
+        private const int TickDisableBars30s = 2;
+        private int barAttemptCountThisCycle = 0;
+        private const int BarMaxAttemptsPerCycle = 10;
+        private DateTime cycleStartedAt = Core.Globals.MinDate;
+        private string lastBracketActionSource = "";
+        private bool bracketResetPendingResubmit = false;
+        private int bracketResetRequestedBar = -1;
+        private int bracketQtyMismatchBarStart = -1;
 
         private enum BracketState
         {
@@ -2260,7 +2281,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 ? frozenEntryPrice + frozenRiskPoints * effectiveLockRR
                 : frozenEntryPrice - frozenRiskPoints * effectiveLockRR;
 
-            bracketCreateArmed = true;
             breakEvenArmed = true;
             bracketConfirmed = false;
             stopWorking = false;
@@ -2268,14 +2288,10 @@ namespace NinjaTrader.NinjaScript.Strategies
             breakEvenApplied = false;
             breakEvenAppliedCycleId = 0;
             bracketCreateAttempts = 0;
-            attemptsTick = 0;
-            attemptsBar = 0;
-            attemptsRebuild = 0;
             bracketTickWindowStartUtc = cycleStartTime;
             bracketNextEligibleAttemptUtc = Core.Globals.MinDate;
             lastBracketCreateAttemptUtc = Core.Globals.MinDate;
             lastSafeModeBracketAttemptUtc = Core.Globals.MinDate;
-            bracketBarRetryArmed = false;
             stopSeenSubmitted = false;
             targetSeenSubmitted = false;
             stopSeenWorking = false;
@@ -2301,11 +2317,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             bracketConfirmed = false;
             stopWorking = false;
             targetWorking = false;
-            bracketCreateArmed = false;
             bracketCreateAttempts = 0;
-            attemptsTick = 0;
-            attemptsBar = 0;
-            attemptsRebuild = 0;
             bracketNextEligibleAttemptUtc = Core.Globals.MinDate;
             bracketTickWindowStartUtc = Core.Globals.MinDate;
             lastBracketCreateAttemptUtc = Core.Globals.MinDate;
@@ -2313,7 +2325,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             cycleFillAtUtc = Core.Globals.MinDate;
             cycleFillBarNumber = -1;
             lastBracketBarCheck = -1;
-            bracketBarRetryArmed = false;
             stopSeenSubmitted = false;
             targetSeenSubmitted = false;
             stopSeenWorking = false;
@@ -2330,6 +2341,18 @@ namespace NinjaTrader.NinjaScript.Strategies
             frozenEntryPrice = 0.0;
             frozenStopPrice = 0.0;
             frozenRiskPoints = 0.0;
+
+            bracketNeedsAttention = false;
+            bracketAttentionReason = "";
+            bracketMgrState = BracketMgrState.Healthy;
+            tickAttemptUsedThisCycle = false;
+            barAttemptCountThisCycle = 0;
+            tickDisabledUntil = Core.Globals.MinDate;
+            bracketResetPendingResubmit = false;
+            bracketResetRequestedBar = -1;
+            cycleStartedAt = Core.Globals.MinDate;
+            bracketQtyMismatchBarStart = -1;
+            lastBracketActionTime = Core.Globals.MinDate;
         }
 
         private void MarkBracketBroken(string reason, string source, string extra = "")
@@ -2350,7 +2373,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             bracketConfirmed = false;
             stopWorking = false;
             targetWorking = false;
-            bracketCreateArmed = true;
 
             bool stopMissing = cycleSide == MarketPosition.Long ? !IsOrderActive(ordemStopLong) : !IsOrderActive(ordemStopShort);
             if (stopMissing && breakEvenAppliedCycleId == bracketCycleId)
@@ -2358,6 +2380,11 @@ namespace NinjaTrader.NinjaScript.Strategies
                 breakEvenApplied = true;
                 breakEvenArmed = false;
             }
+
+            string attentionReason = reason;
+            if (!string.IsNullOrWhiteSpace(extra))
+                attentionReason = $"{reason}:{extra}";
+            BracketSensorFlag(attentionReason, source);
         }
 
         private void UpdateBracketConfirmation(Order order, OrderState orderState, string source)
@@ -2396,17 +2423,11 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (!bracketConfirmed && hasEvidence)
             {
                 bracketConfirmed = true;
-                bracketCreateArmed = false;
-                bracketBarRetryArmed = false;
-                    double stopPriceAudit;
+                double stopPriceAudit;
                 double targetPriceAudit;
                 GetBracketPrices(cycleSide, out stopPriceAudit, out targetPriceAudit);
                 Log("BRACKET_CONFIRMED",
                     $"cycleId={bracketCycleId} stop={F0(stopPriceAudit)} target={F0(targetPriceAudit)} source={source} mode={GetModeTag()} env={GetEnvTag()}");
-                if (attemptsTick > 0)
-                    Log("BRACKET_RT_TICK_SUCCESS", $"cycleId={bracketCycleId} attemptsTick={attemptsTick} attemptsBar={attemptsBar}");
-                if (attemptsBar > 0)
-                    Log("BRACKET_BAR_SUCCESS", $"cycleId={bracketCycleId} attemptsBar={attemptsBar}");
             }
         }
 
@@ -2447,170 +2468,286 @@ namespace NinjaTrader.NinjaScript.Strategies
             bracketNextEligibleAttemptUtc = nowUtc.Add(interval);
             lastBracketCreateAttemptUtc = nowUtc;
         }
-        private void AttemptRealtimeLiveBracketCreate(Position position, double averagePrice, string reason)
+        private bool IsOrderWorkingOrAccepted(Order order)
         {
-            if (!IsRealtimeLive() || !IsHedgeActive())
-                return;
-
-            if (IsHedgeBracketProtectionRequired())
-                bracketCreateArmed = true;
-
-            if (!bracketCreateArmed || bracketConfirmed)
-                return;
-
-            if (position == null || position.MarketPosition == MarketPosition.Flat)
-                return;
-
-            int posQtyAbs = Math.Abs(position.Quantity);
-            if (posQtyAbs <= 0)
-                return;
-
-            if (cycleQty != posQtyAbs)
-            {
-                MarkBracketBroken("QTY_MISMATCH", "BracketCreate", $"posQty={posQtyAbs}");
-                return;
-            }
-
-            var nowUtc = DateTime.UtcNow;
-
-            if (!IsBracketAttemptEligible(nowUtc))
-                return;
-
-            if ((nowUtc - bracketTickWindowStartUtc) > BracketTickWindow || attemptsTick >= BracketTickMaxAttempts)
-            {
-                bracketBarRetryArmed = true;
-                bracketCreateArmed = false;
-                Log("BRACKET_RT_TICK_FAIL_ESCALATE",
-                    $"cycleId={bracketCycleId} attemptsTick={attemptsTick} windowMs={(int)BracketTickWindow.TotalMilliseconds} reason={reason} mode={GetModeTag()} env={GetEnvTag()}");
-                return;
-            }
-
-            bracketCreateAttempts++;
-            attemptsTick++;
-            ScheduleBracketAttemptCooldown(nowUtc, BracketTickMinInterval);
-
-            double stopTicks;
-            double targetTicks;
-            double stopDollars;
-            ComputeBracketMetrics(out stopTicks, out targetTicks, out stopDollars);
-
-            DateTime tradingDay = GetTradingDay(GetSafeTime());
-            SubmitBracketOrders(position, averagePrice, posQtyAbs, tradingDay, stopTicks, targetTicks, stopDollars, reason, "RealtimeLiveTick", false);
-        }
-
-        private bool ShouldStartBarRetryWindow()
-        {
-            if (cycleFillAtUtc == Core.Globals.MinDate)
+            if (order == null)
                 return false;
 
-            return CurrentBar > cycleFillBarNumber;
+            return order.OrderState == OrderState.Working || order.OrderState == OrderState.Accepted;
         }
 
-        private void TryBracketBarCheckpoint(DateTime barTime)
+        private bool IsOrderDead(Order order)
         {
-            _ = barTime;
+            if (order == null)
+                return true;
 
-            if (!IsRealtimeLive() || !IsHedgeActive())
-                return;
+            return order.OrderState == OrderState.Rejected
+                || order.OrderState == OrderState.Cancelled
+                || order.OrderState == OrderState.Unknown;
+        }
 
-            if (IsHedgeBracketProtectionRequired())
-                bracketCreateArmed = true;
+        private bool IsBracketHealthyCore(out string reason, bool trackQtyMismatchWindow)
+        {
+            reason = "OK";
 
-            if (!bracketBarRetryArmed || bracketConfirmed)
-                return;
+            if (Position == null || Position.MarketPosition == MarketPosition.Flat)
+                return true;
 
+            int posQtyAbs = Math.Abs(Position.Quantity);
+            if (posQtyAbs <= 0)
+            {
+                reason = "POS_QTY_ZERO";
+                return false;
+            }
+
+            bool isLong = Position.MarketPosition == MarketPosition.Long;
+            Order stopRef = isLong ? ordemStopLong : ordemStopShort;
+            Order tpRef = isLong ? ordemTPLong : ordemTPShort;
+
+            if (stopRef == null)
+            {
+                reason = "STOP_NULL";
+                return false;
+            }
+
+            if (tpRef == null)
+            {
+                reason = "TP_NULL";
+                return false;
+            }
+
+            if (!IsOrderWorkingOrAccepted(stopRef))
+            {
+                reason = "STOP_NOT_WORKING";
+                return false;
+            }
+
+            if (!IsOrderWorkingOrAccepted(tpRef))
+            {
+                reason = "TP_NOT_WORKING";
+                return false;
+            }
+
+            bool qtyMismatch = Math.Abs(stopRef.Quantity) != posQtyAbs || Math.Abs(tpRef.Quantity) != posQtyAbs;
+            if (qtyMismatch)
+            {
+                if (!trackQtyMismatchWindow)
+                {
+                    reason = "QTY_MISMATCH";
+                    return false;
+                }
+
+                if (bracketQtyMismatchBarStart == -1)
+                {
+                    bracketQtyMismatchBarStart = CurrentBar;
+                    return true;
+                }
+
+                if (CurrentBar <= bracketQtyMismatchBarStart)
+                    return true;
+
+                reason = "QTY_MISMATCH";
+                return false;
+            }
+
+            if (trackQtyMismatchWindow)
+                bracketQtyMismatchBarStart = -1;
+
+            string stopOco = stopRef.Oco ?? string.Empty;
+            string tpOco = tpRef.Oco ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(stopOco) && !string.IsNullOrWhiteSpace(tpOco) && !string.Equals(stopOco, tpOco, StringComparison.Ordinal))
+            {
+                reason = "OCO_MISMATCH";
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool IsBracketHealthy(out string reason)
+        {
+            return IsBracketHealthyCore(out reason, true);
+        }
+
+        private bool IsBracketHealthyReadOnly(out string reason)
+        {
+            return IsBracketHealthyCore(out reason, false);
+        }
+
+        private void BracketSensorFlag(string reason, string source)
+        {
+            string normalizedReason = string.IsNullOrWhiteSpace(reason) ? "UNKNOWN" : reason;
+            bool alreadyAttention = bracketNeedsAttention;
+
+            bracketNeedsAttention = true;
+            if (!alreadyAttention || string.IsNullOrWhiteSpace(bracketAttentionReason))
+                bracketAttentionReason = normalizedReason;
+            lastBracketActionSource = source;
+            if (!ShouldThrottleAudit($"BRACKET_ATTN_START_{bracketCycleId}", 5))
+            {
+                string pos = Position != null ? Position.MarketPosition.ToString() : "NULL";
+                int qty = Position != null ? Math.Abs(Position.Quantity) : 0;
+                Log("BRACKET_ATTENTION_START", $"reason={bracketAttentionReason} pos={pos} qty={qty} source={source}");
+            }
+        }
+
+        private bool IsPersistentQtyMismatch(Order order, int posQtyAbs)
+        {
+            if (order == null)
+                return true;
+
+            if (Math.Abs(order.Quantity) == posQtyAbs)
+                return false;
+
+            if (!IsOrderWorkingOrAccepted(order))
+                return true;
+
+            if (bracketQtyMismatchBarStart == -1)
+                return false;
+
+            return CurrentBar > bracketQtyMismatchBarStart;
+        }
+
+        private void Bracket_RebuildMinimal(string source, string reason, DateTime now)
+        {
             if (Position == null || Position.MarketPosition == MarketPosition.Flat)
                 return;
 
-            if (!ShouldStartBarRetryWindow())
+            bool isLong = Position.MarketPosition == MarketPosition.Long;
+            Order stopRef = isLong ? ordemStopLong : ordemStopShort;
+            Order tpRef = isLong ? ordemTPLong : ordemTPShort;
+            int qty = Math.Abs(Position.Quantity);
+
+            bool stopHealthy = stopRef != null && IsOrderWorkingOrAccepted(stopRef) && Math.Abs(stopRef.Quantity) == qty;
+            bool tpHealthy = tpRef != null && IsOrderWorkingOrAccepted(tpRef) && Math.Abs(tpRef.Quantity) == qty;
+
+            bool stopInvalid = stopRef == null || IsOrderDead(stopRef) || (stopRef != null && IsPersistentQtyMismatch(stopRef, qty));
+            bool tpInvalid = tpRef == null || IsOrderDead(tpRef) || (tpRef != null && IsPersistentQtyMismatch(tpRef, qty));
+
+            if (stopHealthy && tpHealthy)
                 return;
 
-            if (lastBracketBarCheck == CurrentBar)
-                return;
-
-            lastBracketBarCheck = CurrentBar;
-
-            bool hasStop = Position.MarketPosition == MarketPosition.Long
-                ? IsOrderLiveOrPending(ordemStopLong)
-                : IsOrderLiveOrPending(ordemStopShort);
-            bool hasTarget = Position.MarketPosition == MarketPosition.Long
-                ? IsOrderLiveOrPending(ordemTPLong)
-                : IsOrderLiveOrPending(ordemTPShort);
-
-            int barsSinceFill = cycleFillBarNumber >= 0 ? Math.Max(0, CurrentBar - cycleFillBarNumber) : 0;
-
-            if (hasStop && hasTarget)
-                return;
-
-            if (attemptsBar >= BracketBarMaxRetries)
+            bool bothNeedReset = stopInvalid && tpInvalid;
+            if (bothNeedReset && !bracketResetPendingResubmit)
             {
-                Log("BRACKET_BAR_FAIL_ESCALATE",
-                    $"cycleId={bracketCycleId} attemptsBar={attemptsBar} barIndexSinceFill={barsSinceFill} reason=MAX_BARS mode={GetModeTag()} env={GetEnvTag()}");
-                TryHardRebuildBracket("BAR_RETRY_EXHAUSTED", "OnBarUpdate");
+                if (stopRef != null && !IsOrderWorkingOrAccepted(stopRef))
+                    TryCancelBracketOrder(stopRef, reason, source, true);
+                if (tpRef != null && !IsOrderWorkingOrAccepted(tpRef))
+                    TryCancelBracketOrder(tpRef, reason, source, true);
+
+                bracketResetPendingResubmit = true;
+                bracketResetRequestedBar = CurrentBar;
                 return;
             }
 
-            DateTime nowUtc = DateTime.UtcNow;
-            if (!IsBracketAttemptEligible(nowUtc))
-                return;
+            if (bracketResetPendingResubmit)
+            {
+                if (CurrentBar <= bracketResetRequestedBar)
+                    return;
 
-            attemptsBar++;
-            bracketCreateAttempts++;
-            ScheduleBracketAttemptCooldown(nowUtc, TimeSpan.FromSeconds(30));
+                bracketResetPendingResubmit = false;
+                bracketResetRequestedBar = -1;
+            }
+
+            if (stopRef != null && stopInvalid && !IsOrderWorkingOrAccepted(stopRef))
+                TryCancelBracketOrder(stopRef, reason, source, true);
+            if (tpRef != null && tpInvalid && !IsOrderWorkingOrAccepted(tpRef))
+                TryCancelBracketOrder(tpRef, reason, source, true);
+
             double stopTicks;
             double targetTicks;
             double stopDollars;
             ComputeBracketMetrics(out stopTicks, out targetTicks, out stopDollars);
-
             DateTime tradingDay = GetTradingDay(GetSafeTime());
-            SubmitBracketOrders(Position, Position.AveragePrice, Math.Abs(Position.Quantity), tradingDay, stopTicks, targetTicks, stopDollars, "RT_LIVE_BAR", "OnBarUpdate", false);
+
+            SubmitBracketOrders(Position, Position.AveragePrice, qty, tradingDay, stopTicks, targetTicks, stopDollars, reason, source, false);
+            lastBracketActionTime = now;
         }
 
-        private void TryHardRebuildBracket(string reason, string source)
+        private void BracketManager_Update(bool isBarClose30s)
         {
             if (!IsRealtimeLive() || !IsHedgeActive())
                 return;
 
-            if (attemptsRebuild >= BracketRebuildMaxAttempts)
+            DateTime nowUtc = DateTime.UtcNow;
+            if (lastBracketActionTime > nowUtc)
+                lastBracketActionTime = nowUtc;
+
+            if (lastBracketActionTime != Core.Globals.MinDate
+                && (nowUtc - lastBracketActionTime).TotalSeconds < BracketMinActionIntervalSeconds)
+                return;
+
+            string healthReason;
+            if (IsBracketHealthy(out healthReason))
             {
-                EnterSafeMode("BRACKET_PERSISTENT_FAILURE", source);
+                if (bracketNeedsAttention || bracketMgrState != BracketMgrState.Healthy)
+                {
+                    double elapsedSec = cycleStartedAt == Core.Globals.MinDate ? 0 : Math.Max(0, (nowUtc - cycleStartedAt).TotalSeconds);
+                    Log("BRACKET_OK", $"source={lastBracketActionSource} elapsed={elapsedSec:0}s barAttempts={barAttemptCountThisCycle}");
+                }
+
+                bracketMgrState = BracketMgrState.Healthy;
+                bracketNeedsAttention = false;
+                bracketAttentionReason = "";
+                tickAttemptUsedThisCycle = false;
+                barAttemptCountThisCycle = 0;
+                cycleStartedAt = Core.Globals.MinDate;
+                tickDisabledUntil = Core.Globals.MinDate;
+                bracketResetPendingResubmit = false;
+                bracketResetRequestedBar = -1;
                 return;
             }
 
-            DateTime nowUtc = DateTime.UtcNow;
-            if (!IsBracketAttemptEligible(nowUtc))
+            if (cycleStartedAt == Core.Globals.MinDate)
+                cycleStartedAt = nowUtc;
+
+            bracketNeedsAttention = true;
+            if (string.IsNullOrWhiteSpace(bracketAttentionReason))
+                bracketAttentionReason = healthReason;
+
+            if (!tickAttemptUsedThisCycle && nowUtc >= tickDisabledUntil && !isBarClose30s)
+            {
+                bracketMgrState = BracketMgrState.TickAttempting;
+                lastBracketActionSource = "TICK_TRY";
+                Log("BRACKET_TICK_ATTEMPT", $"reason={healthReason} state={bracketMgrState}");
+                Bracket_RebuildMinimal("TICK_TRY", healthReason, nowUtc);
+                tickAttemptUsedThisCycle = true;
+                return;
+            }
+
+            if (tickAttemptUsedThisCycle && tickDisabledUntil == Core.Globals.MinDate)
+            {
+                tickDisabledUntil = nowUtc.AddSeconds(TickDisableBars30s * 30);
+                bracketMgrState = BracketMgrState.TickFailedCooldown;
+                Log("BRACKET_TICK_FAILED", $"DISABLE_TICK_UNTIL={tickDisabledUntil:O} reason={healthReason}");
+                return;
+            }
+
+            if (!isBarClose30s || nowUtc < tickDisabledUntil)
                 return;
 
-            attemptsRebuild++;
-            bracketCreateAttempts++;
-            ScheduleBracketAttemptCooldown(nowUtc, TimeSpan.FromSeconds(1));
+            if (barAttemptCountThisCycle >= BarMaxAttemptsPerCycle)
+            {
+                bracketMgrState = BracketMgrState.SafeMode;
+                Log("BRACKET_SAFEMODE_ENTER", $"reason={healthReason} attempts={barAttemptCountThisCycle}");
+                return;
+            }
 
-            Log("BRACKET_HARD_REBUILD_START",
-                $"cycleId={bracketCycleId} attemptRebuild={attemptsRebuild} reason={reason} source={source} mode={GetModeTag()} env={GetEnvTag()}");
+            bracketMgrState = BracketMgrState.BarAttempting;
+            lastBracketActionSource = "BAR_TRY_30S";
+            barAttemptCountThisCycle++;
+            Log("BRACKET_BAR_ATTEMPT", $"count={barAttemptCountThisCycle} reason={healthReason}");
+            Bracket_RebuildMinimal("BAR_TRY_30S", healthReason, nowUtc);
 
-            ordemStopLong = null;
-            ordemStopShort = null;
-            ordemTPLong = null;
-            ordemTPShort = null;
-            stopWorking = false;
-            targetWorking = false;
-            stopSeenSubmitted = false;
-            targetSeenSubmitted = false;
-            stopSeenWorking = false;
-            targetSeenWorking = false;
-            bracketConfirmed = false;
-            bracketCreateArmed = false;
-            bracketBarRetryArmed = true;
-
-            double stopTicks;
-            double targetTicks;
-            double stopDollars;
-            ComputeBracketMetrics(out stopTicks, out targetTicks, out stopDollars);
-
-            DateTime tradingDay = GetTradingDay(GetSafeTime());
-            SubmitBracketOrders(Position, Position.AveragePrice, Math.Abs(Position.Quantity), tradingDay, stopTicks, targetTicks, stopDollars, reason, source, true);
-            Log("BRACKET_HARD_REBUILD_RESULT",
-                $"cycleId={bracketCycleId} attemptRebuild={attemptsRebuild} result=SUBMITTED mode={GetModeTag()} env={GetEnvTag()}");
+            if (barAttemptCountThisCycle >= BarMaxAttemptsPerCycle)
+            {
+                bracketMgrState = BracketMgrState.SafeMode;
+                Log("BRACKET_SAFEMODE_ENTER", $"reason={healthReason} attempts={barAttemptCountThisCycle}");
+            }
+            else
+            {
+                bracketMgrState = BracketMgrState.BarFailedCooldown;
+            }
         }
 
         private void EvaluateSafeModeBracketRecovery()
@@ -2632,9 +2769,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                 return;
 
             lastSafeModeBracketAttemptUtc = nowUtc;
+            BracketSensorFlag("SAFE_MODE_PERIODIC_RETRY", "WATCHDOG_FLAG");
             Log("SAFE_MODE_STATUS",
                 $"cycleId={bracketCycleId} pos={Position.MarketPosition} bracketConfirmed={bracketConfirmed} reason={safeModeReason} retryCooldownSec={(int)BracketSafeModeRetryCooldown.TotalSeconds}");
-            TryHardRebuildBracket("SAFE_MODE_PERIODIC_RETRY", "SafeMode");
         }
 
         private void ApplyRealtimeLiveBreakEven(double lastPrice)
@@ -3611,8 +3748,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 if (ActionCooldownOk("REBUILD_BRACKET", ActionCooldownSeconds))
                 {
-                    EnsureBracketAlive(source, "ReconcileMissingOrDead");
-                    Log("RECONCILE", "RECONCILE_ACTION key=REBUILD_BRACKET result=CHECKED");
+                    BracketSensorFlag("RECONCILE_MISSING_OR_DEAD", "RECONCILE_FLAG");
+                    Log("RECONCILE", "RECONCILE_ACTION key=REBUILD_BRACKET result=FLAGGED");
                 }
 
                 if (invertStopEntryOrder != null && IsOrderActive(invertStopEntryOrder))
@@ -3629,11 +3766,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 if (HasOrphanBracketOrders() && ActionCooldownOk("CANCEL_ORPHANS", ActionCooldownSeconds))
                 {
-                    TryCancelBracketOrder(ordemStopLong, "ReconcileOrphans", source, true);
-                    TryCancelBracketOrder(ordemStopShort, "ReconcileOrphans", source, true);
-                    TryCancelBracketOrder(ordemTPLong, "ReconcileOrphans", source, true);
-                    TryCancelBracketOrder(ordemTPShort, "ReconcileOrphans", source, true);
-                    Log("ORPHAN", "RECONCILE_ACTION key=CANCEL_ORPHANS result=SUBMITTED");
+                    BracketSensorFlag("RECONCILE_ORPHAN_BRACKET", "RECONCILE_FLAG");
+                    Log("ORPHAN", "RECONCILE_ACTION key=CANCEL_ORPHANS result=FLAGGED");
                 }
             }
 
@@ -3700,7 +3834,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 return;
 
             EnsureCycleSynced(Position, Position.AveragePrice);
-            AttemptRealtimeLiveBracketCreate(Position, Position.AveragePrice, "RT_LIVE_TICK");
+            if (bracketNeedsAttention || IsHedgeBracketProtectionRequired())
+                BracketManager_Update(false);
             ApplyRealtimeLiveBreakEven(e.Price);
         }
 
@@ -3905,14 +4040,21 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             BeginBracketModification(reason, context);
             bool cancelDenied = false;
-            if (ordemStopLong != null && !TryCancelBracketOrder(ordemStopLong, reason, "BracketController")) cancelDenied = true;
-            if (ordemStopShort != null && !TryCancelBracketOrder(ordemStopShort, reason, "BracketController")) cancelDenied = true;
-            if (ordemTPLong != null && !TryCancelBracketOrder(ordemTPLong, reason, "BracketController")) cancelDenied = true;
-            if (ordemTPShort != null && !TryCancelBracketOrder(ordemTPShort, reason, "BracketController")) cancelDenied = true;
+            bool strictQtyCancel = !(IsRealtimeLive() && IsHedgeActive()) || (bracketQtyMismatchBarStart != -1 && CurrentBar > bracketQtyMismatchBarStart);
+            bool shouldCancelStopLong = ordemStopLong != null && (!IsOrderWorkingOrAccepted(ordemStopLong) || (strictQtyCancel && Math.Abs(ordemStopLong.Quantity) != posQtyAbs));
+            bool shouldCancelStopShort = ordemStopShort != null && (!IsOrderWorkingOrAccepted(ordemStopShort) || (strictQtyCancel && Math.Abs(ordemStopShort.Quantity) != posQtyAbs));
+            bool shouldCancelTpLong = ordemTPLong != null && (!IsOrderWorkingOrAccepted(ordemTPLong) || (strictQtyCancel && Math.Abs(ordemTPLong.Quantity) != posQtyAbs));
+            bool shouldCancelTpShort = ordemTPShort != null && (!IsOrderWorkingOrAccepted(ordemTPShort) || (strictQtyCancel && Math.Abs(ordemTPShort.Quantity) != posQtyAbs));
+
+            if (shouldCancelStopLong && !TryCancelBracketOrder(ordemStopLong, reason, "BracketController")) cancelDenied = true;
+            if (shouldCancelStopShort && !TryCancelBracketOrder(ordemStopShort, reason, "BracketController")) cancelDenied = true;
+            if (shouldCancelTpLong && !TryCancelBracketOrder(ordemTPLong, reason, "BracketController")) cancelDenied = true;
+            if (shouldCancelTpShort && !TryCancelBracketOrder(ordemTPShort, reason, "BracketController")) cancelDenied = true;
 
             if (cancelDenied)
             {
                 BracketLog("DENY_CREATE", reason, "BracketController", $"context={context}");
+                EndBracketModification("CancelDenied", "SubmitBracketOrders");
                 return;
             }
             SetBracketState(BracketState.Pending, "CreateBracket", "BracketController");
@@ -4105,6 +4247,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         private void EnsureBracketAlive(string context, string reason)
         {
+            if (IsRealtimeLive() && IsHedgeActive())
+                return; // Desativado — controlado exclusivamente pelo BracketManager
+
             if (!EnableBracketWatchdog) return;
             if (State != State.Realtime) return;
             if (IsReplayMode()) return;
@@ -6238,10 +6383,18 @@ namespace NinjaTrader.NinjaScript.Strategies
                     TryCreateReplayHedgeBracket(Position, Position.AveragePrice);
 
                 if (IsRealtimeLive() && IsHedgeActive())
-                    TryBracketBarCheckpoint(closeTime);
+                {
+                    string barHealthReason;
+                    if (!IsBracketHealthyReadOnly(out barHealthReason))
+                        BracketSensorFlag(barHealthReason, "WATCHDOG_FLAG");
+                }
 
-                EnsureBracketAlive("OnBarUpdate", "MissingOrDead");
+                if (!(IsRealtimeLive() && IsHedgeActive()))
+                    EnsureBracketAlive("OnBarUpdate", "MissingOrDead");
             }
+
+            if (IsRealtimeLive() && IsHedgeActive())
+                BracketManager_Update(true);
 
             if (IsRealtimeLive() && IsHedgeActive())
                 EvaluateSafeModeBracketRecovery();
@@ -6438,8 +6591,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 if (IsRealtimeLive() && IsHedgeActive())
                 {
-                    bracketCreateArmed = true;
                     bracketConfirmed = false;
+                    BracketSensorFlag("POSITION_OPEN_REBUILD", "RECONCILE_FLAG");
                 }
                 else if (IsReplayMode() && IsHedgeActive())
                 {
@@ -6505,7 +6658,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 pendingWatchdogRebuild = false;
                 SetBracketState(BracketState.Pending, "OrderDead", "OnOrderUpdate");
 
-                EnsureBracketAlive("OnOrderUpdate", "OrderDead");
+                BracketSensorFlag("ORDER_DEAD", "WATCHDOG_FLAG");
                 MarkBracketBroken("ORDER_DEAD", "OnOrderUpdate", $"name={orderName} state={orderState}");
             }
 
@@ -6649,7 +6802,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 SetBracketState(BracketState.Pending, "OrderDead", "OnExecutionUpdate");
 
                 PublishPanelSnapshot("OnExecutionUpdate_dead");
-                EnsureBracketAlive("OnExecutionUpdate", "OrderDead");
+                BracketSensorFlag("ORDER_DEAD", "WATCHDOG_FLAG");
                 MarkBracketBroken("ORDER_DEAD", "OnExecutionUpdate", $"name={orderName} state={order.OrderState}");
             }
 
