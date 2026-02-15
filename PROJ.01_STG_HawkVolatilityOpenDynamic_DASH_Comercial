@@ -5434,26 +5434,32 @@ namespace NinjaTrader.NinjaScript.Strategies
                 autoCloseExitOrderObservedToday = false;
             }
 
+            DateTime effectiveScheduledClose = scheduledCloseLocal;
+            if (IsReplayModeSafe())
+            {
+                effectiveScheduledClose = scheduledCloseLocal.AddMinutes(-1);
+            }
+
             if (EnableDebugLog)
             {
                 string mode = IsHedgeActive() ? "Hedge" : "Default";
                 string sourceTz = GetBarTimeZone()?.Id ?? "Unknown";
-                DebugLog("AutoCloseDiag", $"mode={mode} entryTime={entryTimeLocal:O} scheduledClose={scheduledCloseLocal:O} sourceTZ={sourceTz} bip={BarsInProgress} mainTime={Times[0][0]:O} barTime={barTime:O} ninjaNow={ninjaNow:O} tradingDay={tradingDay:yyyy-MM-dd}");
+                DebugLog("AutoCloseDiag", $"mode={mode} entryTime={entryTimeLocal:O} scheduledClose={scheduledCloseLocal:O} effectiveScheduledClose={effectiveScheduledClose:O} sourceTZ={sourceTz} bip={BarsInProgress} mainTime={Times[0][0]:O} barTime={barTime:O} ninjaNow={ninjaNow:O} tradingDay={tradingDay:yyyy-MM-dd}");
             }
 
-            TimeSpan windowDelta = ninjaNow - scheduledCloseLocal;
+            TimeSpan windowDelta = ninjaNow - effectiveScheduledClose;
             if (Math.Abs(windowDelta.TotalMinutes) <= 2)
             {
                 if (!ShouldThrottleAudit($"AUTOCLOSE_WINDOW_{tradingDay:yyyyMMdd}", LogThrottleSeconds))
                 {
                     var marketPosition = Position?.MarketPosition ?? MarketPosition.Flat;
                     var quantity = Position?.Quantity ?? 0;
-                    Log("AutoCloseWindow", $"barTime={barTime:O} ninjaNow={ninjaNow:O} scheduledClose={scheduledCloseLocal:O} bip={BarsInProgress} state={State} pos={marketPosition} qty={quantity}");
+                    Log("AutoCloseWindow", $"barTime={barTime:O} ninjaNow={ninjaNow:O} scheduledClose={scheduledCloseLocal:O} effectiveScheduledClose={effectiveScheduledClose:O} bip={BarsInProgress} state={State} pos={marketPosition} qty={quantity}");
                 }
             }
 
-            DateTime snapshotStart = scheduledCloseLocal.AddMinutes(-2);
-            DateTime snapshotEnd = scheduledCloseLocal.AddMinutes(AutoCloseMaxWindowMinutes);
+            DateTime snapshotStart = effectiveScheduledClose.AddMinutes(-2);
+            DateTime snapshotEnd = effectiveScheduledClose.AddMinutes(AutoCloseMaxWindowMinutes);
             if (ninjaNow >= snapshotStart && ninjaNow <= snapshotEnd)
             {
                 if (!ShouldThrottleAudit($"AUTOCLOSE_SNAPSHOT_{tradingDay:yyyyMMdd}", LogThrottleSeconds))
@@ -5475,22 +5481,22 @@ namespace NinjaTrader.NinjaScript.Strategies
                     catch { }
 
                     string snapshot =
-                        $"ninjaNow={ninjaNow:O} scheduledClose={scheduledCloseLocal:O} state={State} bip={BarsInProgress} pos={marketPosition} qty={quantity} last={F0(last)} pnl={(hasPnl ? F0(pnl) : "n/a")} " +
+                        $"ninjaNow={ninjaNow:O} scheduledClose={scheduledCloseLocal:O} effectiveScheduledClose={effectiveScheduledClose:O} state={State} bip={BarsInProgress} pos={marketPosition} qty={quantity} last={F0(last)} pnl={(hasPnl ? F0(pnl) : "n/a")} " +
                         $"tpLong={FormatOrderSnapshot(ordemTPLong)} tpShort={FormatOrderSnapshot(ordemTPShort)} stopLong={FormatOrderSnapshot(ordemStopLong)} stopShort={FormatOrderSnapshot(ordemStopShort)} " +
                         $"activeEntrySignal={activeEntrySignal} activeEntrySignalDay={activeEntrySignalDay:yyyy-MM-dd}";
                     Log("AutoCloseSnapshot", snapshot);
                 }
             }
 
-            if (ninjaNow < scheduledCloseLocal)
+            if (ninjaNow < effectiveScheduledClose)
             {
-                LogAutoCloseGate("RETURN_BEFORE_SCHEDULED", barTime, ninjaNow, entryTimeLocal, scheduledCloseLocal, tradingDay, autoCloseTriggeredToday);
+                LogAutoCloseGate("RETURN_BEFORE_SCHEDULED", barTime, ninjaNow, entryTimeLocal, effectiveScheduledClose, tradingDay, autoCloseTriggeredToday, $"scheduledCloseLocal={scheduledCloseLocal:O}");
                 return;
             }
 
             if (lastAutoCloseTradingDay.Date == tradingDay.Date && (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0))
             {
-                LogAutoCloseGate("RETURN_ALREADY_DONE_TRADINGDAY", barTime, ninjaNow, entryTimeLocal, scheduledCloseLocal, tradingDay, autoCloseTriggeredToday);
+                LogAutoCloseGate("RETURN_ALREADY_DONE_TRADINGDAY", barTime, ninjaNow, entryTimeLocal, effectiveScheduledClose, tradingDay, autoCloseTriggeredToday, $"scheduledCloseLocal={scheduledCloseLocal:O}");
                 return;
             }
 
@@ -5505,20 +5511,20 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 lastAutoCloseTradingDay = tradingDay;
                 autoCloseTriggeredToday = true;
-                LogAutoCloseGate("RETURN_FLAT_CANCEL_PLAN", barTime, ninjaNow, entryTimeLocal, scheduledCloseLocal, tradingDay, autoCloseTriggeredToday);
+                LogAutoCloseGate("RETURN_FLAT_CANCEL_PLAN", barTime, ninjaNow, entryTimeLocal, effectiveScheduledClose, tradingDay, autoCloseTriggeredToday, $"scheduledCloseLocal={scheduledCloseLocal:O}");
                 PublishPanelSnapshot("AutoClose_flat");
                 return;
             }
 
-            if (ninjaNow > scheduledCloseLocal.Add(TimeSpan.FromMinutes(AutoCloseMaxWindowMinutes)))
+            if (ninjaNow > effectiveScheduledClose.AddMinutes(AutoCloseMaxWindowMinutes))
             {
-                LogAutoCloseGate("AFTER_CUTOFF_CONTINUE", barTime, ninjaNow, entryTimeLocal, scheduledCloseLocal, tradingDay, autoCloseTriggeredToday, $"cutoffMinutes={AutoCloseMaxWindowMinutes}");
+                LogAutoCloseGate("AFTER_CUTOFF_CONTINUE", barTime, ninjaNow, entryTimeLocal, effectiveScheduledClose, tradingDay, autoCloseTriggeredToday, $"cutoffMinutes={AutoCloseMaxWindowMinutes} scheduledCloseLocal={scheduledCloseLocal:O}");
             }
 
             if (autoCloseExitAttemptCountToday >= AutoCloseMaxAttempts)
             {
                 lastAutoCloseTradingDay = tradingDay;
-                LogAutoCloseGate("EXIT_SKIP_MAX_ATTEMPTS", barTime, ninjaNow, entryTimeLocal, scheduledCloseLocal, tradingDay, autoCloseTriggeredToday, $"maxAttempts={AutoCloseMaxAttempts}");
+                LogAutoCloseGate("EXIT_SKIP_MAX_ATTEMPTS", barTime, ninjaNow, entryTimeLocal, effectiveScheduledClose, tradingDay, autoCloseTriggeredToday, $"maxAttempts={AutoCloseMaxAttempts} scheduledCloseLocal={scheduledCloseLocal:O}");
                 return;
             }
 
@@ -5527,7 +5533,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 var nowUtc = DateTime.UtcNow;
                 if ((nowUtc - lastAutoCloseAttemptUtc).TotalSeconds < AutoCloseResendCooldownSeconds)
                 {
-                    LogAutoCloseGate("EXIT_RESENT_COOLDOWN", barTime, ninjaNow, entryTimeLocal, scheduledCloseLocal, tradingDay, autoCloseTriggeredToday, $"cooldownSeconds={AutoCloseResendCooldownSeconds}");
+                    LogAutoCloseGate("EXIT_RESENT_COOLDOWN", barTime, ninjaNow, entryTimeLocal, effectiveScheduledClose, tradingDay, autoCloseTriggeredToday, $"cooldownSeconds={AutoCloseResendCooldownSeconds} scheduledCloseLocal={scheduledCloseLocal:O}");
                     return;
                 }
             }
@@ -5561,14 +5567,14 @@ namespace NinjaTrader.NinjaScript.Strategies
                     lastAutoCloseAttemptUtc = DateTime.UtcNow;
                     string action = wasSentToday ? "ExitResent" : "ExitSent";
                     Audit("AutoClose", $"action={action} side={Position.MarketPosition} qty={Position.Quantity} avg={F0(Position.AveragePrice)} attempt={autoCloseExitAttemptCountToday} fromSignal={autoCloseExitSignalName}");
-                    LogAutoCloseGate(wasSentToday ? "EXIT_RESENT" : "EXIT_SENT", barTime, ninjaNow, entryTimeLocal, scheduledCloseLocal, tradingDay, autoCloseTriggeredToday,
-                        $"attempt={autoCloseExitAttemptCountToday} fromSignal={autoCloseExitSignalName}");
+                    LogAutoCloseGate(wasSentToday ? "EXIT_RESENT" : "EXIT_SENT", barTime, ninjaNow, entryTimeLocal, effectiveScheduledClose, tradingDay, autoCloseTriggeredToday,
+                        $"attempt={autoCloseExitAttemptCountToday} fromSignal={autoCloseExitSignalName} scheduledCloseLocal={scheduledCloseLocal:O}");
                     PublishPanelSnapshot("AutoClose_exit_sent");
                     PublishPanelSnapshot("AutoClose");
                 }
                 catch (Exception ex)
                 {
-                    LogAutoCloseGate("EXIT_EXCEPTION", barTime, ninjaNow, entryTimeLocal, scheduledCloseLocal, tradingDay, autoCloseTriggeredToday, $"error={ex.Message}");
+                    LogAutoCloseGate("EXIT_EXCEPTION", barTime, ninjaNow, entryTimeLocal, effectiveScheduledClose, tradingDay, autoCloseTriggeredToday, $"error={ex.Message} scheduledCloseLocal={scheduledCloseLocal:O}");
                     Log("AutoClose", $"Exception while attempting auto-close: {ex.Message}");
                 }
 
