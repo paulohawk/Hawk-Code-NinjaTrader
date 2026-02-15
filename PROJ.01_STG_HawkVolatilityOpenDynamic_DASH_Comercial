@@ -5084,6 +5084,77 @@ namespace NinjaTrader.NinjaScript.Strategies
             return true;
         }
 
+        private bool IsReplayAutoCloseTimeReached(DateTime closeTime, DateTime tradingDay, out DateTime replayScheduledCloseLocal, out DateTime replayBarTime, out string replayFailReason)
+        {
+            replayScheduledCloseLocal = Core.Globals.MinDate;
+            replayBarTime = Core.Globals.MinDate;
+            replayFailReason = "unknown";
+
+            if (!IsReplayModeSafe())
+            {
+                replayFailReason = "not_replay";
+                return false;
+            }
+
+            if (BarsInProgress != 1)
+            {
+                replayFailReason = $"invalid_bip_{BarsInProgress}";
+                return false;
+            }
+
+            if (Times == null || Times.Length <= 1 || Times[1] == null || Times[1].Count == 0)
+            {
+                replayFailReason = "times_1_not_ready";
+                if (!ShouldThrottleAudit($"REPLAY_AUTOCLOSE_TRIGGER_GUARD_{tradingDay:yyyyMMdd}", LogThrottleSeconds))
+                    Log("ReplayAutoCloseTriggerGuard", $"reason={replayFailReason} tradingDay={tradingDay:yyyy-MM-dd} bip={BarsInProgress} timesLen={(Times == null ? -1 : Times.Length)}");
+                return false;
+            }
+
+            replayBarTime = Times[1][0];
+
+            DateTime replayNow;
+            DateTime replayTradingDay;
+            DateTime replayEntryTimeLocal;
+            string scheduleReason;
+            bool hasReplaySchedule = TryGetReplayAutoCloseSchedule(
+                closeTime,
+                out replayNow,
+                out replayTradingDay,
+                out replayEntryTimeLocal,
+                out replayScheduledCloseLocal,
+                out scheduleReason);
+
+            if (!hasReplaySchedule)
+            {
+                replayFailReason = $"schedule_{scheduleReason}";
+                if (!ShouldThrottleAudit($"REPLAY_AUTOCLOSE_TRIGGER_SCHEDULE_{tradingDay:yyyyMMdd}", LogThrottleSeconds))
+                    Log("ReplayAutoCloseTriggerGuard", $"reason={replayFailReason} tradingDay={tradingDay:yyyy-MM-dd} replayNow={replayNow:O} replayTD={replayTradingDay:yyyy-MM-dd} closeTime={closeTime:O}");
+                return false;
+            }
+
+            if (replayTradingDay.Date != tradingDay.Date)
+            {
+                replayFailReason = $"tradingday_mismatch_replay={replayTradingDay:yyyy-MM-dd}";
+                if (!ShouldThrottleAudit($"REPLAY_AUTOCLOSE_TRIGGER_TD_MISMATCH_{tradingDay:yyyyMMdd}", LogThrottleSeconds))
+                    Log("ReplayAutoCloseTriggerGuard", $"reason={replayFailReason} tradingDay={tradingDay:yyyy-MM-dd} closeTime={closeTime:O}");
+                return false;
+            }
+
+            if (autoCloseEntryTradingDay != Core.Globals.MinDate && autoCloseEntryTradingDay.Date != tradingDay.Date)
+            {
+                replayFailReason = "entry_tradingday_mismatch";
+                return false;
+            }
+
+            replayFailReason = "ok";
+            bool reached = replayBarTime >= replayScheduledCloseLocal;
+
+            if (!ShouldThrottleAudit($"REPLAY_AUTOCLOSE_TRIGGER_{tradingDay:yyyyMMdd}", LogThrottleSeconds))
+                Log("ReplayAutoCloseTrigger", $"barTime={replayBarTime:O} scheduled={replayScheduledCloseLocal:O} tradingDay={tradingDay:yyyy-MM-dd} reached={reached} replayNow={replayNow:O} entryReplay={replayEntryTimeLocal:O}");
+
+            return reached;
+        }
+
         private string GetDefaultAutoCloseDisplayTimeBR()
         {
             DateTime now = GetSafeTime();
@@ -5434,33 +5505,38 @@ namespace NinjaTrader.NinjaScript.Strategies
                 autoCloseExitOrderObservedToday = false;
             }
 
+            bool isReplayMode = IsReplayModeSafe();
+            DateTime replayScheduledCloseLocal = Core.Globals.MinDate;
+            DateTime replayBarTime = Core.Globals.MinDate;
+            string replayTriggerFailReason = "not_replay";
+            bool replayTrigger = IsReplayAutoCloseTimeReached(barTime, tradingDay, out replayScheduledCloseLocal, out replayBarTime, out replayTriggerFailReason);
+
             DateTime effectiveScheduledClose = scheduledCloseLocal;
-            if (IsReplayModeSafe())
-            {
-                effectiveScheduledClose = scheduledCloseLocal.AddMinutes(-1);
-            }
+            if (isReplayMode && replayScheduledCloseLocal != Core.Globals.MinDate)
+                effectiveScheduledClose = replayScheduledCloseLocal;
 
             if (EnableDebugLog)
             {
                 string mode = IsHedgeActive() ? "Hedge" : "Default";
                 string sourceTz = GetBarTimeZone()?.Id ?? "Unknown";
-                DebugLog("AutoCloseDiag", $"mode={mode} entryTime={entryTimeLocal:O} scheduledClose={scheduledCloseLocal:O} effectiveScheduledClose={effectiveScheduledClose:O} sourceTZ={sourceTz} bip={BarsInProgress} mainTime={Times[0][0]:O} barTime={barTime:O} ninjaNow={ninjaNow:O} tradingDay={tradingDay:yyyy-MM-dd}");
+                DebugLog("AutoCloseDiag", $"mode={mode} entryTime={entryTimeLocal:O} scheduledClose={scheduledCloseLocal:O} replayScheduledClose={replayScheduledCloseLocal:O} effectiveScheduledClose={effectiveScheduledClose:O} sourceTZ={sourceTz} bip={BarsInProgress} mainTime={Times[0][0]:O} barTime={barTime:O} ninjaNow={ninjaNow:O} tradingDay={tradingDay:yyyy-MM-dd} replayTrigger={replayTrigger} replayBarTime={replayBarTime:O} replayTriggerFailReason={replayTriggerFailReason}");
             }
 
-            TimeSpan windowDelta = ninjaNow - effectiveScheduledClose;
+            DateTime windowClock = (isReplayMode && replayBarTime != Core.Globals.MinDate) ? replayBarTime : ninjaNow;
+            TimeSpan windowDelta = windowClock - effectiveScheduledClose;
             if (Math.Abs(windowDelta.TotalMinutes) <= 2)
             {
                 if (!ShouldThrottleAudit($"AUTOCLOSE_WINDOW_{tradingDay:yyyyMMdd}", LogThrottleSeconds))
                 {
                     var marketPosition = Position?.MarketPosition ?? MarketPosition.Flat;
                     var quantity = Position?.Quantity ?? 0;
-                    Log("AutoCloseWindow", $"barTime={barTime:O} ninjaNow={ninjaNow:O} scheduledClose={scheduledCloseLocal:O} effectiveScheduledClose={effectiveScheduledClose:O} bip={BarsInProgress} state={State} pos={marketPosition} qty={quantity}");
+                    Log("AutoCloseWindow", $"barTime={barTime:O} ninjaNow={ninjaNow:O} windowClock={windowClock:O} scheduledClose={scheduledCloseLocal:O} replayScheduledClose={replayScheduledCloseLocal:O} effectiveScheduledClose={effectiveScheduledClose:O} replayBarTime={replayBarTime:O} replayTrigger={replayTrigger} bip={BarsInProgress} state={State} pos={marketPosition} qty={quantity}");
                 }
             }
 
             DateTime snapshotStart = effectiveScheduledClose.AddMinutes(-2);
             DateTime snapshotEnd = effectiveScheduledClose.AddMinutes(AutoCloseMaxWindowMinutes);
-            if (ninjaNow >= snapshotStart && ninjaNow <= snapshotEnd)
+            if (windowClock >= snapshotStart && windowClock <= snapshotEnd)
             {
                 if (!ShouldThrottleAudit($"AUTOCLOSE_SNAPSHOT_{tradingDay:yyyyMMdd}", LogThrottleSeconds))
                 {
@@ -5481,17 +5557,38 @@ namespace NinjaTrader.NinjaScript.Strategies
                     catch { }
 
                     string snapshot =
-                        $"ninjaNow={ninjaNow:O} scheduledClose={scheduledCloseLocal:O} effectiveScheduledClose={effectiveScheduledClose:O} state={State} bip={BarsInProgress} pos={marketPosition} qty={quantity} last={F0(last)} pnl={(hasPnl ? F0(pnl) : "n/a")} " +
+                        $"ninjaNow={ninjaNow:O} windowClock={windowClock:O} scheduledClose={scheduledCloseLocal:O} replayScheduledClose={replayScheduledCloseLocal:O} effectiveScheduledClose={effectiveScheduledClose:O} replayBarTime={replayBarTime:O} replayTrigger={replayTrigger} replayTriggerFailReason={replayTriggerFailReason} state={State} bip={BarsInProgress} pos={marketPosition} qty={quantity} last={F0(last)} pnl={(hasPnl ? F0(pnl) : "n/a")} " +
                         $"tpLong={FormatOrderSnapshot(ordemTPLong)} tpShort={FormatOrderSnapshot(ordemTPShort)} stopLong={FormatOrderSnapshot(ordemStopLong)} stopShort={FormatOrderSnapshot(ordemStopShort)} " +
                         $"activeEntrySignal={activeEntrySignal} activeEntrySignalDay={activeEntrySignalDay:yyyy-MM-dd}";
                     Log("AutoCloseSnapshot", snapshot);
                 }
             }
 
-            if (ninjaNow < effectiveScheduledClose)
+            if (!isReplayMode)
             {
-                LogAutoCloseGate("RETURN_BEFORE_SCHEDULED", barTime, ninjaNow, entryTimeLocal, effectiveScheduledClose, tradingDay, autoCloseTriggeredToday, $"scheduledCloseLocal={scheduledCloseLocal:O}");
-                return;
+                if (ninjaNow < scheduledCloseLocal)
+                {
+                    LogAutoCloseGate("RETURN_BEFORE_SCHEDULED", barTime, ninjaNow, entryTimeLocal, scheduledCloseLocal, tradingDay, autoCloseTriggeredToday, $"scheduledCloseLocal={scheduledCloseLocal:O}");
+                    return;
+                }
+            }
+            else
+            {
+                if (!replayTrigger)
+                {
+                    LogAutoCloseGate("RETURN_BEFORE_SCHEDULED_REPLAY", barTime, ninjaNow, entryTimeLocal, effectiveScheduledClose, tradingDay, autoCloseTriggeredToday,
+                        $"scheduledCloseLocal={scheduledCloseLocal:O} replayScheduledClose={replayScheduledCloseLocal:O} replayBarTime={replayBarTime:O} replayTriggerFailReason={replayTriggerFailReason}");
+                    return;
+                }
+            }
+
+            if (isReplayMode)
+            {
+                if (lastAutoCloseTradingDay.Date == tradingDay.Date)
+                {
+                    LogAutoCloseGate("RETURN_ALREADY_DONE_TRADINGDAY_REPLAY", barTime, ninjaNow, entryTimeLocal, effectiveScheduledClose, tradingDay, autoCloseTriggeredToday, $"scheduledCloseLocal={scheduledCloseLocal:O} replayScheduledClose={replayScheduledCloseLocal:O}");
+                    return;
+                }
             }
 
             if (lastAutoCloseTradingDay.Date == tradingDay.Date && (Position == null || Position.MarketPosition == MarketPosition.Flat || Position.Quantity == 0))
@@ -5516,9 +5613,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                 return;
             }
 
-            if (ninjaNow > effectiveScheduledClose.AddMinutes(AutoCloseMaxWindowMinutes))
+            if (windowClock > effectiveScheduledClose.AddMinutes(AutoCloseMaxWindowMinutes))
             {
-                LogAutoCloseGate("AFTER_CUTOFF_CONTINUE", barTime, ninjaNow, entryTimeLocal, effectiveScheduledClose, tradingDay, autoCloseTriggeredToday, $"cutoffMinutes={AutoCloseMaxWindowMinutes} scheduledCloseLocal={scheduledCloseLocal:O}");
+                LogAutoCloseGate("AFTER_CUTOFF_CONTINUE", barTime, ninjaNow, entryTimeLocal, effectiveScheduledClose, tradingDay, autoCloseTriggeredToday, $"cutoffMinutes={AutoCloseMaxWindowMinutes} windowClock={windowClock:O} scheduledCloseLocal={scheduledCloseLocal:O} replayScheduledClose={replayScheduledCloseLocal:O}");
             }
 
             if (autoCloseExitAttemptCountToday >= AutoCloseMaxAttempts)
