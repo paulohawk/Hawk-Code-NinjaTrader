@@ -2007,6 +2007,11 @@ namespace NinjaTrader.NinjaScript.Strategies
         private DateTime replayAutoCloseExitArmedTime = Core.Globals.MinDate;
         private int replayAutoCloseAttempt = 0;
         private DateTime replayAutoCloseLastAttemptTime = Core.Globals.MinDate;
+        private bool replayOppositeCloseSentToday = false;
+        private DateTime replayOppositeCloseTradingDay = Core.Globals.MinDate;
+        private DateTime replayOppositeCloseSentTime = Core.Globals.MinDate;
+        private int replayOppositeCloseQty = 0;
+        private string replayOppositeCloseSide = "";
         private bool replayExitSubmittedOnce = false;
         private bool replayHardCloseSafeMode = false;
         private bool autoCloseHardClosePending = false;
@@ -5563,6 +5568,82 @@ namespace NinjaTrader.NinjaScript.Strategies
                 return;
             }
 
+            // REPLAY PATH (agressivo) — do not touch LIVE.
+            if (IsReplayModeSafe())
+            {
+                if (BarsInProgress != 1)
+                    return;
+
+                if (replayOppositeCloseTradingDay.Date != tradingDay.Date)
+                {
+                    replayOppositeCloseSentToday = false;
+                    replayOppositeCloseTradingDay = tradingDay.Date;
+                    replayOppositeCloseSentTime = Core.Globals.MinDate;
+                    replayOppositeCloseQty = 0;
+                    replayOppositeCloseSide = "";
+                }
+
+                if (replayOppositeCloseSentToday)
+                    return;
+
+                if (replayOppositeCloseSentTime != Core.Globals.MinDate &&
+                    (ninjaNow - replayOppositeCloseSentTime).TotalSeconds < 30)
+                    return;
+
+                if (Position == null || Position.MarketPosition == MarketPosition.Flat)
+                    return;
+
+                int qtyAbs = Math.Abs(Position.Quantity);
+                if (qtyAbs <= 0)
+                    return;
+
+                if (autoCloseHardClosePending)
+                    ClearHardCloseState();
+
+                if (!ShouldThrottleAudit($"AUTOCLOSE_OPP_GATE_{tradingDay:yyyyMMdd}_{BarsInProgress}", LogThrottleSeconds))
+                    Log("AutoCloseOppGate", $"td={tradingDay:yyyy-MM-dd} IsReplay={IsReplayModeSafe()} state={State} bip={BarsInProgress} barTime={barTime:O} ninjaNow={ninjaNow:O} pos={Position?.MarketPosition} qty={Position?.Quantity} pending={autoCloseHardClosePending}");
+
+                Log("AutoCloseSnapshot", $"stage=ReplayOppPreCancel ninjaNow={ninjaNow:O} tpLong={FormatOrderSnapshot(ordemTPLong)} tpShort={FormatOrderSnapshot(ordemTPShort)} stopLong={FormatOrderSnapshot(ordemStopLong)} stopShort={FormatOrderSnapshot(ordemStopShort)}");
+                TryCancelBracketOrder(ordemTPLong, "AutoClose", "AutoClose", true);
+                TryCancelBracketOrder(ordemTPShort, "AutoClose", "AutoClose", true);
+                TryCancelBracketOrder(ordemStopLong, "AutoClose", "AutoClose", true);
+                TryCancelBracketOrder(ordemStopShort, "AutoClose", "AutoClose", true);
+                Log("AutoCloseSnapshot", $"stage=ReplayOppPostCancel ninjaNow={ninjaNow:O} tpLong={FormatOrderSnapshot(ordemTPLong)} tpShort={FormatOrderSnapshot(ordemTPShort)} stopLong={FormatOrderSnapshot(ordemStopLong)} stopShort={FormatOrderSnapshot(ordemStopShort)}");
+
+                MarketPosition side = Position.MarketPosition;
+                string action;
+                if (side == MarketPosition.Long)
+                {
+                    SubmitOrderUnmanaged(1, OrderAction.Sell, OrderType.Market, qtyAbs, 0, 0, null, "AutoClose_OPP_CLOSE");
+                    replayOppositeCloseSide = "SELL";
+                    action = "Sell";
+                }
+                else if (side == MarketPosition.Short)
+                {
+                    SubmitOrderUnmanaged(1, OrderAction.BuyToCover, OrderType.Market, qtyAbs, 0, 0, null, "AutoClose_OPP_CLOSE");
+                    replayOppositeCloseSide = "BUY";
+                    action = "BuyToCover";
+                }
+                else
+                {
+                    return;
+                }
+
+                replayOppositeCloseSentToday = true;
+                replayOppositeCloseTradingDay = tradingDay.Date;
+                replayOppositeCloseSentTime = ninjaNow;
+                replayOppositeCloseQty = qtyAbs;
+                autoCloseExitSentToday = true;
+                autoCloseExitSentTradingDay = tradingDay;
+                autoCloseExitSentTimeFeed = ninjaNow;
+                autoCloseExitAttemptCountToday++;
+
+                Log("AutoCloseOppSubmit", $"td={tradingDay:yyyy-MM-dd} IsReplay={IsReplayModeSafe()} ninjaNow={ninjaNow:O} side={side} qtyAbs={qtyAbs} action={action} signal=AutoClose_OPP_CLOSE bip={BarsInProgress} state={State}");
+                PublishPanelSnapshot("AutoClose_opp_submit");
+                return;
+            }
+
+            // LIVE PATH (preserva fallback antigo)
             if (autoCloseHardClosePending)
                 return;
 
@@ -5742,6 +5823,11 @@ namespace NinjaTrader.NinjaScript.Strategies
             replayAutoCloseExitArmedTime = Core.Globals.MinDate;
             replayAutoCloseAttempt = 0;
             replayAutoCloseLastAttemptTime = Core.Globals.MinDate;
+            replayOppositeCloseSentToday = false;
+            replayOppositeCloseTradingDay = Core.Globals.MinDate;
+            replayOppositeCloseSentTime = Core.Globals.MinDate;
+            replayOppositeCloseQty = 0;
+            replayOppositeCloseSide = "";
             replayExitSubmittedOnce = false;
             replayHardCloseSafeMode = false;
             autoCloseHardClosePending = false;
@@ -6530,7 +6616,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 DateTime brNow = ConvertToBrasilia(Times[0][0]);
                 bool autoCloseIntentForDay = autoCloseExitSentToday && autoCloseExitSentTradingDay.Date == tradingDay.Date;
-                if (autoCloseIntentForDay)
+                bool replayOppositeIntentForDay = replayOppositeCloseSentToday && replayOppositeCloseTradingDay.Date == tradingDay.Date;
+                if (autoCloseIntentForDay || replayOppositeIntentForDay)
                     exitReason = "AutoCloseExitFilled";
 
                 if (exitReason == "Unknown")
@@ -6575,6 +6662,12 @@ namespace NinjaTrader.NinjaScript.Strategies
                     DateTime ninjaNow = Time[0];
                     autoCloseLatency = $"{(ninjaNow - autoCloseExitSentTimeFeed).TotalSeconds:0.##}s";
                 }
+                else if (replayOppositeIntentForDay && replayOppositeCloseSentTime != Core.Globals.MinDate)
+                {
+                    DateTime ninjaNow = GetReplayNowOrFallback(Time[0]);
+                    autoCloseLatency = $"{(ninjaNow - replayOppositeCloseSentTime).TotalSeconds:0.##}s";
+                    Log("AutoCloseOppDone", $"td={tradingDay:yyyy-MM-dd} ninjaNow={ninjaNow:O} sentAt={replayOppositeCloseSentTime:O} latency={autoCloseLatency} side={replayOppositeCloseSide} qty={replayOppositeCloseQty} state={State}");
+                }
                 Audit("PositionClosed",
                     $"side={lastOpenSide} qty={lastOpenQty} avgEntry={F0(lastOpenAvg)} exitReason={exitReason} dayStatus={dayStatus} " +
                     $"autoCloseSent={autoCloseExitSentToday} autoCloseSentFeed={autoCloseExitSentTimeFeed:O} autoCloseAttempts={autoCloseExitAttemptCountToday} autoCloseLatency={autoCloseLatency}");
@@ -6584,7 +6677,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (invertStopTriggered)
                     ClearInvertPlanSnapshot();
 
-                if (autoCloseIntentForDay)
+                if (autoCloseIntentForDay || replayOppositeIntentForDay)
                 {
                     lastAutoCloseTradingDay = tradingDay;
                     autoCloseTriggeredToday = false;
@@ -6601,6 +6694,11 @@ namespace NinjaTrader.NinjaScript.Strategies
                     replayAutoCloseExitArmedTime = Core.Globals.MinDate;
                     replayAutoCloseAttempt = 0;
                     replayAutoCloseLastAttemptTime = Core.Globals.MinDate;
+                    replayOppositeCloseSentToday = false;
+                    replayOppositeCloseTradingDay = Core.Globals.MinDate;
+                    replayOppositeCloseSentTime = Core.Globals.MinDate;
+                    replayOppositeCloseQty = 0;
+                    replayOppositeCloseSide = "";
                     replayExitSubmittedOnce = false;
                     autoCloseHardClosePending = false;
                     autoCloseHardClosePendingSince = Core.Globals.MinDate;
