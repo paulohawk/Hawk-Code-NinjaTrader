@@ -5654,7 +5654,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 {
                     try
                     {
-                        Account?.FlattenEverything();
+                        if (Account != null)
+                            Account.Flatten(new[] { Instrument });
                     }
                     catch (Exception ex)
                     {
