@@ -2117,6 +2117,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         private DateTime lastBracketActionTime = Core.Globals.MinDate;
         private const int BracketMinActionIntervalSeconds = 10;
         private bool tickAttemptUsedThisCycle = false;
+        private long fastPathBracketCycleId = -1;
         private DateTime tickDisabledUntil = Core.Globals.MinDate;
         private const int TickDisableBars30s = 2;
         private int barAttemptCountThisCycle = 0;
@@ -2349,6 +2350,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             bracketAttentionReason = "";
             bracketMgrState = BracketMgrState.Healthy;
             tickAttemptUsedThisCycle = false;
+            fastPathBracketCycleId = -1;
             barAttemptCountThisCycle = 0;
             tickDisabledUntil = Core.Globals.MinDate;
             bracketResetPendingResubmit = false;
@@ -2710,6 +2712,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             if (!tickAttemptUsedThisCycle && nowUtc >= tickDisabledUntil && !isBarClose30s)
             {
+                DateTime healthTradingDay = GetTradingDay(GetSafeTime());
+                bool hasCapturedSignalToday = !string.IsNullOrWhiteSpace(capturedEntrySignalName)
+                    && capturedEntrySignalDay.Date == healthTradingDay.Date;
+                if (IsRealtimeLive() && IsHedgeActive()
+                    && string.Equals(healthReason, "STOP_NULL", StringComparison.OrdinalIgnoreCase)
+                    && !hasCapturedSignalToday)
+                {
+                    Log("BRACKET_TICK_DEFER", $"reason={healthReason} cycleId={bracketCycleId} capturedSignal=false");
+                    return;
+                }
+
                 bracketMgrState = BracketMgrState.TickAttempting;
                 lastBracketActionSource = "TICK_TRY";
                 Log("BRACKET_TICK_ATTEMPT", $"reason={healthReason} state={bracketMgrState}");
@@ -5754,6 +5767,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             activeEntrySignalDay = DateTime.MinValue;
             capturedEntrySignalName = "";
             capturedEntrySignalDay = DateTime.MinValue;
+            fastPathBracketCycleId = -1;
 
             dayStatus = "Waiting";
             dayQtyCache = null;
@@ -6831,6 +6845,42 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                     Audit("InvertStopTriggered",
                         $"dir={plannedDirection} execId={executionId} qty={quantity} price={F0(price)} fillTime={hedgeFillTimeLocal:O}");
+
+                    // FAST-PATH (MIDAS-like) — RT-Live Hedge only
+                    if (IsRealtimeLive() && IsHedgeActive()
+                        && fastPathBracketCycleId != bracketCycleId
+                        && Position != null
+                        && Position.MarketPosition != MarketPosition.Flat)
+                    {
+                        int qtyAbs = Math.Abs(Position.Quantity);
+                        if (qtyAbs > 0)
+                        {
+                            double stopTicks;
+                            double targetTicks;
+                            double stopDollars;
+                            ComputeBracketMetrics(out stopTicks, out targetTicks, out stopDollars);
+
+                            double avgPrice = Position.AveragePrice > 0 ? Position.AveragePrice : price;
+                            DateTime tradingDay = GetTradingDay(time);
+                            string fastPathReason = "FASTPATH_HEDGE_FILL";
+                            string fastPathContext = "OnExecutionUpdate_HedgeFill";
+
+                            SubmitBracketOrders(Position, avgPrice, qtyAbs, tradingDay, stopTicks, targetTicks, stopDollars, fastPathReason, fastPathContext, false);
+
+                            fastPathBracketCycleId = bracketCycleId;
+                            lastBracketActionTime = DateTime.UtcNow;
+                            tickAttemptUsedThisCycle = true;
+
+                            string postSubmitHealthReason;
+                            if (IsBracketHealthy(out postSubmitHealthReason))
+                            {
+                                bracketNeedsAttention = false;
+                                bracketAttentionReason = "";
+                            }
+
+                            Log("BRACKET_FASTPATH", $"source=OnExecutionUpdate_HedgeFill cycleId={bracketCycleId} fe={order.FromEntrySignal} qty={qtyAbs} avg={F0(avgPrice)}");
+                        }
+                    }
                 }
                 else if (order.OrderState == OrderState.Cancelled || order.OrderState == OrderState.Rejected)
                 {
