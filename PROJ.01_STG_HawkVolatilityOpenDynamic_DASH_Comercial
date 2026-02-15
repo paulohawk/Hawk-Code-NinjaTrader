@@ -5196,6 +5196,12 @@ namespace NinjaTrader.NinjaScript.Strategies
                 return false;
             }
 
+            if (autoCloseEntryTradingDay == Core.Globals.MinDate)
+            {
+                if (!ShouldThrottleAudit($"REPLAY_AUTOCLOSE_ENTRYDAY_MISSING_{tradingDay:yyyyMMdd}", LogThrottleSeconds))
+                    Log("ReplayAutoCloseTriggerGuard", $"reason=entryDayMissingFallback tradingDay={tradingDay:yyyy-MM-dd} replayTradingDay={replayTradingDay:yyyy-MM-dd} replayNow={replayNow:O}");
+            }
+
             replayFailReason = "ok";
             bool reached = replayBarTime >= replayScheduledCloseLocal;
 
@@ -6188,6 +6194,71 @@ namespace NinjaTrader.NinjaScript.Strategies
                 Audit("EntrySignalCaptured", $"source={source} fromSignal={capturedEntrySignalName} tradingDay={capturedEntrySignalDay:yyyy-MM-dd} lastEntrySignalName={lastEntrySignalName}");
         }
 
+        private DateTime ResolveEntryTradingDay(DateTime referenceTime, int bipContext, out string daySource, out DateTime replayNow)
+        {
+            replayNow = Core.Globals.MinDate;
+            daySource = "SESSION";
+
+            if (!IsReplayModeSafe())
+            {
+                // Replay-only hard isolation: outside Replay this helper is compatibility no-op
+                // (no logs, no state mutation), preserving legacy non-Replay behavior.
+                return GetTradingDay(referenceTime).Date;
+            }
+
+            replayNow = GetReplayNowStrict(referenceTime, bipContext);
+            if (replayNow == Core.Globals.MinDate && bipContext != 0)
+                replayNow = GetReplayNowStrict(referenceTime, 0);
+
+            if (replayNow == Core.Globals.MinDate)
+            {
+                daySource = "REPLAY_UNAVAILABLE";
+                return Core.Globals.MinDate;
+            }
+
+            daySource = "REPLAY";
+            return replayNow.Date;
+        }
+
+        private DateTime GuardReplayEntrySignalDay(DateTime candidateDay, DateTime replayNow, string source)
+        {
+            if (!IsReplayModeSafe() || replayNow == Core.Globals.MinDate || candidateDay == DateTime.MinValue)
+                return candidateDay;
+
+            if ((candidateDay.Date - replayNow.Date).TotalDays > 2)
+            {
+                if (!ShouldThrottleAudit($"REPLAY_ENTRYDAY_GUARD_{replayNow:yyyyMMdd}", LogThrottleSeconds))
+                    Log("ReplayEntrySignalDayGuard", $"source={source} activeEntrySignalDay={candidateDay:yyyy-MM-dd} replayNow={replayNow:O} action=correct_to_replayNow");
+                return replayNow.Date;
+            }
+
+            return candidateDay.Date;
+        }
+
+        private DateTime SetEntryTradingDay(DateTime referenceTime, int bipContext, string source, bool setAutoClose, bool setActiveSignal)
+        {
+            string daySource;
+            DateTime replayNow;
+            DateTime entryDay = ResolveEntryTradingDay(referenceTime, bipContext, out daySource, out replayNow);
+
+            if (!IsReplayModeSafe())
+                return GetTradingDay(referenceTime).Date;
+
+            if (!ShouldThrottleAudit($"ENTRY_TRADINGDAY_SET_{source}_{(entryDay == Core.Globals.MinDate ? "MISSING" : entryDay.ToString("yyyyMMdd"))}", LogThrottleSeconds))
+                Log("EntryTradingDaySet", $"source={daySource} context={source} barTime={referenceTime:O} replayNow={replayNow:O} entryDay={(entryDay == Core.Globals.MinDate ? "min" : entryDay.ToString("yyyy-MM-dd"))}");
+
+            if (entryDay == Core.Globals.MinDate)
+                return entryDay;
+
+            if (setAutoClose)
+                autoCloseEntryTradingDay = entryDay.Date;
+
+            if (setActiveSignal)
+                activeEntrySignalDay = GuardReplayEntrySignalDay(entryDay.Date, replayNow, source);
+
+            return entryDay.Date;
+        }
+
         private int CountAutoCloseExitOrders(OrderAction expectedAction)
         {
             int total = 0;
@@ -7040,7 +7111,16 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (isNewPosition || autoCloseEntryTimeLocal == Core.Globals.MinDate)
                 {
                     autoCloseEntryTimeLocal = Times[0][0];
-                    autoCloseEntryTradingDay = tradingDay.Date;
+                    if (IsReplayModeSafe())
+                    {
+                        DateTime entryDayResolved = SetEntryTradingDay(autoCloseEntryTimeLocal, 0, "OnPositionUpdate_OpenFallback", true, false);
+                        if (entryDayResolved != Core.Globals.MinDate)
+                            tradingDay = entryDayResolved;
+                    }
+                    else
+                    {
+                        autoCloseEntryTradingDay = tradingDay.Date;
+                    }
                 }
             }
 
@@ -7050,7 +7130,16 @@ namespace NinjaTrader.NinjaScript.Strategies
                     activeEntrySignal = "InvertStopEntry";
                 else
                     activeEntrySignal = (position.MarketPosition == MarketPosition.Long) ? "AutoLong" : "AutoShort";
-                activeEntrySignalDay = tradingDay.Date;
+                if (IsReplayModeSafe())
+                {
+                    DateTime activeSignalEntryDay = SetEntryTradingDay(Times[0][0], 0, "OnPositionUpdate_OpenFallback", false, true);
+                    if (activeSignalEntryDay == Core.Globals.MinDate)
+                        activeEntrySignalDay = tradingDay.Date;
+                }
+                else
+                {
+                    activeEntrySignalDay = tradingDay.Date;
+                }
                 CaptureEntrySignal(activeEntrySignal, activeEntrySignalDay, "OnPositionUpdate_OpenFallback");
             }
 
@@ -7240,7 +7329,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             if (isExecutionFilled && isEntryAction && !isExitNamedOrder)
             {
-                DateTime executionTradingDay = GetTradingDay(time);
+                DateTime executionTradingDay;
+                if (IsReplayModeSafe())
+                {
+                    executionTradingDay = SetEntryTradingDay(time, BarsInProgress, "OnExecutionUpdate_RealEntryFill", true, false);
+                    if (executionTradingDay == Core.Globals.MinDate)
+                        executionTradingDay = GetTradingDay(time);
+                }
+                else
+                {
+                    executionTradingDay = GetTradingDay(time);
+                }
                 string resolvedEntrySignal = string.IsNullOrWhiteSpace(order.FromEntrySignal) ? orderName : order.FromEntrySignal;
                 if (!string.IsNullOrWhiteSpace(resolvedEntrySignal))
                 {
@@ -7255,7 +7354,16 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (order.OrderState == OrderState.Filled || order.OrderState == OrderState.PartFilled)
                 {
                     activeEntrySignal = "InvertStopEntry";
-                    activeEntrySignalDay = GetTradingDay(time);
+                    if (IsReplayModeSafe())
+                    {
+                        DateTime invertSignalDay = SetEntryTradingDay(time, BarsInProgress, "OnExecutionUpdate_InvertStopEntry", false, true);
+                        if (invertSignalDay == Core.Globals.MinDate)
+                            activeEntrySignalDay = GetTradingDay(time);
+                    }
+                    else
+                    {
+                        activeEntrySignalDay = GetTradingDay(time);
+                    }
                     CaptureEntrySignal(string.IsNullOrWhiteSpace(order.FromEntrySignal) ? "InvertStopEntry" : order.FromEntrySignal, activeEntrySignalDay, "OnExecutionUpdate_InvertStopEntry");
                     invertStopTriggered = true;
                     invertPlanArmed = false;
@@ -7329,7 +7437,16 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (order.OrderState == OrderState.Filled || order.OrderState == OrderState.PartFilled)
                 {
                     activeEntrySignal = orderName;
-                    activeEntrySignalDay = GetTradingDay(time);
+                    if (IsReplayModeSafe())
+                    {
+                        DateTime autoEntrySignalDay = SetEntryTradingDay(time, BarsInProgress, "OnExecutionUpdate_AutoEntry", false, true);
+                        if (autoEntrySignalDay == Core.Globals.MinDate)
+                            activeEntrySignalDay = GetTradingDay(time);
+                    }
+                    else
+                    {
+                        activeEntrySignalDay = GetTradingDay(time);
+                    }
                     CaptureEntrySignal(string.IsNullOrWhiteSpace(order.FromEntrySignal) ? orderName : order.FromEntrySignal, activeEntrySignalDay, "OnExecutionUpdate_AutoEntry");
                 }
             }
