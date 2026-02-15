@@ -4418,6 +4418,37 @@ namespace NinjaTrader.NinjaScript.Strategies
             return fallback;
         }
 
+        private DateTime GetReplayNowStrict(DateTime barTime, int bipContext)
+        {
+            if (!IsReplayModeSafe())
+                return GetReplayNowOrFallback(barTime);
+
+            if (barTime != Core.Globals.MinDate)
+                return barTime;
+
+            try
+            {
+                if (Times == null || Times.Length == 0)
+                    return Core.Globals.MinDate;
+
+                int bip = bipContext;
+                if (bip < 0 || bip >= Times.Length)
+                    bip = 0;
+
+                if (Times[bip] != null && Times[bip].Count > 0)
+                {
+                    DateTime t = Times[bip][0];
+                    if (t != Core.Globals.MinDate)
+                        return t;
+                }
+            }
+            catch
+            {
+            }
+
+            return Core.Globals.MinDate;
+        }
+
         private DateTime GetReplayTradingDayOrFallback(DateTime fallbackReferenceTime)
         {
             // Conta LIVE → mantém comportamento original
@@ -4425,7 +4456,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                 return GetTradingDay(fallbackReferenceTime);
 
             // Replay → usa exclusivamente a data do candle principal
-            DateTime replayNow = GetReplayNowOrFallback(fallbackReferenceTime);
+            DateTime replayNow = GetReplayNowStrict(fallbackReferenceTime, 0);
+            if (replayNow == Core.Globals.MinDate)
+                return Core.Globals.MinDate;
             return replayNow.Date;
         }
 
@@ -5045,7 +5078,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             return true;
         }
 
-        private bool TryGetReplayAutoCloseSchedule(DateTime closeTime, out DateTime replayNow, out DateTime replayTradingDay, out DateTime entryTimeLocalReplay, out DateTime replayScheduledCloseLocal, out string failReason)
+        private bool TryGetReplayAutoCloseSchedule(DateTime closeTime, int bipContext, out DateTime replayNow, out DateTime replayTradingDay, out DateTime entryTimeLocalReplay, out DateTime replayScheduledCloseLocal, out string failReason)
         {
             replayNow = Core.Globals.MinDate;
             replayTradingDay = Core.Globals.MinDate;
@@ -5059,10 +5092,10 @@ namespace NinjaTrader.NinjaScript.Strategies
                 return false;
             }
 
-            replayNow = GetReplayNowOrFallback(closeTime);
+            replayNow = GetReplayNowStrict(closeTime, bipContext);
             if (replayNow == Core.Globals.MinDate)
             {
-                failReason = "replayNow_minDate";
+                failReason = "times_not_ready";
                 return false;
             }
 
@@ -5119,7 +5152,14 @@ namespace NinjaTrader.NinjaScript.Strategies
                 return false;
             }
 
-            replayBarTime = Times[1][0];
+            replayBarTime = GetReplayNowStrict(closeTime, 1);
+            if (replayBarTime == Core.Globals.MinDate)
+            {
+                replayFailReason = "times_not_ready";
+                if (!ShouldThrottleAudit($"REPLAY_AUTOCLOSE_TRIGGER_GUARD_{tradingDay:yyyyMMdd}", LogThrottleSeconds))
+                    Log("ReplayAutoCloseTriggerGuard", $"reason={replayFailReason} tradingDay={tradingDay:yyyy-MM-dd} bip={BarsInProgress} timesLen={(Times == null ? -1 : Times.Length)}");
+                return false;
+            }
 
             DateTime replayNow;
             DateTime replayTradingDay;
@@ -5127,6 +5167,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             string scheduleReason;
             bool hasReplaySchedule = TryGetReplayAutoCloseSchedule(
                 closeTime,
+                1,
                 out replayNow,
                 out replayTradingDay,
                 out replayEntryTimeLocal,
@@ -5383,7 +5424,13 @@ namespace NinjaTrader.NinjaScript.Strategies
                     return;
             }
 
-            DateTime ninjaNow = GetReplayNowOrFallback(barTime);
+            DateTime ninjaNow = IsReplayModeSafe() ? GetReplayNowStrict(barTime, BarsInProgress) : GetReplayNowOrFallback(barTime);
+            if (IsReplayModeSafe() && ninjaNow == Core.Globals.MinDate)
+            {
+                if (!ShouldThrottleAudit($"AUTOCLOSE_REPLAY_TIMES_NOT_READY_{barTime:yyyyMMdd}", LogThrottleSeconds))
+                    Log("AutoCloseReplaySchedule", $"reason=times_not_ready skip_gate=true barTime={barTime:O} bip={BarsInProgress} timesLen={(Times == null ? -1 : Times.Length)}");
+                return;
+            }
             bool wasSentToday = autoCloseExitSentToday;
             string pendingExtra = autoClosePendingExtra;
 
@@ -5431,7 +5478,13 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             if (!AutoCloseEnabled) return;
 
-            DateTime ninjaNow = GetReplayNowOrFallback(barTime);
+            DateTime ninjaNow = IsReplayModeSafe() ? GetReplayNowStrict(barTime, BarsInProgress) : GetReplayNowOrFallback(barTime);
+            if (IsReplayModeSafe() && ninjaNow == Core.Globals.MinDate)
+            {
+                if (!ShouldThrottleAudit($"AUTOCLOSE_REPLAY_TIMES_NOT_READY_{barTime:yyyyMMdd}", LogThrottleSeconds))
+                    Log("AutoCloseReplaySchedule", $"reason=times_not_ready skip_gate=true barTime={barTime:O} bip={BarsInProgress} timesLen={(Times == null ? -1 : Times.Length)}");
+                return;
+            }
             DateTime tradingDay = Core.Globals.MinDate;
             DateTime entryTimeLocal = Core.Globals.MinDate;
             DateTime scheduledCloseLocal = Core.Globals.MinDate;
@@ -5548,6 +5601,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                 hasSchedule = true;
             }
 
+            if (IsReplayModeSafe())
+                tradingDay = ninjaNow.Date;
+
             if (!hasSchedule)
             {
                 if (EnableDebugLog)
@@ -5593,7 +5649,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 {
                     var marketPosition = Position?.MarketPosition ?? MarketPosition.Flat;
                     var quantity = Position?.Quantity ?? 0;
-                    Log("AutoCloseWindow", $"barTime={barTime:O} ninjaNow={ninjaNow:O} windowClock={windowClock:O} scheduledClose={scheduledCloseLocal:O} replayScheduledClose={replayScheduledCloseLocal:O} effectiveScheduledClose={effectiveScheduledClose:O} replayBarTime={replayBarTime:O} replayTrigger={replayTrigger} bip={BarsInProgress} state={State} pos={marketPosition} qty={quantity}");
+                    string timeSourceUsed = isReplayMode ? "REPLAY_STRICT" : "BAR";
+                    Log("AutoCloseWindow", $"barTime={barTime:O} ninjaNow={ninjaNow:O} replayNowStrict={ninjaNow:O} windowClock={windowClock:O} scheduledCloseLocal={scheduledCloseLocal:O} replayScheduledClose={replayScheduledCloseLocal:O} effectiveScheduledClose={effectiveScheduledClose:O} replayBarTime={replayBarTime:O} replayTrigger={replayTrigger} tradingDay={tradingDay:yyyy-MM-dd} timeSourceUsed={timeSourceUsed} bip={BarsInProgress} state={State} pos={marketPosition} qty={quantity}");
                 }
             }
 
@@ -5620,7 +5677,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     catch { }
 
                     string snapshot =
-                        $"ninjaNow={ninjaNow:O} windowClock={windowClock:O} scheduledClose={scheduledCloseLocal:O} replayScheduledClose={replayScheduledCloseLocal:O} effectiveScheduledClose={effectiveScheduledClose:O} replayBarTime={replayBarTime:O} replayTrigger={replayTrigger} replayTriggerFailReason={replayTriggerFailReason} state={State} bip={BarsInProgress} pos={marketPosition} qty={quantity} last={F0(last)} pnl={(hasPnl ? F0(pnl) : "n/a")} " +
+                        $"ninjaNow={ninjaNow:O} replayNowStrict={ninjaNow:O} windowClock={windowClock:O} scheduledCloseLocal={scheduledCloseLocal:O} replayScheduledClose={replayScheduledCloseLocal:O} effectiveScheduledClose={effectiveScheduledClose:O} replayBarTime={replayBarTime:O} replayTrigger={replayTrigger} replayTriggerFailReason={replayTriggerFailReason} tradingDay={tradingDay:yyyy-MM-dd} timeSourceUsed={(isReplayMode ? "REPLAY_STRICT" : "BAR")} state={State} bip={BarsInProgress} pos={marketPosition} qty={quantity} last={F0(last)} pnl={(hasPnl ? F0(pnl) : "n/a")} " +
                         $"tpLong={FormatOrderSnapshot(ordemTPLong)} tpShort={FormatOrderSnapshot(ordemTPShort)} stopLong={FormatOrderSnapshot(ordemStopLong)} stopShort={FormatOrderSnapshot(ordemStopShort)} " +
                         $"activeEntrySignal={activeEntrySignal} activeEntrySignalDay={activeEntrySignalDay:yyyy-MM-dd}";
                     Log("AutoCloseSnapshot", snapshot);
@@ -5640,7 +5697,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (!replayTrigger)
                 {
                     LogAutoCloseGate("RETURN_BEFORE_SCHEDULED_REPLAY", barTime, ninjaNow, entryTimeLocal, effectiveScheduledClose, tradingDay, autoCloseTriggeredToday,
-                        $"scheduledCloseLocal={scheduledCloseLocal:O} replayScheduledClose={replayScheduledCloseLocal:O} replayBarTime={replayBarTime:O} replayTriggerFailReason={replayTriggerFailReason}");
+                        $"scheduledCloseLocal={scheduledCloseLocal:O} replayScheduledClose={replayScheduledCloseLocal:O} replayBarTime={replayBarTime:O} replayNowStrict={ninjaNow:O} tradingDay={tradingDay:yyyy-MM-dd} replayTriggerFailReason={replayTriggerFailReason} timeSourceUsed=REPLAY_STRICT");
                     return;
                 }
             }
@@ -5887,7 +5944,13 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (BarsInProgress != 0 || !autoCloseHardClosePending)
                 return;
 
-            DateTime ninjaNow = GetReplayNowOrFallback(barTime);
+            DateTime ninjaNow = IsReplayModeSafe() ? GetReplayNowStrict(barTime, BarsInProgress) : GetReplayNowOrFallback(barTime);
+            if (IsReplayModeSafe() && ninjaNow == Core.Globals.MinDate)
+            {
+                if (!ShouldThrottleAudit($"AUTOCLOSE_REPLAY_TIMES_NOT_READY_{barTime:yyyyMMdd}", LogThrottleSeconds))
+                    Log("AutoCloseReplaySchedule", $"reason=times_not_ready skip_gate=true barTime={barTime:O} bip={BarsInProgress} timesLen={(Times == null ? -1 : Times.Length)}");
+                return;
+            }
 
             if (Position == null ||
                 Position.MarketPosition == MarketPosition.Flat ||
@@ -6423,7 +6486,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                         DateTime replayScheduledClose;
 
                         string replayScheduleFailReason;
-                        bool hasReplaySchedule = TryGetReplayAutoCloseSchedule(closeTime, out replayNow, out replayTradingDay, out entryTimeLocalReplay, out replayScheduledClose, out replayScheduleFailReason);
+                        bool hasReplaySchedule = TryGetReplayAutoCloseSchedule(closeTime, 0, out replayNow, out replayTradingDay, out entryTimeLocalReplay, out replayScheduledClose, out replayScheduleFailReason);
                         if (hasReplaySchedule)
                         {
                             autoCloseTradingDay = replayTradingDay;
@@ -6431,28 +6494,20 @@ namespace NinjaTrader.NinjaScript.Strategies
                             entryTimeLocal = entryTimeLocalReplay;
                         }
 
-                        DateTime replayNowForFallback = replayNow != Core.Globals.MinDate ? replayNow : GetReplayNowOrFallback(closeTime);
-
                         if (!ShouldThrottleAudit($"AUTOCLOSE_REPLAY_SCHEDULE_{autoCloseTradingDay:yyyyMMdd}", 45))
                         {
-                            Log("AutoCloseReplaySchedule", $"hasReplaySchedule={hasReplaySchedule} reason={replayScheduleFailReason} replayNow={replayNowForFallback:O} replayTD={replayTradingDay:yyyy-MM-dd} entryReplay={entryTimeLocalReplay:O} schedReplay={replayScheduledClose:O} closeTime={closeTime:O} fallbackSched={scheduledCloseLocal:O}");
+                            Log("AutoCloseReplaySchedule", $"hasReplaySchedule={hasReplaySchedule} reason={replayScheduleFailReason} replayNow={replayNow:O} replayTD={replayTradingDay:yyyy-MM-dd} entryReplay={entryTimeLocalReplay:O} schedReplay={replayScheduledClose:O} closeTime={closeTime:O} fallbackSched={scheduledCloseLocal:O}");
                         }
 
-                        if (lastInvertPlanCancelDate.Date != autoCloseTradingDay.Date)
+                        if (!hasReplaySchedule)
                         {
-                            if (hasReplaySchedule)
-                            {
-                                if (replayNow >= scheduledCloseLocal)
-                                    CancelInvertPlan("EOD", autoCloseTradingDay);
-                            }
-                            else if (replayNowForFallback != Core.Globals.MinDate && replayNowForFallback >= scheduledCloseLocal)
-                            {
-                                if (!ShouldThrottleAudit($"REPLAY_SCHEDULE_FALLBACK_USED_{autoCloseTradingDay:yyyyMMdd}", 45))
-                                    Log("REPLAY_SCHEDULE_FALLBACK_USED", $"reason={replayScheduleFailReason} replayNow={replayNowForFallback:O} scheduledClose={scheduledCloseLocal:O} closeTime={closeTime:O} tradingDay={autoCloseTradingDay:yyyy-MM-dd}");
-
-                                CancelInvertPlan("EOD", autoCloseTradingDay);
-                            }
+                            if (!ShouldThrottleAudit($"AUTOCLOSE_REPLAY_SCHEDULE_TIMES_NOT_READY_{closeTime:yyyyMMdd}", 45))
+                                Log("AutoCloseReplaySchedule", $"reason=times_not_ready skip_cancel=true closeTime={closeTime:O} tradingDay={autoCloseTradingDay:yyyy-MM-dd} bip={BarsInProgress}");
+                            return;
                         }
+
+                        if (lastInvertPlanCancelDate.Date != autoCloseTradingDay.Date && replayNow >= scheduledCloseLocal)
+                            CancelInvertPlan("EOD", autoCloseTradingDay);
                     }
                     else
                     {
