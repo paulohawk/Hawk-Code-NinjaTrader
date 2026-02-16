@@ -2112,15 +2112,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         private HawkPanelHelper panelHelper;
         private RiskOverlayHelper _riskOverlay;
-        private DateTime overlayPenaltyArmedDate = Core.Globals.MinDate;
-        private bool overlayPenaltyArmedThisEnable = false;
-        private TimeSpan? overlayStartCached = null;
-        private TimeSpan? overlayEndCached = null;
+        private bool overlayPenaltyArmedToday = false;
+        private DateTime overlayPenaltyDate = Core.Globals.MinDate;
+        private bool overlayPenaltyActive = false;
         private DateTime strategyEnableTimeLocal = Core.Globals.MinDate;
-        private string riskWarningTitle = "Status";
-        private string riskWarningText = "- sistema ativo e monitorando condições de mercado.";
-        private Brush riskWarningColor = Brushes.LightGreen;
-        private Brush riskWarningBulletFill = Brushes.LightGreen;
 
         private double? pendingEntryPrice = null;
         private double? pendingStopPrice = null;
@@ -2682,11 +2677,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                         tradingDayAnchorSet = true;
                     }
                     strategyEnableTimeLocal = DateTime.Now;
-                    overlayPenaltyArmedThisEnable = false;
-                    overlayPenaltyArmedDate = Core.Globals.MinDate;
-                    overlayStartCached = null;
-                    overlayEndCached = null;
-                    UpdateRiskWarningState(DateTime.Now);
+                    overlayPenaltyArmedToday = false;
+                    overlayPenaltyDate = Core.Globals.MinDate;
+                    overlayPenaltyActive = false;
                     lastSnapshotUtc = DateTime.MinValue;
                     PublishSnapshotHeartbeat();
                 }
@@ -2737,7 +2730,20 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             if (BarsInProgress != 0) return;
 
-            EvaluateOverlayPenalty();
+            if (State == State.Realtime)
+            {
+                overlayPenaltyActive = EvaluateOverlayPenalty(Core.Globals.Now);
+
+                if (overlayPenaltyActive)
+                    ShowRiskOverlay();
+                else
+                    HideRiskOverlay();
+            }
+            else
+            {
+                overlayPenaltyActive = false;
+            }
+
             HandlePrimarySeries();
             // Watchdog de segurança para RealtimePrecise.
             // Após a implementação do bracket no primeiro consumo,
@@ -3038,10 +3044,24 @@ namespace NinjaTrader.NinjaScript.Strategies
             snap.DayStopDollar = dayStop;
             snap.DayTargetDollar = dayTarget;
             snap.DayBreakevenDollar = dayBE;
-            snap.RiskWarningTitle = riskWarningTitle;
-            snap.RiskWarningText = riskWarningText;
-            snap.RiskWarningColor = riskWarningColor;
-            snap.RiskWarningBulletFill = riskWarningBulletFill;
+            bool showPenalty = overlayPenaltyActive;
+
+            if (showPenalty)
+            {
+                snap.RiskWarningTitle = "Atenção";
+                snap.RiskWarningText =
+                    "- automação ligada fora do horário operacional.\n" +
+                    "- monitore possíveis falhas de stop e alvo.";
+                snap.RiskWarningColor = Brushes.Red;
+                snap.RiskWarningBulletFill = Brushes.Red;
+            }
+            else
+            {
+                snap.RiskWarningTitle = "";
+                snap.RiskWarningText = "";
+                snap.RiskWarningColor = Brushes.LightGreen;
+                snap.RiskWarningBulletFill = Brushes.LightGreen;
+            }
 
             snap.LastUpdatedUtc = DateTime.UtcNow;
             return snap;
@@ -3803,39 +3823,75 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
         }
 
-        private void EvaluateOverlayPenalty()
+        private bool EvaluateOverlayPenalty(DateTime now)
         {
-            if (State != State.Realtime || _riskOverlay == null) return;
-
-            DateTime nowLocal;
-            try { nowLocal = Time[0]; }
-            catch { nowLocal = DateTime.Now; }
-
-            DateTime dateKey = nowLocal.Date;
-            if (overlayPenaltyArmedDate != dateKey)
+            if (overlayPenaltyDate != now.Date)
             {
-                overlayPenaltyArmedDate = dateKey;
-                overlayPenaltyArmedThisEnable = false;
-                overlayStartCached = null;
-                overlayEndCached = null;
+                overlayPenaltyDate = now.Date;
+                overlayPenaltyArmedToday = false;
             }
 
-            GetOverlayTimes(nowLocal, out var overlayStart, out var overlayEnd);
+            if (!IsWithinOperationalWindow(now))
+                return false;
 
-            if (!overlayPenaltyArmedThisEnable &&
-                strategyEnableTimeLocal != Core.Globals.MinDate &&
-                strategyEnableTimeLocal.Date == dateKey &&
-                strategyEnableTimeLocal.TimeOfDay >= overlayStart)
+            if (overlayPenaltyArmedToday)
+                return true;
+
+            if (StrategyWasEnabledLate(now))
             {
-                overlayPenaltyArmedThisEnable = true;
+                overlayPenaltyArmedToday = true;
+                return true;
             }
 
-            UpdateRiskWarningState(nowLocal, overlayStart);
+            return false;
+        }
 
-            if (!overlayPenaltyArmedThisEnable) return;
+        private bool StrategyWasEnabledLate(DateTime now)
+        {
+            if (strategyEnableTimeLocal == Core.Globals.MinDate)
+                return false;
 
-            var nowTime = nowLocal.TimeOfDay;
-            if (nowTime < overlayStart || nowTime > overlayEnd) return;
+            if (strategyEnableTimeLocal.Date != now.Date)
+                return false;
+
+            TimeSpan startTime = IsNovToMar(now)
+                ? new TimeSpan(10, 30, 0)
+                : new TimeSpan(9, 30, 0);
+
+            return strategyEnableTimeLocal.TimeOfDay >= startTime;
+        }
+
+        private bool IsWithinOperationalWindow(DateTime now)
+        {
+            TimeSpan startTime;
+
+            if (IsNovToMar(now))
+                startTime = new TimeSpan(10, 30, 0);
+            else
+                startTime = new TimeSpan(9, 30, 0);
+
+            TimeSpan endTime = horarioFimSessaoDT != default(DateTime)
+                ? horarioFimSessaoDT.TimeOfDay
+                : new TimeSpan(17, 0, 0);
+
+            if (endTime == TimeSpan.Zero && !string.IsNullOrWhiteSpace(HorarioFimSessao))
+            {
+                if (TimeSpan.TryParseExact(HorarioFimSessao, "hh\:mm", CultureInfo.InvariantCulture, out var parsedEnd))
+                    endTime = parsedEnd;
+            }
+
+            return now.TimeOfDay >= startTime && now.TimeOfDay <= endTime;
+        }
+
+        private bool IsNovToMar(DateTime now)
+        {
+            return now.Month >= 11 || now.Month <= 3;
+        }
+
+        private void ShowRiskOverlay()
+        {
+            if (State != State.Realtime || _riskOverlay == null)
+                return;
 
             string body =
                 "Você ativou esta automação fora do horário operacional recomendado.\n\n" +
@@ -3845,54 +3901,12 @@ namespace NinjaTrader.NinjaScript.Strategies
             _riskOverlay.TryShow("AVISO AO TRADER", body);
         }
 
-        private void UpdateRiskWarningState(DateTime nowLocal, TimeSpan? overlayStartOverride = null)
+        private void HideRiskOverlay()
         {
-            GetOverlayTimes(nowLocal, out var overlayStart, out _);
-            if (overlayStartOverride.HasValue)
-                overlayStart = overlayStartOverride.Value;
-
-            bool isAttention =
-                strategyEnableTimeLocal != Core.Globals.MinDate &&
-                strategyEnableTimeLocal.Date == nowLocal.Date &&
-                strategyEnableTimeLocal.TimeOfDay >= overlayStart;
-
-            SetRiskWarningText(isAttention);
-        }
-
-        private void SetRiskWarningText(bool isAttention)
-        {
-            if (isAttention)
-            {
-                riskWarningTitle = "Atenção";
-                riskWarningText = "- automação ligada fora do horário operacional.\n- monitore possíveis falhas de stop e alvo.";
-                riskWarningColor = Brushes.Red;
-                riskWarningBulletFill = Brushes.Red;
-            }
-            else
-            {
-                riskWarningTitle = "Status";
-                riskWarningText = "- sistema ativo e monitorando condições de mercado.";
-                riskWarningColor = Brushes.LightGreen;
-                riskWarningBulletFill = Brushes.LightGreen;
-            }
-        }
-
-        private void GetOverlayTimes(DateTime nowLocal, out TimeSpan overlayStart, out TimeSpan overlayEnd)
-        {
-            if (!overlayStartCached.HasValue || !overlayEndCached.HasValue || overlayPenaltyArmedDate != nowLocal.Date)
-            {
-                TimeSpan startOps = IsUsaDst(nowLocal)
-                    ? horarioInicioDstUsaDT.TimeOfDay
-                    : horarioInicioNormalDT.TimeOfDay;
-                overlayStart = startOps - TimeSpan.FromMinutes(30);
-                overlayEnd = horarioFimSessaoDT.TimeOfDay;
-                overlayStartCached = overlayStart;
-                overlayEndCached = overlayEnd;
+            if (_riskOverlay == null)
                 return;
-            }
 
-            overlayStart = overlayStartCached.Value;
-            overlayEnd = overlayEndCached.Value;
+            _riskOverlay.TryHide();
         }
         #endregion
 
