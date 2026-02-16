@@ -4841,10 +4841,24 @@ namespace NinjaTrader.NinjaScript.Strategies
             beStopPrice = Instrument.MasterInstrument.RoundToTickSize(beStopPrice);
             lastCalculatedBeStopPrice = beStopPrice;
 
-            bool hasHighLow = !double.IsNaN(high) && !double.IsNaN(low);
-            bool touched = Position.MarketPosition == MarketPosition.Long
-                ? (hasHighLow ? high >= triggerPrice : priceUsed >= triggerPrice)
-                : (hasHighLow ? low <= triggerPrice : priceUsed <= triggerPrice);
+            bool touched;
+
+            if (State == State.Historical)
+            {
+                double closePrice = priceUsed;
+
+                touched = Position.MarketPosition == MarketPosition.Long
+                    ? closePrice >= triggerPrice
+                    : closePrice <= triggerPrice;
+            }
+            else
+            {
+                bool hasHighLow = !double.IsNaN(high) && !double.IsNaN(low);
+
+                touched = Position.MarketPosition == MarketPosition.Long
+                    ? (hasHighLow ? high >= triggerPrice : priceUsed >= triggerPrice)
+                    : (hasHighLow ? low <= triggerPrice : priceUsed <= triggerPrice);
+            }
 
             bool shouldLogEval = touched || (DateTime.UtcNow - lastBEEvalLogUtc).TotalSeconds >= 5;
             if (shouldLogEval)
