@@ -1772,6 +1772,27 @@ namespace NinjaTrader.NinjaScript.Strategies
             });
         }
 
+        public void Remove()
+        {
+            if (_strategy?.ChartControl == null) return;
+            var chartControl = _strategy.ChartControl;
+            if (chartControl.Dispatcher == null) return;
+
+            chartControl.Dispatcher.InvokeAsync(() =>
+            {
+                try
+                {
+                    var parent = FindParentPanel(chartControl);
+                    if (parent != null && overlayGrid != null && parent.Children.Contains(overlayGrid))
+                        parent.Children.Remove(overlayGrid);
+                }
+                catch { }
+
+                try { hideTimer?.Stop(); } catch { }
+                isVisible = false;
+            });
+        }
+
         private void EnsureOverlay()
         {
             if (overlayGrid != null) return;
@@ -3870,15 +3891,20 @@ namespace NinjaTrader.NinjaScript.Strategies
             else
                 startTime = new TimeSpan(9, 30, 0);
 
-            TimeSpan endTime = horarioFimSessaoDT != default(DateTime)
-                ? horarioFimSessaoDT.TimeOfDay
-                : new TimeSpan(17, 0, 0);
+            TimeSpan endTime = TimeSpan.Zero;
 
-            if (endTime == TimeSpan.Zero && !string.IsNullOrWhiteSpace(HorarioFimSessao))
+            if (horarioFimSessaoDT != default(DateTime))
             {
-                if (TimeSpan.TryParseExact(HorarioFimSessao, "hh\:mm", CultureInfo.InvariantCulture, out var parsedEnd))
+                endTime = horarioFimSessaoDT.TimeOfDay;
+            }
+            else if (!string.IsNullOrWhiteSpace(ClosePositionsAtHHmm))
+            {
+                if (TimeSpan.TryParseExact(ClosePositionsAtHHmm, @"hh\:mm", CultureInfo.InvariantCulture, out var parsedEnd))
                     endTime = parsedEnd;
             }
+
+            if (endTime == TimeSpan.Zero)
+                endTime = new TimeSpan(16, 30, 0);
 
             return now.TimeOfDay >= startTime && now.TimeOfDay <= endTime;
         }
@@ -3906,7 +3932,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (_riskOverlay == null)
                 return;
 
-            _riskOverlay.TryHide();
+            _riskOverlay.Remove();
         }
         #endregion
 
