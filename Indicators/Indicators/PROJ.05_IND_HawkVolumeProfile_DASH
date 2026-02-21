@@ -167,7 +167,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		private DateTime lastTradeLocationEvaluationSessionDate = DateTime.MinValue;
 		private bool currentSessionSnapshotReady = false;
 		private bool previousSessionSnapshotReady = false;
-		private DateTime lastSnapshotZeroLogSessionDate = DateTime.MinValue;
+		private DateTime lastFreezeLogSessionDate = DateTime.MinValue;
 
 		#endregion
 
@@ -330,8 +330,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		{
 			if(BarsInProgress == 0 && EnableTradeLocations)
 			{
-				UpdateCurrentSessionSnapshotLevels();
-
 				if(Bars.IsFirstBarOfSession)
 				{
 					DateTime currentSessionDate = Times[0][0].Date;
@@ -445,15 +443,10 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		{
 			if (currentSessionSnapshotReady)
 			{
-				DateTime previousSessionDate = CurrentBar > 0 ? Times[0][1].Date : Times[0][0].Date;
-
 				previousSessionPoc = currentSessionPoc;
 				previousSessionVah = currentSessionVah;
 				previousSessionVal = currentSessionVal;
 				previousSessionSnapshotReady = true;
-
-				if (EnableTradeLocations)
-					LogEvent(previousSessionDate, $"Session freeze captured | POC={previousSessionPoc:0.#####} VAH={previousSessionVah:0.#####} VAL={previousSessionVal:0.#####}");
 			}
 			else
 			{
@@ -469,31 +462,37 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			currentSessionSnapshotReady = false;
 		}
 
-		private void UpdateCurrentSessionSnapshotLevels()
+		private void TryFreezeSessionLevelsFromRender(int regionIndex, int regionCount)
 		{
+			if (!EnableTradeLocations || !Bars.IsLastBarOfSession || regionIndex != regionCount - 1)
+				return;
+
 			DateTime currentSessionDate = Times[0][0].Date;
 			bool hasSnapshotError = double.IsNaN(poc) || poc <= 0
 				|| double.IsNaN(valueAreaHigh) || valueAreaHigh <= 0
 				|| double.IsNaN(valueAreaLow) || valueAreaLow <= 0;
 
-			if (EnableTradeLocations && hasSnapshotError && lastSnapshotZeroLogSessionDate != currentSessionDate)
+			if (hasSnapshotError)
 			{
-				lastSnapshotZeroLogSessionDate = currentSessionDate;
-				LogEvent(currentSessionDate, $"Snapshot error: invalid value captured | POC={poc:0.#####} VAH={valueAreaHigh:0.#####} VAL={valueAreaLow:0.#####}");
+				if (lastFreezeLogSessionDate != currentSessionDate)
+				{
+					lastFreezeLogSessionDate = currentSessionDate;
+					LogEvent(currentSessionDate, "Snapshot error: invalid value captured");
+				}
+
+				return;
 			}
 
-			if (!double.IsNaN(poc) && poc > 0)
-				currentSessionPoc = poc;
+			currentSessionPoc = poc;
+			currentSessionVah = valueAreaHigh;
+			currentSessionVal = valueAreaLow;
+			currentSessionSnapshotReady = true;
 
-			if (!double.IsNaN(valueAreaHigh) && valueAreaHigh > 0)
-				currentSessionVah = valueAreaHigh;
-
-			if (!double.IsNaN(valueAreaLow) && valueAreaLow > 0)
-				currentSessionVal = valueAreaLow;
-
-			currentSessionSnapshotReady = !double.IsNaN(currentSessionPoc)
-				&& !double.IsNaN(currentSessionVah)
-				&& !double.IsNaN(currentSessionVal);
+			if (lastFreezeLogSessionDate != currentSessionDate)
+			{
+				lastFreezeLogSessionDate = currentSessionDate;
+				LogEvent(currentSessionDate, $"Session freeze captured | POC={currentSessionPoc:0.#####} VAH={currentSessionVah:0.#####} VAL={currentSessionVal:0.#####}");
+			}
 		}
 
 		private void EvaluateTradeLocationConsumptionOnSessionOpen()
@@ -1182,6 +1181,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 						{
 							GetValueArea(i, tickSize);
 						}
+
+						TryFreezeSessionLevelsFromRender(i, dictionaryList.Count);
 						
 						double barWidthFac;
 						if(ScaleType == HawkVolumeProfileScaleType.MaxOfLadder)
