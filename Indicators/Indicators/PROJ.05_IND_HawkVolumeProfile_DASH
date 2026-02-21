@@ -328,26 +328,25 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		
 		protected override void OnBarUpdate()
 		{
-			if(BarsInProgress == 0 && EnableTradeLocations && Bars.IsFirstBarOfSession)
-			{
-				DateTime currentSessionDate = Times[0][0].Date;
-
-				if (lastTradeLocationEvaluationSessionDate == currentSessionDate)
-					return;
-
-				lastTradeLocationEvaluationSessionDate = currentSessionDate;
-
-				PromotePreviousSessionLevels();
-				EvaluateTradeLocationConsumptionOnSessionOpen();
-				FinalizeAndCleanupConsumedTL();
-				CreateSessionSnapshotTL();
-				EnforceHistoryLimit();
-			}
-			
-
 			if(BarsInProgress == 0 && EnableTradeLocations)
 			{
 				UpdateCurrentSessionSnapshotLevels();
+
+				if(Bars.IsFirstBarOfSession)
+				{
+					DateTime currentSessionDate = Times[0][0].Date;
+
+					if (lastTradeLocationEvaluationSessionDate == currentSessionDate)
+						return;
+
+					lastTradeLocationEvaluationSessionDate = currentSessionDate;
+
+					PromotePreviousSessionLevels();
+					CreateSessionSnapshotTL();
+					EvaluateTradeLocationConsumptionOnSessionOpen();
+					FinalizeAndCleanupConsumedTL();
+					EnforceHistoryLimit();
+				}
 			}
 
 			if(calcMode == 0)			//Tick Replay enabled
@@ -472,9 +471,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 
 		private void UpdateCurrentSessionSnapshotLevels()
 		{
-			if (!Bars.IsLastBarOfSession)
-				return;
-
 			DateTime currentSessionDate = Times[0][0].Date;
 			bool hasSnapshotError = double.IsNaN(poc) || poc <= 0
 				|| double.IsNaN(valueAreaHigh) || valueAreaHigh <= 0
