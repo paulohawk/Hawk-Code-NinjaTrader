@@ -136,6 +136,38 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		private int lastBar1 = -1000;
 		private int calcMode = 0;
 
+		private class HawkTradeLocation
+		{
+			public double Price;
+			public DateTime SessionDate;
+			public string Tag;
+			public TLType Type;
+
+			public bool SeenAbove;
+			public bool SeenBelow;
+			public bool WasConsumed;
+			public bool IsFinalized;
+		}
+
+		private enum TLType
+		{
+			POC,
+			VAH,
+			VAL
+		}
+
+		private List<HawkTradeLocation> tradeLocations = new List<HawkTradeLocation>();
+		private HashSet<string> tradeLocationTags = new HashSet<string>();
+		private double currentSessionPoc = double.NaN;
+		private double currentSessionVah = double.NaN;
+		private double currentSessionVal = double.NaN;
+		private double previousSessionPoc = double.NaN;
+		private double previousSessionVah = double.NaN;
+		private double previousSessionVal = double.NaN;
+		private DateTime lastTradeLocationEvaluationSessionDate = DateTime.MinValue;
+		private bool currentSessionSnapshotReady = false;
+		private bool previousSessionSnapshotReady = false;
+
 		#endregion
 
 		protected override void OnStateChange()
@@ -202,6 +234,10 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				PocOpacity					= 100;
 				AskImbalanceBrush			= Brushes.DimGray;
 				BidImbalanceBrush			= Brushes.White;
+				EnableTradeLocations		= true;
+				MaxTradeLocationSessions	= 10;
+				TLLineWidth				= 2;
+				TLColor					= Brushes.Goldenrod;
 				
 			}
 			else if (State == State.Configure)
@@ -290,7 +326,28 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		
 		protected override void OnBarUpdate()
 		{
+			if(BarsInProgress == 0 && EnableTradeLocations && Bars.IsFirstBarOfSession)
+			{
+				DateTime currentSessionDate = Times[0][0].Date;
+
+				if (lastTradeLocationEvaluationSessionDate == currentSessionDate)
+					return;
+
+				lastTradeLocationEvaluationSessionDate = currentSessionDate;
+
+				PromotePreviousSessionLevels();
+				EvaluateTradeLocationConsumptionOnSessionOpen();
+				FinalizeAndCleanupConsumedTL();
+				CreateSessionSnapshotTL();
+				EnforceHistoryLimit();
+			}
 			
+
+			if(BarsInProgress == 0 && EnableTradeLocations)
+			{
+				UpdateCurrentSessionSnapshotLevels();
+			}
+
 			if(calcMode == 0)			//Tick Replay enabled
 			{
 				if(BarsInProgress == 1)
@@ -371,6 +428,176 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		}
 
 		
+		private void CreateSessionSnapshotTL()
+		{
+			if (CurrentBar < 2 || !previousSessionSnapshotReady)
+				return;
+
+			DateTime previousSessionDate = Times[0][1].Date;
+
+			CreateTradeLocation(previousSessionDate, previousSessionPoc, TLType.POC);
+			CreateTradeLocation(previousSessionDate, previousSessionVah, TLType.VAH);
+			CreateTradeLocation(previousSessionDate, previousSessionVal, TLType.VAL);
+		}
+
+		private void PromotePreviousSessionLevels()
+		{
+			if (currentSessionSnapshotReady)
+			{
+				previousSessionPoc = currentSessionPoc;
+				previousSessionVah = currentSessionVah;
+				previousSessionVal = currentSessionVal;
+				previousSessionSnapshotReady = true;
+			}
+			else
+			{
+				previousSessionPoc = double.NaN;
+				previousSessionVah = double.NaN;
+				previousSessionVal = double.NaN;
+				previousSessionSnapshotReady = false;
+			}
+
+			currentSessionPoc = double.NaN;
+			currentSessionVah = double.NaN;
+			currentSessionVal = double.NaN;
+			currentSessionSnapshotReady = false;
+		}
+
+		private void UpdateCurrentSessionSnapshotLevels()
+		{
+			if (!Bars.IsLastBarOfSession)
+				return;
+
+			if (!double.IsNaN(poc) && poc > 0)
+				currentSessionPoc = poc;
+
+			if (!double.IsNaN(valueAreaHigh) && valueAreaHigh > 0)
+				currentSessionVah = valueAreaHigh;
+
+			if (!double.IsNaN(valueAreaLow) && valueAreaLow > 0)
+				currentSessionVal = valueAreaLow;
+
+			currentSessionSnapshotReady = !double.IsNaN(currentSessionPoc)
+				&& !double.IsNaN(currentSessionVah)
+				&& !double.IsNaN(currentSessionVal);
+		}
+
+		private void EvaluateTradeLocationConsumptionOnSessionOpen()
+		{
+			if (CurrentBar < 2)
+				return;
+
+			DateTime previousSessionDate = Times[0][1].Date;
+
+			for (int i = 0; i < tradeLocations.Count; i++)
+			{
+				var tl = tradeLocations[i];
+
+				if (tl.WasConsumed || tl.SessionDate >= previousSessionDate)
+					continue;
+
+				tl.SeenAbove = false;
+				tl.SeenBelow = false;
+
+				for (int barsAgo = 1; barsAgo < CurrentBar; barsAgo++)
+				{
+					if (Times[0][barsAgo].Date != previousSessionDate)
+						break;
+
+					double close = Close[barsAgo];
+					if (close > tl.Price)
+						tl.SeenAbove = true;
+					else if (close < tl.Price)
+						tl.SeenBelow = true;
+
+					if (tl.SeenAbove && tl.SeenBelow)
+					{
+						tl.WasConsumed = true;
+						break;
+					}
+				}
+			}
+		}
+
+		private void CreateTradeLocation(DateTime sessionDate, double price, TLType type)
+		{
+			if (double.IsNaN(price) || price <= 0)
+				return;
+
+			string tag = $"VP_TL_{type}_{sessionDate:yyyyMMdd}";
+
+			if (tradeLocationTags.Contains(tag))
+				return;
+
+			foreach (DrawingTool drawObject in DrawObjects)
+			{
+				if (drawObject != null && drawObject.Name == tag)
+					return;
+			}
+
+			DateTime startTime = Times[0][0];
+
+			Draw.Line(this, tag, false,
+				startTime, price,
+				startTime.AddYears(5), price,
+				TLColor,
+				DashStyleHelper.Solid,
+				TLLineWidth);
+
+			tradeLocationTags.Add(tag);
+
+			tradeLocations.Add(new HawkTradeLocation
+			{
+				Price = price,
+				SessionDate = sessionDate,
+				Tag = tag,
+				Type = type
+			});
+		}
+
+		private void FinalizeAndCleanupConsumedTL()
+		{
+			for (int i = tradeLocations.Count - 1; i >= 0; i--)
+			{
+				var tl = tradeLocations[i];
+
+				if (!tl.WasConsumed)
+					continue;
+
+				RemoveDrawObject(tl.Tag);
+				tradeLocationTags.Remove(tl.Tag);
+				tradeLocations.RemoveAt(i);
+			}
+		}
+
+		private void EnforceHistoryLimit()
+		{
+			if (tradeLocations.Count == 0)
+				return;
+
+			var orderedSessionDates = tradeLocations
+				.Select(tl => tl.SessionDate)
+				.Distinct()
+				.OrderBy(d => d)
+				.ToList();
+
+			while (orderedSessionDates.Count > MaxTradeLocationSessions)
+			{
+				DateTime oldestSessionDate = orderedSessionDates[0];
+				orderedSessionDates.RemoveAt(0);
+
+				for (int i = tradeLocations.Count - 1; i >= 0; i--)
+				{
+					if (tradeLocations[i].SessionDate != oldestSessionDate)
+						continue;
+
+					RemoveDrawObject(tradeLocations[i].Tag);
+					tradeLocationTags.Remove(tradeLocations[i].Tag);
+					tradeLocations.RemoveAt(i);
+				}
+			}
+		}
+
 		protected override void OnMarketData(MarketDataEventArgs e)
 		{
 			if(BarsInProgress == 0 || calcMode != 0)
@@ -1522,6 +1749,31 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		[Display(ResourceType = typeof(Custom.Resource), Name = "Show Value Area", Description=" ",  Order = 16, GroupName = "VA")]
 		public bool ShowValueArea
 		{ get; set; }
+
+		[Display(Name = "Enable Trade Locations", Order = 1, GroupName = "Trade Location")]
+		[NinjaScriptProperty]
+		public bool EnableTradeLocations { get; set; }
+
+		[Range(1, 50)]
+		[Display(Name = "Max TL Sessions", Order = 2, GroupName = "Trade Location")]
+		[NinjaScriptProperty]
+		public int MaxTradeLocationSessions { get; set; }
+
+		[Range(1, 10)]
+		[Display(Name = "TL Line Width", Order = 3, GroupName = "Trade Location")]
+		[NinjaScriptProperty]
+		public int TLLineWidth { get; set; }
+
+		[XmlIgnore]
+		[Display(Name = "TL Color", Order = 4, GroupName = "Trade Location")]
+		public Brush TLColor { get; set; }
+
+		[Browsable(false)]
+		public string TLColorSerialize
+		{
+			get { return Serialize.BrushToString(TLColor); }
+			set { TLColor = Serialize.StringToBrush(value); }
+		}
 		
 		[Range(0, 99.99)]
 		[Display(ResourceType = typeof(Custom.Resource), Name = "Value Area Percent", Description="Defines value area as percent of total, usually 70%",  Order = 17, GroupName = "VA")]
