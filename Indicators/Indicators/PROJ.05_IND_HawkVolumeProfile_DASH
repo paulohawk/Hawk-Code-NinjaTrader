@@ -167,6 +167,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		private DateTime lastTradeLocationEvaluationSessionDate = DateTime.MinValue;
 		private bool currentSessionSnapshotReady = false;
 		private bool previousSessionSnapshotReady = false;
+		private DateTime lastSnapshotZeroLogSessionDate = DateTime.MinValue;
 
 		#endregion
 
@@ -238,6 +239,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				MaxTradeLocationSessions	= 10;
 				TLLineWidth				= 2;
 				TLColor					= Brushes.Goldenrod;
+				EnableDebugLog			= false;
 				
 			}
 			else if (State == State.Configure)
@@ -433,7 +435,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			if (CurrentBar < 2 || !previousSessionSnapshotReady)
 				return;
 
-			DateTime previousSessionDate = Times[0][1].Date;
+			DateTime previousSessionDate = CurrentBar > 0 ? Times[0][1].Date : Times[0][0].Date;
 
 			CreateTradeLocation(previousSessionDate, previousSessionPoc, TLType.POC);
 			CreateTradeLocation(previousSessionDate, previousSessionVah, TLType.VAH);
@@ -444,10 +446,15 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		{
 			if (currentSessionSnapshotReady)
 			{
+				DateTime previousSessionDate = CurrentBar > 0 ? Times[0][1].Date : Times[0][0].Date;
+
 				previousSessionPoc = currentSessionPoc;
 				previousSessionVah = currentSessionVah;
 				previousSessionVal = currentSessionVal;
 				previousSessionSnapshotReady = true;
+
+				if (EnableTradeLocations)
+					LogEvent(previousSessionDate, $"Session freeze captured | POC={previousSessionPoc:0.#####} VAH={previousSessionVah:0.#####} VAL={previousSessionVal:0.#####}");
 			}
 			else
 			{
@@ -468,6 +475,17 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			if (!Bars.IsLastBarOfSession)
 				return;
 
+			DateTime currentSessionDate = Times[0][0].Date;
+			bool hasSnapshotError = double.IsNaN(poc) || poc <= 0
+				|| double.IsNaN(valueAreaHigh) || valueAreaHigh <= 0
+				|| double.IsNaN(valueAreaLow) || valueAreaLow <= 0;
+
+			if (EnableTradeLocations && hasSnapshotError && lastSnapshotZeroLogSessionDate != currentSessionDate)
+			{
+				lastSnapshotZeroLogSessionDate = currentSessionDate;
+				LogEvent(currentSessionDate, $"Snapshot error: invalid value captured | POC={poc:0.#####} VAH={valueAreaHigh:0.#####} VAL={valueAreaLow:0.#####}");
+			}
+
 			if (!double.IsNaN(poc) && poc > 0)
 				currentSessionPoc = poc;
 
@@ -487,7 +505,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			if (CurrentBar < 2)
 				return;
 
-			DateTime previousSessionDate = Times[0][1].Date;
+			DateTime previousSessionDate = CurrentBar > 0 ? Times[0][1].Date : Times[0][0].Date;
 
 			for (int i = 0; i < tradeLocations.Count; i++)
 			{
@@ -553,10 +571,15 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				Tag = tag,
 				Type = type
 			});
+
+			if (EnableTradeLocations)
+				LogEvent(sessionDate, $"TL created | Type={type} Price={price:0.#####}");
 		}
 
 		private void FinalizeAndCleanupConsumedTL()
 		{
+			DateTime previousSessionDate = CurrentBar > 0 ? Times[0][1].Date : Times[0][0].Date;
+
 			for (int i = tradeLocations.Count - 1; i >= 0; i--)
 			{
 				var tl = tradeLocations[i];
@@ -567,7 +590,17 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				RemoveDrawObject(tl.Tag);
 				tradeLocationTags.Remove(tl.Tag);
 				tradeLocations.RemoveAt(i);
+				if (EnableTradeLocations)
+					LogEvent(previousSessionDate, $"TL consumed and removed | Type={tl.Type} Price={tl.Price:0.#####}");
 			}
+		}
+
+		private void LogEvent(DateTime eventTime, string message)
+		{
+			if (!EnableDebugLog)
+				return;
+
+			Print("[HawkVP TL] " + eventTime + " | " + message);
 		}
 
 		private void EnforceHistoryLimit()
@@ -1767,6 +1800,10 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		[XmlIgnore]
 		[Display(Name = "TL Color", Order = 4, GroupName = "Trade Location")]
 		public Brush TLColor { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Enable Debug Log", GroupName = "Diagnostics", Order = 1)]
+		public bool EnableDebugLog { get; set; }
 
 		[Browsable(false)]
 		public string TLColorSerialize
