@@ -2094,6 +2094,12 @@ namespace NinjaTrader.NinjaScript.Strategies
         private DateTime lastTradingDay = Core.Globals.MinDate;
         private bool cancelExecutedToday = false;
         private bool closeExecutedToday = false;
+        private bool isHistoricalOrAnalyzer = false;
+        private bool histTpCloseModeActive = false;
+        private bool histTpConvertedThisTrade = false;
+        private double histManualTpPrice = 0;
+        private string histManualTpSignalName = "ManualTP_HIST";
+        private DateTime histTpModeDate = Core.Globals.MinDate;
 
         private Dictionary<string, int> orderSubmissionAttempts = new Dictionary<string, int>();
 
@@ -2588,6 +2594,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             if (State == State.SetDefaults)
             {
+                isHistoricalOrAnalyzer = false;
                 Name = "HawkMidasBandsSTG";
                 Calculate = Calculate.OnBarClose;
                 ExecutionMode = ExecutionModeType.HistoricalSafe;
@@ -2608,6 +2615,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
             else if (State == State.Configure)
             {
+                isHistoricalOrAnalyzer = false;
                 ApplyVersionPresets();
                 instanceId = Guid.NewGuid().ToString("N");
 
@@ -2624,6 +2632,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
             else if (State == State.DataLoaded)
             {
+                isHistoricalOrAnalyzer = IsHistoricalContext();
                 ApplyVersionPresets();
                 ResolveVersionContext();
                 tickSize = Instrument.MasterInstrument.TickSize;
@@ -2709,6 +2718,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
             else if (State == State.Realtime)
             {
+                isHistoricalOrAnalyzer = false;
                 try
                 {
                     Print($"[HawkDiag][STATE] Entered Realtime inst={Instrument?.FullName} acc={Account?.Name}");
@@ -2865,6 +2875,10 @@ namespace NinjaTrader.NinjaScript.Strategies
                 blockedAfterCloseDate = Core.Globals.MinDate;
                 cancelExecutedToday = false;
                 closeExecutedToday = false;
+                histTpCloseModeActive = false;
+                histTpConvertedThisTrade = false;
+                histManualTpPrice = 0;
+                histTpModeDate = barTime.Date;
 
                 if (prevStatus == "Blocked (após zera)")
                     statusText = "Waiting (aguardando)";
@@ -3482,6 +3496,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 DateTime barTime = Times[schedulerBip][0];
                 string thName = Bars?.TradingHours != null ? Bars.TradingHours.Name : "unknownTH";
+                isHistoricalOrAnalyzer = IsHistoricalContext();
+                bool schedulerCloseTriggered = false;
 
                 // Cancelar limites no horário programado
                 if (!cancelExecutedToday && !string.IsNullOrWhiteSpace(CancelLimitsAtHHmm) && TimeSpan.TryParse(CancelLimitsAtHHmm, out var cancelT))
@@ -3495,7 +3511,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                     }
                 }
 
-                // Fechar posição / encerrar no horário programado
+                ActivateHistoricalTpModeIfNeeded(barTime);
+
+                // Fechar posição / encerrar no horário programado (soberano)
                 if (!closeExecutedToday && !string.IsNullOrWhiteSpace(ClosePositionsAtHHmm) && TimeSpan.TryParse(ClosePositionsAtHHmm, out var closeT))
                 {
                     if (barTime.TimeOfDay >= closeT)
@@ -3511,12 +3529,94 @@ namespace NinjaTrader.NinjaScript.Strategies
                         blockedAfterCloseDate = barTime.Date;
                         statusText = "Blocked (após zera)";
                         ClearPendingSnapshot();
+                        schedulerCloseTriggered = true;
                     }
+                }
+
+                // Em histórico/analyzer, após 16:00 TP é por fechamento de 1m; AutoClose tem prioridade.
+                if (!schedulerCloseTriggered)
+                {
+                    ConvertTargetToHistoricalManualTpIfNeeded(barTime);
+                    EvaluateHistoricalManualTp(barTime);
                 }
             }
             catch (Exception ex)
             {
                 Print("[HawkDiag][CLOSE_WINDOW_SCHED][ERROR] " + ex.Message);
+            }
+        }
+
+        private void ActivateHistoricalTpModeIfNeeded(DateTime barTime)
+        {
+            if (!isHistoricalOrAnalyzer)
+                return;
+
+            DateTime dateKey = barTime.Date;
+            if (histTpModeDate != dateKey)
+            {
+                histTpModeDate = dateKey;
+                histTpCloseModeActive = false;
+                histTpConvertedThisTrade = false;
+                histManualTpPrice = 0;
+            }
+
+            if (!TimeSpan.TryParse(ClosePositionsAtHHmm, out var closeT))
+                return;
+
+            // HIST_TP inicia 30 minutos antes do AutoClose, no mesmo timezone de barTime.
+            TimeSpan histModeStart = closeT - TimeSpan.FromMinutes(30);
+            if (histModeStart < TimeSpan.Zero)
+                histModeStart = TimeSpan.Zero;
+
+            if (!histTpCloseModeActive && barTime.TimeOfDay >= histModeStart)
+            {
+                histTpCloseModeActive = true;
+                Print($"[HawkDiag][HIST_TP_MODE] barTime={barTime:O} bip={schedulerBip} state={State} side={Position.MarketPosition} posQty={Position.Quantity} tpPrice={histManualTpPrice.ToString(CultureInfo.InvariantCulture)} close1m={Closes[schedulerBip][0].ToString(CultureInfo.InvariantCulture)} histModeStart={histModeStart} closeAt={closeT} active=1");
+            }
+        }
+
+        private void ConvertTargetToHistoricalManualTpIfNeeded(DateTime barTime)
+        {
+            if (!isHistoricalOrAnalyzer || !histTpCloseModeActive || histTpConvertedThisTrade)
+                return;
+            if (Position.MarketPosition == MarketPosition.Flat)
+                return;
+
+            if (Position.MarketPosition == MarketPosition.Long && IsOrderWorking(ordemTargetLong))
+            {
+                histManualTpPrice = ordemTargetLong.LimitPrice;
+                CancelOrder(ordemTargetLong);
+                Print($"[HawkDiag][HIST_TP_CONVERT] barTime={barTime:O} bip={schedulerBip} state={State} side=Long posQty={Position.Quantity} tpPrice={histManualTpPrice.ToString(CultureInfo.InvariantCulture)} close1m={Closes[schedulerBip][0].ToString(CultureInfo.InvariantCulture)} cancelTgtId={ordemTargetLong?.OrderId}");
+                ordemTargetLong = null;
+                histTpConvertedThisTrade = true;
+            }
+            else if (Position.MarketPosition == MarketPosition.Short && IsOrderWorking(ordemTargetShort))
+            {
+                histManualTpPrice = ordemTargetShort.LimitPrice;
+                CancelOrder(ordemTargetShort);
+                Print($"[HawkDiag][HIST_TP_CONVERT] barTime={barTime:O} bip={schedulerBip} state={State} side=Short posQty={Position.Quantity} tpPrice={histManualTpPrice.ToString(CultureInfo.InvariantCulture)} close1m={Closes[schedulerBip][0].ToString(CultureInfo.InvariantCulture)} cancelTgtId={ordemTargetShort?.OrderId}");
+                ordemTargetShort = null;
+                histTpConvertedThisTrade = true;
+            }
+        }
+
+        private void EvaluateHistoricalManualTp(DateTime barTime)
+        {
+            if (!isHistoricalOrAnalyzer || !histTpCloseModeActive || !histTpConvertedThisTrade)
+                return;
+            if (Position.MarketPosition == MarketPosition.Flat || histManualTpPrice <= 0)
+                return;
+
+            double close1m = Closes[schedulerBip][0];
+            if (Position.MarketPosition == MarketPosition.Long && close1m >= histManualTpPrice)
+            {
+                Print($"[HawkDiag][HIST_MANUAL_TP_FIRE] barTime={barTime:O} bip={schedulerBip} state={State} side=Long posQty={Position.Quantity} tpPrice={histManualTpPrice.ToString(CultureInfo.InvariantCulture)} close1m={close1m.ToString(CultureInfo.InvariantCulture)}");
+                ExitLong(histManualTpSignalName, "LongAuto");
+            }
+            else if (Position.MarketPosition == MarketPosition.Short && close1m <= histManualTpPrice)
+            {
+                Print($"[HawkDiag][HIST_MANUAL_TP_FIRE] barTime={barTime:O} bip={schedulerBip} state={State} side=Short posQty={Position.Quantity} tpPrice={histManualTpPrice.ToString(CultureInfo.InvariantCulture)} close1m={close1m.ToString(CultureInfo.InvariantCulture)}");
+                ExitShort(histManualTpSignalName, "ShortAuto");
             }
         }
         #endregion
@@ -4173,6 +4273,13 @@ namespace NinjaTrader.NinjaScript.Strategies
                 || orderName.IndexOf("SaidaAutomatica", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
+        private bool IsManualHistTpOrder(NinjaTrader.Cbi.Order order)
+        {
+            if (order == null) return false;
+            string orderName = order.Name ?? string.Empty;
+            return orderName.Equals(histManualTpSignalName, StringComparison.OrdinalIgnoreCase);
+        }
+
         private MarketPosition InferSideFromOrderAction(OrderAction action)
         {
             switch (action)
@@ -4200,7 +4307,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         private bool IsEntryDerivedOrder(NinjaTrader.Cbi.Order order)
         {
-            return IsStopOrder(order) || IsTargetOrder(order) || IsAutoCloseOrder(order);
+            return IsStopOrder(order) || IsTargetOrder(order) || IsAutoCloseOrder(order) || IsManualHistTpOrder(order);
         }
 
         private bool IsFromMainSignal(NinjaTrader.Cbi.Order order)
@@ -4620,7 +4727,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 {
                     bool isExitOrder = IsStopOrder(execution.Order)
                         || IsTargetOrder(execution.Order)
-                        || IsAutoCloseOrder(execution.Order);
+                        || IsAutoCloseOrder(execution.Order)
+                        || IsManualHistTpOrder(execution.Order);
                     if (isExitOrder)
                     {
                         if (!tradeContext.HasTrade)
@@ -4634,7 +4742,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                         }
                         if (tradeContext.HasTrade && tradeContext.ExitKind == ExitKind.None)
                         {
-                            if (IsTargetOrder(execution.Order))
+                            if (IsTargetOrder(execution.Order) || IsManualHistTpOrder(execution.Order))
                                 SetExitKindOnce(ExitKind.TakeProfit);
                             else if (IsStopOrder(execution.Order))
                                 SetExitKindOnce(tradeContext.BeApplied ? ExitKind.Breakeven : ExitKind.StopLoss);
@@ -4660,6 +4768,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                         sideLatched = LatchedSide.None;
                         qtyLatched = 0;
                         currentState = TradeState.Idle;
+                        histTpConvertedThisTrade = false;
+                        histManualTpPrice = 0;
                         if (IsOrderWorking(ordemLimiteCompra)) CancelOrder(ordemLimiteCompra);
                         if (IsOrderWorking(ordemLimiteVenda)) CancelOrder(ordemLimiteVenda);
                         ordemLimiteCompra = null;
@@ -5591,6 +5701,16 @@ namespace NinjaTrader.NinjaScript.Strategies
             return dataBrasilia.Date >= inicioDst && dataBrasilia.Date < fimDst;
         }
 
+        private bool IsHistoricalContext()
+        {
+            // Realtime é o único estado que NÃO deve ativar HIST_TP.
+            if (State == State.Realtime)
+                return false;
+
+            // Historical + Analyzer (e demais estados não-realtime) são tratados como contexto histórico.
+            return true;
+        }
+
         private bool IsOrderWorking(NinjaTrader.Cbi.Order order)
         {
             if (order == null) return false;
@@ -5707,8 +5827,12 @@ namespace NinjaTrader.NinjaScript.Strategies
             stopPrice = Instrument.MasterInstrument.RoundToTickSize(stopPrice);
             targetPrice = Instrument.MasterInstrument.RoundToTickSize(targetPrice);
 
+            bool blockTargetRearm = isHistoricalOrAnalyzer && histTpCloseModeActive && histTpConvertedThisTrade;
+            if (blockTargetRearm)
+                Print($"[HawkDiag][HIST_TP_BLOCK_REARM] barTime={Times[schedulerBip][0]:O} bip={schedulerBip} state={State} side=Long posQty={Position.Quantity} tpPrice={histManualTpPrice.ToString(CultureInfo.InvariantCulture)} close1m={Closes[schedulerBip][0].ToString(CultureInfo.InvariantCulture)}");
+
             bool needStop = NeedsUpdate(ordemStopLong, qty, stopPrice, isStop: true);
-            bool needTarget = NeedsUpdate(ordemTargetLong, qty, targetPrice, isStop: false);
+            bool needTarget = !blockTargetRearm && NeedsUpdate(ordemTargetLong, qty, targetPrice, isStop: false);
 
             if (needStop && ordemStopLong != null) CancelOrder(ordemStopLong);
             if (needTarget && ordemTargetLong != null) CancelOrder(ordemTargetLong);
@@ -5747,8 +5871,12 @@ namespace NinjaTrader.NinjaScript.Strategies
             stopPrice = Instrument.MasterInstrument.RoundToTickSize(stopPrice);
             targetPrice = Instrument.MasterInstrument.RoundToTickSize(targetPrice);
 
+            bool blockTargetRearm = isHistoricalOrAnalyzer && histTpCloseModeActive && histTpConvertedThisTrade;
+            if (blockTargetRearm)
+                Print($"[HawkDiag][HIST_TP_BLOCK_REARM] barTime={Times[schedulerBip][0]:O} bip={schedulerBip} state={State} side=Short posQty={Position.Quantity} tpPrice={histManualTpPrice.ToString(CultureInfo.InvariantCulture)} close1m={Closes[schedulerBip][0].ToString(CultureInfo.InvariantCulture)}");
+
             bool needStop = NeedsUpdate(ordemStopShort, qty, stopPrice, isStop: true);
-            bool needTarget = NeedsUpdate(ordemTargetShort, qty, targetPrice, isStop: false);
+            bool needTarget = !blockTargetRearm && NeedsUpdate(ordemTargetShort, qty, targetPrice, isStop: false);
 
             if (needStop && ordemStopShort != null) CancelOrder(ordemStopShort);
             if (needTarget && ordemTargetShort != null) CancelOrder(ordemTargetShort);
