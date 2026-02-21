@@ -464,7 +464,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 
 		private void TryFreezeSessionLevelsFromRender(int regionIndex, int regionCount)
 		{
-			if (!EnableTradeLocations || !Bars.IsLastBarOfSession || regionIndex != regionCount - 1)
+			if (!EnableTradeLocations || regionIndex != regionCount - 1)
 				return;
 
 			DateTime currentSessionDate = Times[0][0].Date;
