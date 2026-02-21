@@ -475,11 +475,14 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			if (!EnableTradeLocations || regionIndex != regionCount - 1)
 				return;
 
+			if (CurrentBar < 1)
+				return;
+
 			if (regionIndex < 0 || regionIndex >= regionStartBar0List.Count)
 				return;
 
 			int regionStartIndex = regionStartBar0List[regionIndex];
-			if (regionStartIndex < 0 || regionStartIndex >= BarsArray[0].Count)
+			if (regionStartIndex < 0 || regionStartIndex > CurrentBar)
 				return;
 
 			DateTime currentSessionDate = Times[0][regionStartIndex].Date;
@@ -1150,6 +1153,9 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		{
 			++cycle;
 			if(Bars == null || Bars.Instrument == null || IsInHitTest || !transitionComplete)
+				return;
+
+			if (CurrentBar < 2)
 				return;
 
 			if(ShowPerformance)
