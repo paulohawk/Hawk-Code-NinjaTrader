@@ -136,6 +136,9 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		private string _lastToolRangeSignature;
 		private DateTime _lastSeenToolBusUtc = DateTime.MinValue;
 		private DateTime _lastToolMissLogUtc = DateTime.MinValue;
+		private double _toolX0 = 0;
+		private double _toolX1 = 0;
+		private bool _toolActive = false;
 
 		#endregion
 
@@ -449,9 +452,15 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		{
 			try
 			{
-				getRegion(chartControl, chartScale, chartPanel);
-				TryApplyToolSelection(chartControl, chartPanel);
+				// 1) Observa o bus (log/miss reset)
 				WatchToolSelection(chartControl);
+
+				// 2) Aplica seleção do tool ANTES de getRegion()
+				//    Isso garante que _toolActive esteja definido e que getRegion() respeite o "lock".
+				TryApplyToolSelection(chartControl, chartPanel);
+
+				// 3) Só calcula região padrão se tool não estiver ativo (getRegion tem guarda)
+				getRegion(chartControl, chartScale, chartPanel);
 
 				var ctx = new HawkVpContext
 				{
@@ -497,6 +506,10 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		{
 			try
 			{
+				_toolActive = false;
+				_toolX0 = 0;
+				_toolX1 = 0;
+
 				if(chartControl == null)
 					return false;
 
@@ -541,26 +554,64 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				regionBar0Start.Add(start);
 				regionBar0End.Add(end);
 
-				if(ChartBars != null)
+				if(ChartBars != null && chartPanel != null)
 				{
 					boundaryFromX = chartControl.GetXByBarIndex(ChartBars, start);
 					boundaryToX = chartControl.GetXByBarIndex(ChartBars, end);
 
+					// Robustez: normaliza X caso venha invertido em alguns builds/condições de zoom
+					if(boundaryFromX > boundaryToX)
+					{
+						double tx = boundaryFromX;
+						boundaryFromX = boundaryToX;
+						boundaryToX = tx;
+					}
+
+					if(boundaryToX > boundaryFromX && (boundaryToX - boundaryFromX) >= 5)
+					{
+						_toolActive = true;
+						_toolX0 = boundaryFromX;
+						_toolX1 = boundaryToX;
+					}
+
+					double w = (_toolX1 - _toolX0) - (2 * Margin);
+					if(_toolActive && w <= 5)
+					{
+						_toolActive = false;
+						_toolX0 = 0;
+						_toolX1 = 0;
+					}
+
 					barWidthFacList.Clear();
 					xposList.Clear();
-
-					windowBarWidthFacList(chartPanel);
-					windowXpos(chartControl);
+					if(_toolActive)
+					{
+						toolBarWidthFacList(_toolX0, _toolX1);
+						toolXpos(_toolX0, _toolX1);
+					}
+					else
+					{
+						windowBarWidthFacList(chartPanel);
+						windowXpos(chartControl);
+					}
 				}
 
-				string rangeSig = $"{start}:{end}";
+				string rangeSig = _toolActive
+					? $"{start}:{end}:{(int)Math.Round(_toolX0)}:{(int)Math.Round(_toolX1)}"
+					: $"{start}:{end}";
 				if(rangeSig != _lastToolRangeSignature)
 				{
 					_lastToolRangeSignature = rangeSig;
 					lastBar0 = -1000;
 					lastBar1 = -1000;
+					_renderLogged = false;
 					if(EnableDebugLog)
+					{
 						Print($"[HawkVP] ToolSel APPLY bars {start}->{end}");
+						if(_toolActive)
+							Print($"[HawkVP] ToolViewportX {_toolX0:0.##}->{_toolX1:0.##} w={(_toolX1 - _toolX0):0.##} bars {start}->{end}");
+						Print($"[HawkVP] layout toolActive={_toolActive} barWidthFacCount={barWidthFacList.Count} xposCount={xposList.Count}");
+					}
 				}
 
 				return true;
@@ -577,6 +628,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				return;
 
 			int key = chartControl.GetHashCode();
+
 			if(HawkVpSelectionBus.TryGet(key, out var sel) && sel != null)
 			{
 				if(sel.UpdatedUtc != _lastSeenToolBusUtc)
@@ -587,9 +639,14 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				return;
 			}
 
+			// MISS: reset completo do estado tool
 			_lastToolRangeSignature = null;
+			_toolActive = false;
+			_toolX0 = 0;
+			_toolX1 = 0;
 
 			DateTime nowUtc = DateTime.UtcNow;
+
 			if(EnableDebugLog && (nowUtc - _lastToolMissLogUtc).TotalSeconds >= 10)
 			{
 				_lastToolMissLogUtc = nowUtc;
@@ -600,6 +657,9 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		void getRegion(ChartControl chartControl, ChartScale chartScale, ChartPanel chartPanel)
 		{
 			if(ChartBars == null)
+				return;
+
+			if(_toolActive && regionBar0Start.Count > 0 && regionBar0End.Count > 0)
 				return;
 
 			regionIdxStart.Clear();
@@ -717,6 +777,19 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			}
 		}
 
+		void toolBarWidthFacList(double toolX0, double toolX1)
+		{
+			double toolWidth = (toolX1 - toolX0) - (2 * Margin);
+
+			if(toolWidth <= 5)
+				return;
+
+			if(ScaleType == HawkVolumeProfileScaleType.MaxOfLadder)
+				barWidthFacList.Add(windowFac * toolWidth);
+			else
+				barWidthFacList.Add(FixedScalingNumber);
+		}
+
 		void barBarWidthFacList()
 		{
 			if(ScaleType == HawkVolumeProfileScaleType.MaxOfLadder)
@@ -739,6 +812,14 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			{
 				xposList.Add(chartControl.CanvasRight - Margin);
 			}
+		}
+
+		void toolXpos(double toolX0, double toolX1)
+		{
+			if(Orientation == HawkVolumeProfileOrientationType.Left)
+				xposList.Add((int)Math.Round(toolX0 + Margin));
+			else
+				xposList.Add((int)Math.Round(toolX1 - Margin));
 		}
 
 		void barXpos()
