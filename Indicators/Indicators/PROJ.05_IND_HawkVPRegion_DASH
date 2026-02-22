@@ -63,7 +63,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 			if (chartControl == null || StartAnchor == null || EndAnchor == null)
 				return;
 
-			var cb = ChartBars;
+			var cb = ChartPanel != null ? ChartPanel.ChartBars : null;
 			if (cb == null || cb.Bars == null || cb.Bars.Count <= 0)
 				return;
 
