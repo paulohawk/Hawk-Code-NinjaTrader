@@ -129,6 +129,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		private int calcMode = 0;
 		private HashSet<string> _loggedEvents;
 		private bool _renderLogged;
+		private bool _fullyInitialized;
 		private string _lastToolRangeSignature;
 
 		#endregion
@@ -272,6 +273,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			else if (State == State.DataLoaded)
 			{
 				_renderLogged = false;
+				_fullyInitialized = false;
 				_lastToolRangeSignature = string.Empty;
 				try
 				{
@@ -296,7 +298,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			}
 			else if(State == State.Terminated)
 			{
-				LogEvent("Indicator removed from chart.", false);
+				if(_fullyInitialized)
+					LogEvent("Indicator terminated (chart unload or removal).", false);
 			}
 		}
 
@@ -852,6 +855,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				if(!_renderLogged)
 				{
 					_renderLogged = true;
+					_fullyInitialized = true;
 					LogEvent("Render pipeline initialized successfully.");
 				}
 			}
