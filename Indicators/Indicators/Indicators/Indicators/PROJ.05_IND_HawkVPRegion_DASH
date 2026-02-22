@@ -1,24 +1,10 @@
 #region Using declarations
 using System;
-using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.Windows;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.Xml.Serialization;
-using NinjaTrader.Cbi;
-using NinjaTrader.Gui;
 using NinjaTrader.Gui.Chart;
-using NinjaTrader.Gui.SuperDom;
-using NinjaTrader.Gui.Tools;
-using NinjaTrader.Data;
 using NinjaTrader.NinjaScript;
-using NinjaTrader.Core.FloatingPoint;
-
+using NinjaTrader.NinjaScript.Indicators.Hawk.Volume.Engine;
 #endregion
 
 //This namespace holds Drawing tools in this folder and is required. Do not change it. 
@@ -28,14 +14,98 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 	[EditorBrowsable(EditorBrowsableState.Always)]
 	public class HawkVpRegion : RegionHighlightBase
 	{
+		private DateTime _lastPublishUtc = DateTime.MinValue;
+
+		[NinjaScriptProperty]
+		[Display(Name = "PublishRange", GroupName = "Parameters", Order = 1)]
+		public bool PublishRange
+		{ get; set; }
+
+		[NinjaScriptProperty]
+		[Range(1, int.MaxValue)]
+		[Display(Name = "PublishThrottleMs", GroupName = "Parameters", Order = 2)]
+		public int PublishThrottleMs
+		{ get; set; }
+
 		protected override void OnStateChange()
 		{
 			base.OnStateChange();
 			if (State == State.SetDefaults)
 			{
-				Name	= "HawkVp Region";
-				Mode	= RegionHighlightMode.Time;
+				Name = "HawkVp Region";
+				Mode = RegionHighlightMode.Time;
+				PublishRange = true;
+				PublishThrottleMs = 150;
 			}
+			else if (State == State.Terminated)
+			{
+				if (ChartControl != null)
+					HawkVpSelectionBus.Clear(ChartControl.GetHashCode());
+			}
+		}
+
+		public override void OnRender(ChartControl chartControl, ChartScale chartScale)
+		{
+			base.OnRender(chartControl, chartScale);
+			TryPublishSelection();
+		}
+
+		private void TryPublishSelection()
+		{
+			if (!PublishRange)
+				return;
+
+			DateTime nowUtc = DateTime.UtcNow;
+			if ((nowUtc - _lastPublishUtc).TotalMilliseconds < PublishThrottleMs)
+				return;
+
+			if (ChartControl == null || ChartBars == null || StartAnchor == null || EndAnchor == null)
+				return;
+
+			DateTime t1 = StartAnchor.Time;
+			DateTime t2 = EndAnchor.Time;
+			if (t1 == DateTime.MinValue || t2 == DateTime.MinValue)
+				return;
+
+			if (t1 > t2)
+			{
+				DateTime tmp = t1;
+				t1 = t2;
+				t2 = tmp;
+			}
+
+			int startBar0 = ChartBars.GetBarIdxByTime(ChartControl, t1);
+			int endBar0 = ChartBars.GetBarIdxByTime(ChartControl, t2);
+			if (startBar0 < 0 || endBar0 < 0)
+				return;
+
+			int bars0Max = ChartBars.Bars != null ? ChartBars.Bars.Count - 1 : -1;
+			if (bars0Max < 0)
+				return;
+
+			startBar0 = Math.Max(0, Math.Min(startBar0, bars0Max));
+			endBar0 = Math.Max(0, Math.Min(endBar0, bars0Max));
+
+			if (startBar0 > endBar0)
+			{
+				int tmp = startBar0;
+				startBar0 = endBar0;
+				endBar0 = tmp;
+			}
+
+			int chartKey = ChartControl.GetHashCode();
+			nowUtc = DateTime.UtcNow;
+			HawkVpSelectionBus.Set(chartKey, new HawkVpSelection
+			{
+				ChartKey = chartKey,
+				StartTime = t1,
+				EndTime = t2,
+				StartBar0 = startBar0,
+				EndBar0 = endBar0,
+				UpdatedUtc = nowUtc
+			});
+
+			_lastPublishUtc = nowUtc;
 		}
 	}	
 }
