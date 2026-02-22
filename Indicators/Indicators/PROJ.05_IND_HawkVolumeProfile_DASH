@@ -1,4 +1,4 @@
-//
+// 
 // Copyright (C) 2016, NinjaTrader LLC <www.ninjatrader.com>.
 // NinjaTrader reserves the right to modify or overwrite this NinjaScript component with each release.
 //
@@ -42,7 +42,7 @@ using NinjaTrader.NinjaScript.DrawingTools;
 //R4: added EnableHawkVpRegion.  Multiple instances on same chart all draw to HawkVpRegion, 10/27/2017
 
 
-//This namespace holds Indicators in this folder and is required. Do not change it.
+//This namespace holds Indicators in this folder and is required. Do not change it. 
 namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 {
 	public class HawkVolumeProfile : Indicator
@@ -79,7 +79,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 
 		private List<Dictionary<double, VolItem>> dictionaryList = new List<Dictionary<double, VolItem>>();
 		private Dictionary<double, VolItem> priceDictionary = new Dictionary<double, VolItem>();
-
+		
 		private double windowFac;
 		private long volMax = 0;
 		private double poc = 0;
@@ -90,7 +90,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		private float bidWidth = 0;
 		private float askWidth = 0;
 		private float totalWidth = 0;
-
+		
 		private double price;
 		private long volume;
 		private long vol;
@@ -121,56 +121,20 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		private SharpDX.RectangleF bidRect;
 		private SharpDX.RectangleF midRect;
 		private SharpDX.RectangleF totalRect;
-
-		private DateTime startTime = DateTime.MinValue;				//NinjaTrader.Core.Globals.Now;
+		
+		private DateTime startTime = DateTime.MinValue;				//NinjaTrader.Core.Globals.Now;		
 		private int a = 0;
 		private int at = 0;
 		private int firstWindowBar = 0;
 		private int lastWindowBar = 0;
-
+		
 		private int cycle = 0;
 		private double strtSlotIdx = 0;
 		private double endSlotIdx = 0;
-
+		
 		private int lastBar0 = -1000;
 		private int lastBar1 = -1000;
 		private int calcMode = 0;
-
-		private class HawkTradeLocation
-		{
-			public TLType Type;
-			public double Price;
-			public DateTime SessionDate;
-			public DateTime StartTime;
-
-			public bool SeenAbove;
-			public bool SeenBelow;
-			public bool WasConsumed;
-			public string Tag;
-		}
-
-		private enum TLType
-		{
-			POC,
-			VAH,
-			VAL
-		}
-
-		private List<HawkTradeLocation> tradeLocations = new List<HawkTradeLocation>();
-		private HashSet<string> tradeLocationTags = new HashSet<string>();
-		private double currentSessionPoc = double.NaN;
-		private double currentSessionVah = double.NaN;
-		private double currentSessionVal = double.NaN;
-		private double previousSessionPoc = double.NaN;
-		private double previousSessionVah = double.NaN;
-		private double previousSessionVal = double.NaN;
-		private DateTime lastTradeLocationEvaluationSessionDate = DateTime.MinValue;
-		private bool currentSessionSnapshotReady = false;
-		private bool previousSessionSnapshotReady = false;
-		private DateTime currentSessionSnapshotDate = DateTime.MinValue;
-		private DateTime previousSessionSnapshotDate = DateTime.MinValue;
-		private DateTime lastFreezeLogSessionDate = DateTime.MinValue;
-		private List<int> regionStartBar0List = new List<int>();
 
 		#endregion
 
@@ -212,7 +176,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				ShowRegionBoundaries		= false;
 				EnableHawkVpRegions			= true;
 				ShowPerformance				= false;
-
+				
 				Granularity					= HawkVolumeProfileGranularityType.Tick;
 				GranularityPeriod			= 100;
 
@@ -238,12 +202,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				PocOpacity					= 100;
 				AskImbalanceBrush			= Brushes.DimGray;
 				BidImbalanceBrush			= Brushes.White;
-				EnableTradeLocations		= true;
-				MaxTradeLocationSessions	= 10;
-				TLLineWidth				= 2;
-				TLColor					= Brushes.Goldenrod;
-				EnableDebugLog			= false;
-
+				
 			}
 			else if (State == State.Configure)
 			{
@@ -253,7 +212,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				transitionComplete = false;
 				ClearOutputWindow();
 
-
+				
 				if(RegionFrom == HawkVolumeProfileRegionFromType.Bar || RegionTo == HawkVolumeProfileRegionToType.Bar)
 				{
 					RegionFrom = HawkVolumeProfileRegionFromType.Bar;
@@ -271,9 +230,9 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 					RegionFrom = HawkVolumeProfileRegionFromType.None;
 					RegionTo = HawkVolumeProfileRegionToType.None;
 					ShowRegionBoundaries = false;
-
+					
 				}
-
+				
 				switch (Granularity)
 				{
 					case HawkVolumeProfileGranularityType.Minute:
@@ -308,52 +267,30 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 					listVolItem.Add(new VolItem());		//add 1st item
 					listVolItem.Add(new VolItem());		//add 2nd item
 				}
-
-
+   
+				
 			}
 			else if (State == State.DataLoaded)
 			{
-
+				
 			}
 			else if (State == State.Historical)
 			{
 				 SetZOrder(ZOrder);
-				 RebuildTradeLocationDrawObjects();
-			}
-			else if (State == State.Realtime)
-			{
-				RebuildTradeLocationDrawObjects();
+				
 			}
 			else if(State == State.Transition)
 			{
 				transitionComplete = true;
-
+				
 			}
 		}
 
-
-
+		
+		
 		protected override void OnBarUpdate()
 		{
-			if(BarsInProgress == 0 && EnableTradeLocations)
-			{
-				if(Bars.IsFirstBarOfSession)
-				{
-					DateTime currentSessionDate = Time[0].Date;
-
-					if (lastTradeLocationEvaluationSessionDate == currentSessionDate)
-						return;
-
-					lastTradeLocationEvaluationSessionDate = currentSessionDate;
-
-					PromotePreviousSessionLevels();
-					CreateSessionSnapshotTL();
-					EvaluateTradeLocationConsumptionOnSessionOpen();
-					FinalizeAndCleanupConsumedTL();
-					EnforceHistoryLimit();
-				}
-			}
-
+			
 			if(calcMode == 0)			//Tick Replay enabled
 			{
 				if(BarsInProgress == 1)
@@ -363,11 +300,11 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 						listVolItem[listVolItem.Count - 1].down = sells;
 						listVolItem[listVolItem.Count - 1].up = buys;
 						listVolItem[listVolItem.Count - 1].total = buys + sells;
-
+						
 						buys = 0;
 						sells = 0;
-						listVolItem.Add(new VolItem());
-
+						listVolItem.Add(new VolItem());	
+						
 						lastBar1 = CurrentBars[1];
 					}
 
@@ -382,7 +319,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 						//make a cross reference list of Chart bars vs granularity bars (ie. a list<Bars[0][0], Bars[1][0]> index numbers
 						//so the data series does not have to be reloaded every time the region changes.
 						listPtr.Add(CurrentBars[1]);		//list index = CurrentBars[0], value = CurrentBars[1]
-
+						
 
 						if(RegionFrom == HawkVolumeProfileRegionFromType.Daily)
 						{
@@ -391,9 +328,9 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 								sessionStartList.Add(CurrentBars[0]);
 							}
 						}
-
+						
 						lastBar0 = CurrentBars[0];
-
+						
 						if(transitionComplete)
 						{
 							updateStraddledRegions();
@@ -409,8 +346,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 					listVolItem[listVolItem.Count - 1].up = Closes[1][0] > Opens[1][0] ? (long)Volumes[1][0] : 0;
 					listVolItem[listVolItem.Count - 1].total = (long)Volumes[1][0];
 
-					listVolItem.Add(new VolItem());
-
+					listVolItem.Add(new VolItem());	
+					
 				}
 				else	//BIP == 0
 				{
@@ -423,7 +360,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 							sessionStartList.Add(CurrentBars[0]);
 						}
 					}
-
+					
 
 					if(transitionComplete)
 					{
@@ -433,286 +370,14 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			}
 		}
 
-
-		private void CreateSessionSnapshotTL()
-		{
-			if (CurrentBar < 2 || !previousSessionSnapshotReady)
-				return;
-
-			CreateTradeLocation(previousSessionSnapshotDate, previousSessionPoc, TLType.POC);
-			CreateTradeLocation(previousSessionSnapshotDate, previousSessionVah, TLType.VAH);
-			CreateTradeLocation(previousSessionSnapshotDate, previousSessionVal, TLType.VAL);
-		}
-
-		private void PromotePreviousSessionLevels()
-		{
-			if (currentSessionSnapshotReady)
-			{
-				previousSessionPoc = currentSessionPoc;
-				previousSessionVah = currentSessionVah;
-				previousSessionVal = currentSessionVal;
-				previousSessionSnapshotDate = currentSessionSnapshotDate;
-				previousSessionSnapshotReady = true;
-			}
-			else
-			{
-				previousSessionPoc = double.NaN;
-				previousSessionVah = double.NaN;
-				previousSessionVal = double.NaN;
-				previousSessionSnapshotDate = DateTime.MinValue;
-				previousSessionSnapshotReady = false;
-			}
-
-			currentSessionPoc = double.NaN;
-			currentSessionVah = double.NaN;
-			currentSessionVal = double.NaN;
-			currentSessionSnapshotDate = DateTime.MinValue;
-			currentSessionSnapshotReady = false;
-		}
-
-		private void TryFreezeSessionLevelsFromRender(int regionIndex, int regionCount)
-		{
-			if (!EnableTradeLocations || regionIndex != regionCount - 1)
-				return;
-
-			if (CurrentBar < 1)
-				return;
-
-			if (regionIndex < 0 || regionIndex >= regionStartBar0List.Count)
-				return;
-
-			int regionStartIndex = regionStartBar0List[regionIndex];
-
-			if (!TryGetTimeByBarIndex(regionStartIndex, out DateTime regionStartTime))
-				return;
-
-			DateTime currentSessionDate = regionStartTime.Date;
-			bool hasSnapshotError = double.IsNaN(poc) || poc <= 0
-				|| double.IsNaN(valueAreaHigh) || valueAreaHigh <= 0
-				|| double.IsNaN(valueAreaLow) || valueAreaLow <= 0;
-
-			if (hasSnapshotError)
-			{
-				if (lastFreezeLogSessionDate != currentSessionDate)
-				{
-					lastFreezeLogSessionDate = currentSessionDate;
-					LogEvent(currentSessionDate, "Snapshot inválido");
-				}
-
-				return;
-			}
-
-			currentSessionPoc = poc;
-			currentSessionVah = valueAreaHigh;
-			currentSessionVal = valueAreaLow;
-			currentSessionSnapshotDate = currentSessionDate;
-			currentSessionSnapshotReady = true;
-
-			if (lastFreezeLogSessionDate != currentSessionDate)
-			{
-				lastFreezeLogSessionDate = currentSessionDate;
-				LogEvent(currentSessionDate, $"Freeze capturado | POC={currentSessionPoc:0.#####} VAH={currentSessionVah:0.#####} VAL={currentSessionVal:0.#####}");
-			}
-		}
-
-		private bool TryGetTimeByBarIndex(int barIndex, out DateTime time)
-		{
-			time = DateTime.MinValue;
-
-			if (Bars == null || BarsArray == null || BarsArray.Length == 0)
-				return false;
-
-			if (barIndex < 0 || barIndex > CurrentBar)
-				return false;
-
-			int barsAgo = CurrentBar - barIndex;
-			if (barsAgo < 0 || barsAgo > CurrentBar)
-				return false;
-
-			time = Time[barsAgo];
-			return true;
-		}
-
-		private void EvaluateTradeLocationConsumptionOnSessionOpen()
-		{
-			if (CurrentBar < 2)
-				return;
-
-			DateTime previousSessionDate = Times[0][1].Date;
-
-			for (int i = 0; i < tradeLocations.Count; i++)
-			{
-				var tl = tradeLocations[i];
-
-				if (tl.WasConsumed || tl.SessionDate >= previousSessionDate)
-					continue;
-
-				tl.SeenAbove = false;
-				tl.SeenBelow = false;
-
-				for (int barsAgo = 1; barsAgo < CurrentBar; barsAgo++)
-				{
-					if (Times[0][barsAgo].Date != previousSessionDate)
-						break;
-
-					double close = Close[barsAgo];
-					if (close > tl.Price)
-						tl.SeenAbove = true;
-					else if (close < tl.Price)
-						tl.SeenBelow = true;
-
-					if (tl.SeenAbove && tl.SeenBelow)
-					{
-						tl.WasConsumed = true;
-						LogEvent(previousSessionDate, $"TL consumida | Type={tl.Type} Price={tl.Price:0.#####}");
-						break;
-					}
-				}
-
-				tradeLocations[i] = tl;
-			}
-		}
-
-		private int FindFirstBarOfNextSession(DateTime sessionDate)
-		{
-			for (int i = 0; i < CurrentBar; i++)
-			{
-				if (Times[0][i].Date > sessionDate)
-					return i;
-			}
-
-			return -1;
-		}
-
-		private void CreateTradeLocation(DateTime sessionDate, double price, TLType type)
-		{
-			if (double.IsNaN(price) || price <= 0 || sessionDate == DateTime.MinValue)
-				return;
-
-			string tag = $"HVP_TL_{type}_{sessionDate:yyyyMMdd}_{price:F2}";
-
-			if (tradeLocationTags.Contains(tag))
-				return;
-
-			int nextBarIndex = FindFirstBarOfNextSession(sessionDate);
-			if (nextBarIndex < 0)
-				return;
-
-			DateTime start = Times[0][nextBarIndex];
-
-			tradeLocations.Add(new HawkTradeLocation
-			{
-				Type = type,
-				Price = price,
-				SessionDate = sessionDate,
-				StartTime = start,
-				SeenAbove = false,
-				SeenBelow = false,
-				WasConsumed = false,
-				Tag = tag
-			});
-
-			tradeLocationTags.Add(tag);
-			RebuildTradeLocationDrawObjects();
-			LogEvent(sessionDate, $"TL criada | Type={type} Price={price:0.#####}");
-		}
-
-		private void FinalizeAndCleanupConsumedTL()
-		{
-			bool removedAny = false;
-
-			for (int i = tradeLocations.Count - 1; i >= 0; i--)
-			{
-				var tl = tradeLocations[i];
-
-				if (!tl.WasConsumed)
-					continue;
-
-				tradeLocationTags.Remove(tl.Tag);
-				tradeLocations.RemoveAt(i);
-				removedAny = true;
-			}
-
-			if (removedAny)
-				RebuildTradeLocationDrawObjects();
-		}
-
-		private void RebuildTradeLocationDrawObjects()
-		{
-			foreach (string tag in tradeLocationTags.ToList())
-			{
-				try { RemoveDrawObject(tag); } catch { }
-			}
-
-			tradeLocationTags.Clear();
-
-			if (!EnableTradeLocations)
-				return;
-
-			for (int i = 0; i < tradeLocations.Count; i++)
-			{
-				var tl = tradeLocations[i];
-				if (tl.WasConsumed)
-					continue;
-
-				tradeLocationTags.Add(tl.Tag);
-				Draw.Line(this, tl.Tag, false,
-					tl.StartTime, tl.Price,
-					Time[0], tl.Price,
-					TLColor,
-					DashStyleHelper.Solid,
-					TLLineWidth);
-			}
-		}
-
-		private void LogEvent(DateTime eventTime, string message)
-		{
-			if (!EnableDebugLog)
-				return;
-
-			Print("[HawkVP TL] " + eventTime + " | " + message);
-		}
-
-		private void EnforceHistoryLimit()
-		{
-			if (tradeLocations.Count == 0)
-				return;
-
-			var orderedSessionDates = tradeLocations
-				.Select(tl => tl.SessionDate.Date)
-				.Distinct()
-				.OrderBy(d => d)
-				.ToList();
-
-			bool removedAny = false;
-			while (orderedSessionDates.Count > MaxTradeLocationSessions)
-			{
-				DateTime oldestSessionDate = orderedSessionDates[0];
-				orderedSessionDates.RemoveAt(0);
-
-				for (int i = tradeLocations.Count - 1; i >= 0; i--)
-				{
-					if (tradeLocations[i].SessionDate.Date != oldestSessionDate)
-						continue;
-
-					LogEvent(oldestSessionDate, $"TL removida por histórico | Type={tradeLocations[i].Type} Price={tradeLocations[i].Price:0.#####}");
-					tradeLocationTags.Remove(tradeLocations[i].Tag);
-					tradeLocations.RemoveAt(i);
-					removedAny = true;
-				}
-			}
-
-			if (removedAny)
-				RebuildTradeLocationDrawObjects();
-		}
-
+		
 		protected override void OnMarketData(MarketDataEventArgs e)
 		{
 			if(BarsInProgress == 0 || calcMode != 0)
 				return;
 
 			if(e.MarketDataType == MarketDataType.Last)
-			{
+			{				
 				if(e.Price >= e.Ask)
 				{
 					buys += e.Volume;
@@ -721,11 +386,11 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				{
 					sells += e.Volume;
 				}
-			}
+			}	
 		}
 
-
-
+		
+		
 		void updateStraddledRegions()
 		{
 			double startSlot = 0;
@@ -758,7 +423,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			}
 		}
 
-
+		
 		void makeVPDic(ChartControl chartControl, ChartScale chartScale, ChartPanel chartPanel)
 		{
 			getRegion(chartControl, chartScale, chartPanel);
@@ -770,7 +435,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				{
 					priceDictionary = new Dictionary<double, VolItem>();
 					dictionaryList.Add(priceDictionary);
-
+					
 					int startIdx = regionIdxStart[k];
 					int endIdx = regionIdxEnd[k];
 					for (int i = startIdx; i <= endIdx; i++)
@@ -789,19 +454,18 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 							dictionaryList[k][price].up += listVolItem[i].up;			//update existing dictionary  element
 							dictionaryList[k][price].down += listVolItem[i].down;
 							dictionaryList[k][price].total += listVolItem[i].total;
-						}
+						}	
 					}
 				}
 			}
 		}
-
+		
 		void getRegion(ChartControl chartControl, ChartScale chartScale, ChartPanel chartPanel)
 		{
 			if(ChartBars != null)
 			{
 				regionIdxStart.Clear();
 				regionIdxEnd.Clear();
-				regionStartBar0List.Clear();
 				barWidthFacList.Clear();
 				xposList.Clear();
 
@@ -809,26 +473,23 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				{
 					regionStartBar0 = 0;
 					regionStartBar1 = regionStartBar0 > 0 ? listPtr[regionStartBar0 - 1] + 2 : 1;		//fine data composes larger bars
-					boundaryFromX = chartControl.GetXByBarIndex(ChartBars, regionStartBar0);
+					boundaryFromX = chartControl.GetXByBarIndex(ChartBars, regionStartBar0);	
 					regionIdxStart.Add(regionStartBar1);
-					regionStartBar0List.Add(regionStartBar0);
 				}
 				else if(RegionFrom == HawkVolumeProfileRegionFromType.Window)
 				{
 					regionStartBar0 = ChartBars.FromIndex;									//first bar on chart has index = 0 and recorded in listPtr[1] with last granular bar idx
 					regionStartBar1 = regionStartBar0 > 0 ? listPtr[regionStartBar0 - 1] + 2 : 1;		//fine data composes larger bars
-					boundaryFromX = chartControl.GetXByBarIndex(ChartBars, regionStartBar0);
+					boundaryFromX = chartControl.GetXByBarIndex(ChartBars, regionStartBar0);	
 					regionIdxStart.Add(regionStartBar1);
-					regionStartBar0List.Add(regionStartBar0);
 				}
 				else if(RegionFrom == HawkVolumeProfileRegionFromType.Date)
 				{
 					dateF = dateRange(chartControl, DateFrom);
 					regionStartBar0 = ChartBars.GetBarIdxByTime(chartControl, dateF);
 					regionStartBar1 = regionStartBar0 > 0 ? listPtr[regionStartBar0 - 1] + 2 : 1;		//fine data composes larger bars
-					boundaryFromX = chartControl.GetXByBarIndex(ChartBars, regionStartBar0);
+					boundaryFromX = chartControl.GetXByBarIndex(ChartBars, regionStartBar0);	
 					regionIdxStart.Add(regionStartBar1);
-					regionStartBar0List.Add(regionStartBar0);
 				}
 				else if(RegionFrom == HawkVolumeProfileRegionFromType.Bar)
 				{
@@ -840,12 +501,12 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				{
 				}
 
-
+				
 				if(RegionTo == HawkVolumeProfileRegionToType.Current)
 				{
 					regionEndBar0 = BarsArray[0].Count - 1;
-					regionEndBar1 = listVolItem.Count - 2;		//extra volItems added in configure
-					boundaryToX = chartControl.GetXByBarIndex(ChartBars, regionEndBar0);
+					regionEndBar1 = listVolItem.Count - 2;		//extra volItems added in configure	
+					boundaryToX = chartControl.GetXByBarIndex(ChartBars, regionEndBar0);	
 					regionIdxEnd.Add(regionEndBar1);
 					windowBarWidthFacList(chartPanel);
 					windowXpos(chartControl);
@@ -854,7 +515,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				{
 					regionEndBar0 = ChartBars.ToIndex;
 					loadRegionEndBar1();
-					boundaryToX = chartControl.GetXByBarIndex(ChartBars, regionEndBar0);
+					boundaryToX = chartControl.GetXByBarIndex(ChartBars, regionEndBar0);	
 					regionIdxEnd.Add(regionEndBar1);
 					windowBarWidthFacList(chartPanel);
 					windowXpos(chartControl);
@@ -864,7 +525,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 					dateT = dateRange(chartControl, DateTo);
 					regionEndBar0 = ChartBars.GetBarIdxByTime(chartControl, dateT);
 					loadRegionEndBar1();
-					boundaryToX = chartControl.GetXByBarIndex(ChartBars, regionEndBar0);
+					boundaryToX = chartControl.GetXByBarIndex(ChartBars, regionEndBar0);	
 					regionIdxEnd.Add(regionEndBar1);
 					windowBarWidthFacList(chartPanel);
 					windowXpos(chartControl);
@@ -875,10 +536,9 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 					lastWindowBar = ChartBars.ToIndex;
 					for (int i = firstWindowBar; i <= lastWindowBar; i++)
 					{
-						regionStartBar0 = i;
+						regionStartBar0 = i;			
 						regionStartBar1 = regionStartBar0 > 0 ? listPtr[regionStartBar0 - 1] + 2 : 1;		//fine data composes larger bars
 						regionIdxStart.Add(regionStartBar1);
-						regionStartBar0List.Add(regionStartBar0);
 						regionEndBar0 = i;
 						loadRegionEndBar1();
 						regionIdxEnd.Add(regionEndBar1);
@@ -895,24 +555,23 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 						}
 						regionStartX = regionStartX + (barWidthP);
 						regionEndX = regionStartX + regionWidth;
-
+						
 						barBarWidthFacList();
 						barXpos();
 					}
-
+					
 				}
 				else if(RegionTo == HawkVolumeProfileRegionToType.Daily)
 				{
 					firstWindowBar = ChartBars.FromIndex;
 					lastWindowBar = ChartBars.ToIndex;
-					fillSessionStartsInWindowList();		//build list of FirstBarOfSession bars in window
+					fillSessionStartsInWindowList();		//build list of FirstBarOfSession bars in window 
 
 					for (int i = 0; i <= sessionStartsInWindowList.Count - 1; i++)
 					{
-						regionStartBar0 = sessionStartsInWindowList[i];
+						regionStartBar0 = sessionStartsInWindowList[i];			
 						regionStartBar1 = regionStartBar0 > 0 ? listPtr[regionStartBar0 - 1] + 2 : 1;		//fine data composes larger bars
 						regionIdxStart.Add(regionStartBar1);
-						regionStartBar0List.Add(regionStartBar0);
 						if(i + 1 <= sessionStartsInWindowList.Count - 1)
 						{
 							if(sessionStartsInWindowList[i + 1] <= lastWindowBar)
@@ -944,13 +603,13 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 						regionWidth = Math.Max(.80 * ((chartControl.GetXByBarIndex(ChartBars, regionEndBar0) - regionStartX) - (2 * barWidthP)), 0);
 						regionStartX = regionStartX + (barWidthP);
 						regionEndX = regionStartX + regionWidth;
-
+						
 						barBarWidthFacList();
 						barXpos();
 					}
 
 				}
-
+				
 				else if(RegionTo == HawkVolumeProfileRegionToType.None)
 				{
 				}
@@ -987,12 +646,12 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 							regionEndSlot = Math.Max(rgnStartSlot, rgnEndSlot);
 							regionStartX = Math.Min(rgnStartX, rgnEndX);
 							regionEndX = Math.Max(rgnStartX, rgnEndX);
-
+							
 							if(regionEndX < chartControl.GetXByBarIndex(ChartBars, regionEndSlot))
 							{
 								if(regionEndSlot != regionStartSlot) regionEndSlot = regionEndSlot - 1;
 							}
-
+							
 							if(regionStartSlot >= BarsArray[0].Count - 1)
 							{
 								regionStartBar0 = BarsArray[0].Count - 1;
@@ -1003,7 +662,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 							}
 							regionStartBar1 = regionStartBar0 > 0 ? listPtr[regionStartBar0 - 1] + 2 : 1;		//fine data composes larger bars
 							regionIdxStart.Add(regionStartBar1);
-							regionStartBar0List.Add(regionStartBar0);
 
 							if(regionEndSlot >= BarsArray[0].Count - 1)
 							{
@@ -1025,7 +683,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			}
 		}
 
-
+		
 		//load barWidthFacList with setup numbers for later processing
 		void windowBarWidthFacList(ChartPanel chartPanel)
 		{
@@ -1076,7 +734,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				xposList.Add(chartControl.CanvasRight - Margin);
 			}
 		}
-
+		
 		void DrawingToolXpos()
 		{
 			if(Orientation == HawkVolumeProfileOrientationType.Left)
@@ -1088,7 +746,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				xposList.Add((int) regionEndX);
 			}
 		}
-
+		
 		void barXpos()
 		{
 			if(Orientation == HawkVolumeProfileOrientationType.Left)
@@ -1105,8 +763,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		{
 			lastChartBarTime = ChartBars.GetTimeByBarIdx(chartControl, (BarsArray[0].Count - 1));
 			firstChartBarTime = ChartBars.GetTimeByBarIdx(chartControl, 0);
-			if(date > lastChartBarTime)
-			{
+			if(date > lastChartBarTime) 
+			{	
 				date = lastChartBarTime;
 			}
 			else if(date < firstChartBarTime)
@@ -1120,7 +778,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		{
 			if(regionEndBar0 == (BarsArray[0].Count - 1))
 			{
-				regionEndBar1 = listVolItem.Count - 2;		//extra volItems added in configure
+				regionEndBar1 = listVolItem.Count - 2;		//extra volItems added in configure	
 			}
 			else	//not the working bar
 			{
@@ -1134,7 +792,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				}
 			}
 		}
-
+		
 		void fillSessionStartsInWindowList()
 		{
 			int start = 0;
@@ -1148,7 +806,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 					break;
 				}
 			}
-
+			
 			for(int i = start; i <= sessionStartList.Count - 1; i++)
 			{
 				if(sessionStartList[i] >= firstWindowBar && sessionStartList[i] <= lastWindowBar)
@@ -1160,39 +818,19 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 					break;
 				}
 			}
-
+			
 		}
-
-
-
-
-
-
+		
+		
+		
+		
+		
+		
 		protected override void OnRender(ChartControl chartControl, ChartScale chartScale)
 		{
 			++cycle;
-			if(Bars == null || Bars.Instrument == null || ChartBars == null || IsInHitTest || !transitionComplete)
+			if(Bars == null || Bars.Instrument == null || IsInHitTest || !transitionComplete) 
 				return;
-
-			if (CurrentBar < 2)
-				return;
-
-			int toIdx = ChartBars.ToIndex;
-			int fromIdx = ChartBars.FromIndex;
-
-			if (toIdx < 0 || fromIdx < 0 || toIdx > CurrentBar || fromIdx > CurrentBar)
-			{
-				if (EnableDebugLog)
-					Print($"[HawkVP] OnRender guard: viewport inválido | From={fromIdx} To={toIdx} CurrentBar={CurrentBar}");
-				return;
-			}
-
-			if (fromIdx > toIdx)
-			{
-				if (EnableDebugLog)
-					Print($"[HawkVP] OnRender guard: viewport invertido | From={fromIdx} To={toIdx} CurrentBar={CurrentBar}");
-				return;
-			}
 
 			if(ShowPerformance)
 			{
@@ -1242,13 +880,13 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 
 			SharpDX.Direct2D1.Brush bidImbalanceBrushDX	= BidImbalanceBrush.ToDxBrush(RenderTarget);
 			bidImbalanceBrushDX.Opacity = (float)(OpacityText / 100.0);
-
-
+			
+			
 
 			makeVPDic(chartControl, chartScale, chartPanel);
 
-
-			if(ShowRegionBoundaries)
+			
+			if(ShowRegionBoundaries) 
 			{
 				barWidth = (float) chartControl.GetBarPaintWidth(chartControl.BarsArray[0]);	//pixels
 				barHeight = barWidth;
@@ -1261,7 +899,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				brushDX = deltaNegativeBrushDX;
 				RenderTarget.FillRectangle(new SharpDX.RectangleF(xpos, yUpper, barWidth, barHeight), brushDX);
 			}
-
+			
 			double space 		= Math.Max(0, tickSize * barSpacing / 2);												//$
 			double yUpperAdder 	= (tickSize / 2) - space;
 					barHeight 	= Math.Max(1, chartScale.GetPixelsForDistance(tickSize - (tickSize * barSpacing)));		//pixels
@@ -1288,9 +926,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 						{
 							GetValueArea(i, tickSize);
 						}
-
-						TryFreezeSessionLevelsFromRender(i, dictionaryList.Count);
-
+						
 						double barWidthFac;
 						if(ScaleType == HawkVolumeProfileScaleType.MaxOfLadder)
 						{
@@ -1330,7 +966,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 								RenderTarget.FillRectangle(new SharpDX.RectangleF(xpos, yUpper, barWidth, barHeight), valueAreaFillBrushDX);
 							}
 						}
-
+						
 						if(ShowVolumeProfile == true)
 						{
 							foreach (KeyValuePair<double, VolItem> element in dictionaryList[i])
@@ -1348,7 +984,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 							{
 								yUpper = chartScale.GetYByValue(element.Key + yUpperAdder);				//pixels
 								GetXpos();
-
+								
 								bidWidth =  (float)Math.Ceiling(element.Value.down * barWidthFac);		// .Ceiling makes 1 pixel minimum
 								askWidth =  (float)Math.Ceiling(element.Value.up * barWidthFac);
 								totalWidth =  (float)Math.Ceiling((element.Value.total - element.Value.down - element.Value.up) * barWidthFac);
@@ -1374,7 +1010,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 								{
 									RenderTarget.FillRectangle(bidRect, bidVolumeBrushDX);
 								}
-
+								
 								if (element.Value.askimbalance == true)
 								{
 									RenderTarget.FillRectangle(askRect, askImbalanceBrushDX);
@@ -1392,7 +1028,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 						{
 							double delta = 0;
 							double deltaMax = 0;
-
+							
 							foreach (KeyValuePair<double, VolItem> element in dictionaryList[i])
 							{
 
@@ -1402,9 +1038,9 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 									deltaMax = Math.Abs(delta);		//deltaMax is an absolute value
 								}
 							}
-
+							
 							double deltaBarWidthFac = barWidthFac * volMax / deltaMax * DeltaScale;		//delta relative to volMax
-
+							
 							foreach (KeyValuePair<double, VolItem> element in dictionaryList[i])
 							{
 								yUpper = chartScale.GetYByValue(element.Key + yUpperAdder);				//pixels
@@ -1424,7 +1060,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 								RenderTarget.FillRectangle(new SharpDX.RectangleF(xpos, yUpper, barWidth, barHeight), brushDX);
 							}
 						}
-
+						
 						if(ShowValueArea && valueAreaHigh != 0)
 						{
 							barWidth = (float) (dictionaryList[i][poc].total * barWidthFac);
@@ -1456,7 +1092,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 								foreach (KeyValuePair<double, VolItem> element in dictionaryList[i])
 								{
 									yUpper = chartScale.GetYByValue(element.Key + yUpperAdder);				//pixels
-
+									
 									if(ShowScale == HawkVolumeProfileShowScaleType.Volume)
 									{
 										rowVolumeStr = RowVolumeString(element.Value.total);				//format number
@@ -1475,7 +1111,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 											color = 1;
 										}
 									}
-
+									
 									GetXpos();
 									int y = chartScale.GetYByValue(element.Key + textYUpperAddr);
 									if(Orientation == HawkVolumeProfileOrientationType.Left)
@@ -1509,7 +1145,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 								}
 				            }
 						}
-
+						
 						if(ShowScale == HawkVolumeProfileShowScaleType.BidAsk)
 						{
 							string askVolumeStr = "";
@@ -1521,14 +1157,14 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 								SharpDX.DirectWrite.TextFormat leadingTextFormat = new SharpDX.DirectWrite.TextFormat(NinjaTrader.Core.Globals.DirectWriteFactory, "Arial", textHeight){TextAlignment = SharpDX.DirectWrite.TextAlignment.Leading, ParagraphAlignment = SharpDX.DirectWrite.ParagraphAlignment.Center};
 								SharpDX.DirectWrite.TextFormat trailingTextFormat = new SharpDX.DirectWrite.TextFormat(NinjaTrader.Core.Globals.DirectWriteFactory, "Arial", textHeight){TextAlignment = SharpDX.DirectWrite.TextAlignment.Trailing, ParagraphAlignment = SharpDX.DirectWrite.ParagraphAlignment.Center};
 								SharpDX.DirectWrite.TextFormat centerTextFormat = new SharpDX.DirectWrite.TextFormat(NinjaTrader.Core.Globals.DirectWriteFactory, "Arial", textHeight){TextAlignment = SharpDX.DirectWrite.TextAlignment.Center, ParagraphAlignment = SharpDX.DirectWrite.ParagraphAlignment.Center};
-
+								
 								string maxAsk = RowVolumeString(dictionaryList[i].Values.Max(kvp => kvp.up));
 								string maxBid = RowVolumeString(dictionaryList[i].Values.Max(kvp => kvp.down));
 								SharpDX.DirectWrite.TextLayout textAskLayout = new SharpDX.DirectWrite.TextLayout(Core.Globals.DirectWriteFactory, maxAsk, leadingTextFormat, 1500, textHeight);
 								float textAskWidth = textAskLayout.Metrics.Width + 1;	//+1 funny number
 								SharpDX.DirectWrite.TextLayout textBidLayout = new SharpDX.DirectWrite.TextLayout(Core.Globals.DirectWriteFactory, maxBid, trailingTextFormat, 1500, textHeight);
 								float textBidWidth = textBidLayout.Metrics.Width + 1;	//+1 funny number
-
+								
 								if (ShowImbalance == true)
 								{
 									midChar = "/";
@@ -1539,16 +1175,16 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 								}
 								SharpDX.DirectWrite.TextLayout midLayout = new SharpDX.DirectWrite.TextLayout(Core.Globals.DirectWriteFactory, "xxx", leadingTextFormat, 1500, textHeight);
 								float midWidth = midLayout.Metrics.Width;
-
+								
 								foreach (KeyValuePair<double, VolItem> element in dictionaryList[i])
 								{
 									askVolumeStr = RowVolumeString(element.Value.up);
 									bidVolumeStr = RowVolumeString(element.Value.down);
-
+									
 									GetXpos();
-
+									
 									int y = chartScale.GetYByValue(element.Key + textYUpperAddr);
-
+									
 									if(Orientation == HawkVolumeProfileOrientationType.Left)
 									{
 										bidRect = new SharpDX.RectangleF(xpos + 2, y, textBidWidth, textHeight);
@@ -1563,9 +1199,9 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 										{
 											RenderTarget.DrawText(bidVolumeStr, trailingTextFormat, bidRect, textPosBrushDX);
 										}
-
+										
 										RenderTarget.DrawText(midChar, centerTextFormat, midRect, textPosBrushDX);
-
+										
 										if (element.Value.askimbalance == true)
 										{
 											RenderTarget.DrawText(askVolumeStr, leadingTextFormat, askRect, askImbalanceBrushDX);
@@ -1580,7 +1216,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 										askRect = new SharpDX.RectangleF(x - 2 - textAskWidth, y, textAskWidth, textHeight);
 										midRect = new SharpDX.RectangleF(x - 2 - textAskWidth - midWidth, y, midWidth, textHeight);
 										bidRect = new SharpDX.RectangleF(x - 2 - textAskWidth - midWidth - textBidWidth, y, textBidWidth, textHeight);
-
+										
 										if (element.Value.bidimbalance == true)
 										{
 											RenderTarget.DrawText(bidVolumeStr, trailingTextFormat, bidRect, bidImbalanceBrushDX);
@@ -1589,9 +1225,9 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 										{
 											RenderTarget.DrawText(bidVolumeStr, trailingTextFormat, bidRect, textPosBrushDX);
 										}
-
+										
 										RenderTarget.DrawText(midChar, centerTextFormat, midRect, textPosBrushDX);
-
+										
 										if (element.Value.askimbalance == true)
 										{
 											RenderTarget.DrawText(askVolumeStr, leadingTextFormat, askRect, askImbalanceBrushDX);
@@ -1613,7 +1249,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 					}
 				}
 			}
-
+		
 			brushDX.Dispose();
 			volFillBrushDX.Dispose();
 			askVolumeBrushDX.Dispose();
@@ -1627,7 +1263,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			valueAreaLineBrushDX.Dispose();
 			askImbalanceBrushDX.Dispose();
 			bidImbalanceBrushDX.Dispose();
-
+			
 
 			if(ShowPerformance)
 			{
@@ -1639,10 +1275,10 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 					+ " "
 					);
 			}
-
+			
 		}
 
-
+		
 
 		void GetXpos()
 		{
@@ -1651,9 +1287,9 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				xpos = x - barWidth;
 			}
 		}
+		
 
-
-
+		
 		void GetValueArea(int i, double tickSize)
 		{
 			if(dictionaryList[i].Count > 0 && poc != 0)
@@ -1666,7 +1302,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				long areaVol = 0;
 				valueAreaHigh = 0;
 				valueAreaLow = 0;
-
+				
 				List<double> priceList = new List<double>();
 				foreach (KeyValuePair<double, VolItem> element in dictionaryList[i])
 				{
@@ -1675,7 +1311,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				}
 				valueVol = (long)(valueVol * valueAreaFac);
 				priceList.Sort();
-
+				
 				for (int n = 0; n <= priceList.Count - 1; ++n)
 				{
 					if(priceList[n] == poc)
@@ -1685,7 +1321,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 						break;
 					}
 				}
-
+				
 				areaVol = dictionaryList[i][poc].total;
 				while(areaVol < valueVol)
 				{
@@ -1697,7 +1333,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 							++highIdx;
 						}
 					}
-
+					
 					if(dnTestV == 0)
 					{
 						for (int n = 1; (n <= SmoothVA && lowIdx > 0); ++n)
@@ -1706,7 +1342,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 							--lowIdx;
 						}
 					}
-
+					
 					if(upTestV > dnTestV)
 					{
 						areaVol += upTestV;
@@ -1714,7 +1350,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 					}
 					else
 					{
-						areaVol += dnTestV;
+						areaVol += dnTestV; 
 						dnTestV = 0;
 					}
 
@@ -1724,9 +1360,9 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			}
 		}
 
-
-
-
+		
+		
+		
 		void FindImbalances(int i, double tickSize)
 		{
 			double askPrice = 0;
@@ -1736,7 +1372,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			double lowPrice = 0;
 			double highPrice = 0;
 			VolItem value;
-
+			
 			if(dictionaryList[i].Count > 0)
 			{
 				lowPrice = dictionaryList[i].Keys.Min();
@@ -1746,7 +1382,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				{
 					contPriceList.Add(n);
 				}
-
+				
 				for(int n = 1; n <= contPriceList.Count - 1; ++n)
 				{
 					askVolume = dictionaryList[i].TryGetValue(contPriceList[n], out value) ? dictionaryList[i][contPriceList[n]].up : 0;
@@ -1778,12 +1414,12 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 						}
 					}
 				}
-
+				
 			}
 		}
 
-
-
+		
+		
 		private string RowVolumeString(long volume)
 		{
 			if (volume >= 100000)
@@ -1791,10 +1427,10 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			else
 				return volume.ToString();
 		}
-
-
-
-
+		
+		
+		
+		
 
 		#region Properties
 		[NinjaScriptProperty]
@@ -1836,7 +1472,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		[Display(ResourceType = typeof(Custom.Resource), Name = "Opacity Text", Order = 7, GroupName = "NinjaScriptParameters")]
 		public double OpacityText
 		{ get; set; }
-
+		
 		[Range(-1,int.MaxValue), NinjaScriptProperty]
 		[Display(ResourceType = typeof(Custom.Resource), Name="Z-Order", Description="-1 background, 999999... foreground", Order = 8, GroupName = "NinjaScriptParameters")]
 		public int ZOrder
@@ -1868,7 +1504,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		[Display(ResourceType = typeof(Custom.Resource), Name = "Show Scale", Description="",  Order = 14, GroupName = "NinjaScriptParameters")]
 		public HawkVolumeProfileShowScaleType ShowScale
 		{get; set;}
-
+		
 		[Display(ResourceType = typeof(Custom.Resource), Name = "Show POC", Description=" ",  Order = 1, GroupName = "POC")]
 		public bool ShowPoc
 		{ get; set; }
@@ -1882,40 +1518,11 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		[Display(ResourceType = typeof(Custom.Resource), Name = "POC Opacity", Description=" ",  Order = 4, GroupName = "POC")]
 		public double PocOpacity
 		{ get; set; }
-
+		
 		[Display(ResourceType = typeof(Custom.Resource), Name = "Show Value Area", Description=" ",  Order = 16, GroupName = "VA")]
 		public bool ShowValueArea
 		{ get; set; }
-
-		[Display(Name = "Enable Trade Locations", Order = 1, GroupName = "Trade Location")]
-		[NinjaScriptProperty]
-		public bool EnableTradeLocations { get; set; }
-
-		[Range(1, 50)]
-		[Display(Name = "Max TL Sessions", Order = 2, GroupName = "Trade Location")]
-		[NinjaScriptProperty]
-		public int MaxTradeLocationSessions { get; set; }
-
-		[Range(1, 10)]
-		[Display(Name = "TL Line Width", Order = 3, GroupName = "Trade Location")]
-		[NinjaScriptProperty]
-		public int TLLineWidth { get; set; }
-
-		[XmlIgnore]
-		[Display(Name = "TL Color", Order = 4, GroupName = "Trade Location")]
-		public Brush TLColor { get; set; }
-
-		[NinjaScriptProperty]
-		[Display(Name = "Enable Debug Log", GroupName = "Diagnostics", Order = 1)]
-		public bool EnableDebugLog { get; set; }
-
-		[Browsable(false)]
-		public string TLColorSerialize
-		{
-			get { return Serialize.BrushToString(TLColor); }
-			set { TLColor = Serialize.StringToBrush(value); }
-		}
-
+		
 		[Range(0, 99.99)]
 		[Display(ResourceType = typeof(Custom.Resource), Name = "Value Area Percent", Description="Defines value area as percent of total, usually 70%",  Order = 17, GroupName = "VA")]
 		public double ValueAreaPercent
@@ -1975,15 +1582,15 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		[Display(ResourceType = typeof(Custom.Resource), Name = "Show Region Boundarys", Description=" ",  Order = 21, GroupName = "NinjaScriptParameters")]
 		public bool ShowRegionBoundaries
 		{ get; set; }
-
+		
 		[Display(ResourceType = typeof(Custom.Resource), Name = "Enable HawkVpRegions", Description="Draw profile in mouse regions",  Order = 22, GroupName = "NinjaScriptParameters")]
 		public bool EnableHawkVpRegions
 		{ get; set; }
-
+		
 		[Display(ResourceType = typeof(Custom.Resource), Name = "Show Performance", Description="Elapsed time to generate the volume profile and repaint the screen",  Order = 23, GroupName = "NinjaScriptParameters")]
 		public bool ShowPerformance
 		{ get; set; }
-
+		
 		[NinjaScriptProperty]
 		[Display(ResourceType = typeof(Custom.Resource), Name = "Granularity", Description="",  Order = 24, GroupName = "NinjaScriptParameters")]
 		public HawkVolumeProfileGranularityType Granularity
@@ -2114,7 +1721,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			get { return Serialize.BrushToString(ValueAreaColorBrush); }
 			set { ValueAreaColorBrush = Serialize.StringToBrush(value); }
 		}
-
+		
 		[XmlIgnore]
 		[Display(ResourceType = typeof(Custom.Resource), Name = "Bid Imbalance Hightlight Color", Order = 39, GroupName = "NinjaScriptParameters")]
 		public Brush BidImbalanceBrush { get; set; }
@@ -2125,7 +1732,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			get { return Serialize.BrushToString(BidImbalanceBrush); }
 			set { BidImbalanceBrush = Serialize.StringToBrush(value); }
 		}
-
+		
 		[XmlIgnore]
 		[Display(ResourceType = typeof(Custom.Resource), Name = "Ask Imbalance Hightlight Color", Order = 40, GroupName = "NinjaScriptParameters")]
 		public Brush AskImbalanceBrush { get; set; }
@@ -2136,7 +1743,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			get { return Serialize.BrushToString(AskImbalanceBrush); }
 			set { AskImbalanceBrush = Serialize.StringToBrush(value); }
 		}
-
+		
 		#endregion
 	}
 }
