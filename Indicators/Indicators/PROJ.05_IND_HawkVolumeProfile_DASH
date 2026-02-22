@@ -179,6 +179,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				ShowRegionBoundaries		= false;
 				ShowPerformance				= false;
 				EnableDebugLog				= false;
+				ToolMode					= false;
 
 				Granularity					= HawkVolumeProfileGranularityType.Tick;
 				GranularityPeriod			= 100;
@@ -452,15 +453,51 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		{
 			try
 			{
-				// 1) Observa o bus (log/miss reset)
 				WatchToolSelection(chartControl);
-
-				// 2) Aplica seleção do tool ANTES de getRegion()
-				//    Isso garante que _toolActive esteja definido e que getRegion() respeite o "lock".
 				TryApplyToolSelection(chartControl, chartPanel);
 
-				// 3) Só calcula região padrão se tool não estiver ativo (getRegion tem guarda)
-				getRegion(chartControl, chartScale, chartPanel);
+				if(ToolMode)
+				{
+					if(!_toolActive)
+					{
+						dictionaryList.Clear();
+						regionIdxStart.Clear();
+						regionIdxEnd.Clear();
+
+						regionBar0Start.Clear();
+						regionBar0End.Clear();
+						barWidthFacList.Clear();
+						xposList.Clear();
+
+						_lastToolRangeSignature = null;
+						return;
+					}
+
+					if(regionBar0Start.Count == 0 || regionBar0End.Count == 0
+						|| barWidthFacList.Count == 0 || xposList.Count == 0)
+					{
+						dictionaryList.Clear();
+						regionIdxStart.Clear();
+						regionIdxEnd.Clear();
+						return;
+					}
+
+					int rangeCount = Math.Min(regionBar0Start.Count, regionBar0End.Count);
+					for(int i = 0; i < rangeCount; i++)
+					{
+						if(regionBar0Start[i] > regionBar0End[i])
+						{
+							dictionaryList.Clear();
+							regionIdxStart.Clear();
+							regionIdxEnd.Clear();
+							return;
+						}
+					}
+				}
+				else
+				{
+					getRegion(chartControl, chartScale, chartPanel);
+				}
 
 				var ctx = new HawkVpContext
 				{
@@ -656,6 +693,9 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 
 		void getRegion(ChartControl chartControl, ChartScale chartScale, ChartPanel chartPanel)
 		{
+			if(ToolMode)
+				return;
+
 			if(ChartBars == null)
 				return;
 
@@ -1656,6 +1696,11 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		[NinjaScriptProperty]
 		[Display(Name="Enable Debug Log", Order=999, GroupName="Diagnostics")]
 		public bool EnableDebugLog
+		{ get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name="Tool Mode", GroupName="Parameters", Order=999)]
+		public bool ToolMode
 		{ get; set; }
 
 		[NinjaScriptProperty]
