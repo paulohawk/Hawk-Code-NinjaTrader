@@ -2,7 +2,9 @@
 using System;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
+using NinjaTrader.Code;
 using NinjaTrader.Gui.Chart;
+using NinjaTrader.Gui.Tools;
 using NinjaTrader.NinjaScript;
 using NinjaTrader.NinjaScript.Indicators.Hawk.Volume.Engine;
 #endregion
@@ -15,6 +17,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 	public class HawkVpRegion : RegionHighlightBase
 	{
 		private DateTime _lastPublishUtc = DateTime.MinValue;
+		private DateTime _lastLogUtc = DateTime.MinValue;
 		private int _chartKey;
 
 		[NinjaScriptProperty]
@@ -37,9 +40,11 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 				Mode = RegionHighlightMode.Time;
 				PublishRange = true;
 				PublishThrottleMs = 150;
+				Output.Process("[HawkVpRegion] SetDefaults ok", PrintTo.OutputTab1);
 			}
 			else if (State == State.Terminated)
 			{
+				Output.Process($"[HawkVpRegion] Terminated key={_chartKey}", PrintTo.OutputTab1);
 				if (_chartKey != 0)
 					HawkVpSelectionBus.Clear(_chartKey);
 			}
@@ -48,34 +53,61 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 		public override void OnRender(ChartControl chartControl, ChartScale chartScale)
 		{
 			base.OnRender(chartControl, chartScale);
+			LogTool("[HawkVpRegion] OnRender tick", 1000);
 			TryPublishSelection(chartControl);
+		}
+
+		private void LogTool(string msg, int minMs = 250)
+		{
+			DateTime nowUtc = DateTime.UtcNow;
+			if ((nowUtc - _lastLogUtc).TotalMilliseconds < minMs)
+				return;
+
+			Output.Process(msg, PrintTo.OutputTab1);
+			_lastLogUtc = nowUtc;
 		}
 
 		private void TryPublishSelection(ChartControl chartControl)
 		{
 			if (!PublishRange)
+			{
+				LogTool("[HawkVpRegion] PublishRange=false", 1500);
 				return;
+			}
 
 			DateTime nowUtc = DateTime.UtcNow;
 			if ((nowUtc - _lastPublishUtc).TotalMilliseconds < PublishThrottleMs)
 				return;
 
-			if (chartControl == null || StartAnchor == null || EndAnchor == null)
+			if (chartControl == null)
+			{
+				LogTool("[HawkVpRegion] chartControl=null", 1500);
 				return;
+			}
 
-			var cb = (chartControl != null
-					  && chartControl.BarsArray != null
-					  && chartControl.BarsArray.Count > 0)
-				? chartControl.BarsArray[0]
-				: null;
+			if (StartAnchor == null || EndAnchor == null)
+			{
+				LogTool("[HawkVpRegion] anchors null", 1500);
+				return;
+			}
+
+			bool usedChartBars = ChartBars != null;
+			var cb = usedChartBars ? ChartBars : (ChartPanel != null ? ChartPanel.ChartBars : null);
+			LogTool($"[HawkVpRegion] cb source={(usedChartBars ? "ChartBars" : "ChartPanel")}", 2000);
 
 			if (cb == null || cb.Bars == null || cb.Bars.Count <= 0)
+			{
+				LogTool("[HawkVpRegion] cb/bars null or empty", 1500);
 				return;
+			}
 
 			DateTime t1 = StartAnchor.Time;
 			DateTime t2 = EndAnchor.Time;
 			if (t1 == DateTime.MinValue || t2 == DateTime.MinValue)
+			{
+				LogTool("[HawkVpRegion] anchor time invalid", 1500);
 				return;
+			}
 
 			if (t1 > t2)
 			{
@@ -87,7 +119,10 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 			int startBar0 = cb.GetBarIdxByTime(chartControl, t1);
 			int endBar0   = cb.GetBarIdxByTime(chartControl, t2);
 			if (startBar0 < 0 || endBar0 < 0)
+			{
+				LogTool($"[HawkVpRegion] GetBarIdxByTime invalid ({startBar0},{endBar0})", 1500);
 				return;
+			}
 
 			int bars0Max = cb.Bars.Count - 1;
 
@@ -104,6 +139,8 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 			if (_chartKey == 0)
 				_chartKey = chartControl.GetHashCode();
 
+			Output.Process($"[HawkVpRegion] PUBLISH key={_chartKey} {t1:HH:mm:ss}->{t2:HH:mm:ss} bars {startBar0}->{endBar0}", PrintTo.OutputTab1);
+
 			HawkVpSelectionBus.Set(_chartKey, new HawkVpSelection
 			{
 				ChartKey = _chartKey,
@@ -113,6 +150,8 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 				EndBar0 = endBar0,
 				UpdatedUtc = nowUtc
 			});
+
+			Output.Process($"[HawkVpRegion] PUBLISHED key={_chartKey} utc={nowUtc:O}", PrintTo.OutputTab1);
 
 			_lastPublishUtc = nowUtc;
 		}

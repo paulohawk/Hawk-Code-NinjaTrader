@@ -134,6 +134,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		private bool _renderLogged;
 		private bool _fullyInitialized;
 		private string _lastToolRangeSignature;
+		private DateTime _lastSeenToolUtc = DateTime.MinValue;
+		private DateTime _lastToolMissLogUtc = DateTime.MinValue;
 
 		#endregion
 
@@ -446,6 +448,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			try
 			{
 				getRegion(chartControl, chartScale, chartPanel);
+				WatchToolSelection(chartControl);
 
 				var ctx = new HawkVpContext
 				{
@@ -482,6 +485,30 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			{
 				LogCritical($"Volume calculation aborted: {ex.Message}");
 				return;
+			}
+		}
+
+		private void WatchToolSelection(ChartControl chartControl)
+		{
+			if(chartControl == null)
+				return;
+
+			int key = chartControl.GetHashCode();
+			if(HawkVpSelectionBus.TryGet(key, out var sel) && sel != null)
+			{
+				if(sel.UpdatedUtc != _lastSeenToolUtc)
+				{
+					_lastSeenToolUtc = sel.UpdatedUtc;
+					LogEvent($"ToolSel key={key} bars {sel.StartBar0}->{sel.EndBar0} ageMs={(DateTime.UtcNow - sel.UpdatedUtc).TotalMilliseconds:0}", false);
+				}
+				return;
+			}
+
+			DateTime nowUtc = DateTime.UtcNow;
+			if((nowUtc - _lastToolMissLogUtc).TotalSeconds >= 10)
+			{
+				_lastToolMissLogUtc = nowUtc;
+				LogEvent($"ToolSel miss key={key}", false);
 			}
 		}
 
