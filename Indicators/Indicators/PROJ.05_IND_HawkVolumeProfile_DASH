@@ -135,6 +135,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		private bool _fullyInitialized;
 		private string _lastToolRangeSignature;
 		private DateTime _lastSeenToolUtc = DateTime.MinValue;
+		private DateTime _lastSeenToolBusUtc = DateTime.MinValue;
 		private DateTime _lastToolMissLogUtc = DateTime.MinValue;
 
 		#endregion
@@ -448,6 +449,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			try
 			{
 				getRegion(chartControl, chartScale, chartPanel);
+				TryApplyToolSelection(chartControl, chartPanel);
 				WatchToolSelection(chartControl);
 
 				var ctx = new HawkVpContext
@@ -463,6 +465,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				var regionsBar0 = new List<(int startBar0, int endBar0)>();
 				for (int i = 0; i < regionBar0Start.Count && i < regionBar0End.Count; i++)
 					regionsBar0.Add((regionBar0Start[i], regionBar0End[i]));
+				if(EnableDebugLog)
+					LogEvent($"regionsBar0.Count={regionsBar0.Count}", false);
 
 				HawkVpResult result = HawkVpEngine.CalculateProfiles(ctx, regionsBar0);
 
@@ -488,6 +492,67 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			}
 		}
 
+		private bool TryApplyToolSelection(ChartControl chartControl, ChartPanel chartPanel)
+		{
+			try
+			{
+				if(chartControl == null)
+					return false;
+
+				HawkVpSelection sel;
+				if(!HawkVpSelectionBus.TryGet(chartControl.GetHashCode(), out sel))
+					return false;
+
+				if(sel == null || sel.StartBar0 < 0 || sel.EndBar0 < 0)
+					return false;
+
+				if(BarsArray == null || BarsArray.Length == 0 || BarsArray[0] == null || BarsArray[0].Count <= 0)
+					return false;
+
+				int max = BarsArray[0].Count - 1;
+				int start = Math.Max(0, Math.Min(sel.StartBar0, max));
+				int end = Math.Max(0, Math.Min(sel.EndBar0, max));
+
+				if(start > end)
+				{
+					int tmp = start;
+					start = end;
+					end = tmp;
+				}
+
+				regionBar0Start.Clear();
+				regionBar0End.Clear();
+				regionBar0Start.Add(start);
+				regionBar0End.Add(end);
+
+				if(ChartBars != null)
+				{
+					boundaryFromX = chartControl.GetXByBarIndex(ChartBars, start);
+					boundaryToX = chartControl.GetXByBarIndex(ChartBars, end);
+
+					barWidthFacList.Clear();
+					xposList.Clear();
+
+					windowBarWidthFacList(chartPanel);
+					windowXpos(chartControl);
+				}
+
+				if(sel.UpdatedUtc != _lastSeenToolUtc)
+				{
+					_lastSeenToolUtc = sel.UpdatedUtc;
+					lastBar0 = -1000;
+					lastBar1 = -1000;
+					LogEvent($"ToolSel APPLY bars {start}->{end}", false);
+				}
+
+				return true;
+			}
+			catch
+			{
+				return false;
+			}
+		}
+
 		private void WatchToolSelection(ChartControl chartControl)
 		{
 			if(chartControl == null)
@@ -496,16 +561,16 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			int key = chartControl.GetHashCode();
 			if(HawkVpSelectionBus.TryGet(key, out var sel) && sel != null)
 			{
-				if(sel.UpdatedUtc != _lastSeenToolUtc)
+				if(sel.UpdatedUtc != _lastSeenToolBusUtc)
 				{
-					_lastSeenToolUtc = sel.UpdatedUtc;
+					_lastSeenToolBusUtc = sel.UpdatedUtc;
 					LogEvent($"ToolSel key={key} bars {sel.StartBar0}->{sel.EndBar0} ageMs={(DateTime.UtcNow - sel.UpdatedUtc).TotalMilliseconds:0}", false);
 				}
 				return;
 			}
 
 			DateTime nowUtc = DateTime.UtcNow;
-			if((nowUtc - _lastToolMissLogUtc).TotalSeconds >= 10)
+			if(EnableDebugLog && (nowUtc - _lastToolMissLogUtc).TotalSeconds >= 10)
 			{
 				_lastToolMissLogUtc = nowUtc;
 				LogEvent($"ToolSel miss key={key}", false);
