@@ -482,10 +482,11 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				return;
 
 			int regionStartIndex = regionStartBar0List[regionIndex];
-			if (regionStartIndex < 0 || regionStartIndex > CurrentBar)
+
+			if (!TryGetTimeByBarIndex(regionStartIndex, out DateTime regionStartTime))
 				return;
 
-			DateTime currentSessionDate = Times[0][regionStartIndex].Date;
+			DateTime currentSessionDate = regionStartTime.Date;
 			bool hasSnapshotError = double.IsNaN(poc) || poc <= 0
 				|| double.IsNaN(valueAreaHigh) || valueAreaHigh <= 0
 				|| double.IsNaN(valueAreaLow) || valueAreaLow <= 0;
@@ -512,6 +513,24 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				lastFreezeLogSessionDate = currentSessionDate;
 				LogEvent(currentSessionDate, $"Freeze capturado | POC={currentSessionPoc:0.#####} VAH={currentSessionVah:0.#####} VAL={currentSessionVal:0.#####}");
 			}
+		}
+
+		private bool TryGetTimeByBarIndex(int barIndex, out DateTime time)
+		{
+			time = DateTime.MinValue;
+
+			if (Bars == null || BarsArray == null || BarsArray.Length == 0)
+				return false;
+
+			if (barIndex < 0 || barIndex > CurrentBar)
+				return false;
+
+			int barsAgo = CurrentBar - barIndex;
+			if (barsAgo < 0 || barsAgo > CurrentBar)
+				return false;
+
+			time = Time[barsAgo];
+			return true;
 		}
 
 		private void EvaluateTradeLocationConsumptionOnSessionOpen()
