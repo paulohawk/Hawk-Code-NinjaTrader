@@ -91,8 +91,6 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 				return;
 			}
 
-			LogTool("[HawkVpRegion] mapping=XByTime/GetBarIdxByX", 2000);
-
 			DateTime t1 = StartAnchor.Time;
 			DateTime t2 = EndAnchor.Time;
 			if (t1 == DateTime.MinValue || t2 == DateTime.MinValue)
@@ -108,30 +106,28 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 				t2 = tmp;
 			}
 
-			float x1 = chartControl.GetXByTime(t1);
-			float x2 = chartControl.GetXByTime(t2);
-			int startBar0 = chartControl.GetBarIdxByX((int)x1);
-			int endBar0   = chartControl.GetBarIdxByX((int)x2);
-			if (startBar0 < 0 || endBar0 < 0)
+			// SlotIndex é o jeito mais estável no DrawingTool (Mode=Time):
+			// - evita ChartControl.GetBarIdxByX (inexistente em alguns builds)
+			// - evita ChartControl.ChartBars (inexistente em alguns builds)
+			double s1 = StartAnchor.SlotIndex;
+			double s2 = EndAnchor.SlotIndex;
+			if (double.IsNaN(s1) || double.IsNaN(s2))
 			{
-				LogTool($"[HawkVpRegion] bar idx invalid ({startBar0},{endBar0})", 1500);
+				LogTool("[HawkVpRegion] slotIndex NaN", 1500);
+				return;
+			}
+			if (s1 < 0 || s2 < 0)
+			{
+				LogTool($"[HawkVpRegion] slotIndex invalid ({s1:0.##},{s2:0.##})", 1500);
 				return;
 			}
 
-			int bars0Max = Math.Max(startBar0, endBar0);
-			try
-			{
-				var cbi = chartControl.ChartBars;
-				if (cbi != null && cbi.Bars != null && cbi.Bars.Count > 0)
-					bars0Max = cbi.Bars.Count - 1;
-			}
-			catch
-			{
-				// Best-effort clamp only; selection is still published without explicit ChartBars access.
-			}
+			int startBar0 = (int)Math.Round(s1);
+			int endBar0   = (int)Math.Round(s2);
 
-			startBar0 = Math.Max(0, Math.Min(startBar0, bars0Max));
-			endBar0   = Math.Max(0, Math.Min(endBar0, bars0Max));
+			// Clamp mínimo (sem depender de Bars.Count):
+			startBar0 = Math.Max(0, startBar0);
+			endBar0   = Math.Max(0, endBar0);
 
 			if (startBar0 > endBar0)
 			{
