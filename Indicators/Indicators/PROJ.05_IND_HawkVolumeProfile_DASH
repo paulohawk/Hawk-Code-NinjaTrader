@@ -1152,11 +1152,28 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		protected override void OnRender(ChartControl chartControl, ChartScale chartScale)
 		{
 			++cycle;
-			if(Bars == null || Bars.Instrument == null || IsInHitTest || !transitionComplete)
+			if(Bars == null || Bars.Instrument == null || ChartBars == null || IsInHitTest || !transitionComplete)
 				return;
 
 			if (CurrentBar < 2)
 				return;
+
+			int toIdx = ChartBars.ToIndex;
+			int fromIdx = ChartBars.FromIndex;
+
+			if (toIdx < 0 || fromIdx < 0 || toIdx > CurrentBar || fromIdx > CurrentBar)
+			{
+				if (EnableDebugLog)
+					Print($"[HawkVP] OnRender guard: viewport inválido | From={fromIdx} To={toIdx} CurrentBar={CurrentBar}");
+				return;
+			}
+
+			if (fromIdx > toIdx)
+			{
+				if (EnableDebugLog)
+					Print($"[HawkVP] OnRender guard: viewport invertido | From={fromIdx} To={toIdx} CurrentBar={CurrentBar}");
+				return;
+			}
 
 			if(ShowPerformance)
 			{
