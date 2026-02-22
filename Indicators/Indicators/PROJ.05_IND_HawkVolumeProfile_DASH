@@ -21,6 +21,7 @@ using NinjaTrader.Gui.SuperDom;
 using NinjaTrader.Data;
 using NinjaTrader.NinjaScript;
 using NinjaTrader.Core.FloatingPoint;
+using NinjaTrader.NinjaScript.Indicators.Hawk.Volume.Engine;
 #endregion
 
 
@@ -46,7 +47,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 	{
 		private const string IND_VERSION = "R3-Hawk-2026";
 		#region Properties
-		internal class VolItem
+		public class VolItem
 		{
 			public long up = 0;
 			public long down = 0;
@@ -70,6 +71,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		private float barHeight = 0;
 		private List<int> regionIdxStart = new List<int>();
 		private List<int> regionIdxEnd = new List<int>();
+		private List<int> regionBar0Start = new List<int>();
+		private List<int> regionBar0End = new List<int>();
 		private List<double> barWidthFacList = new List<double>();
 		private List<int> xposList = new List<int>();
 		private List<int> sessionStartList = new List<int>();
@@ -443,41 +446,31 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			try
 			{
 				getRegion(chartControl, chartScale, chartPanel);
-			}
-			catch(Exception ex)
-			{
-				LogCritical($"Volume calculation aborted: {ex.Message}");
-				return;
-			}
 
-			dictionaryList.Clear();
-			if(regionIdxStart.Count !=0)
-			{
-				for (int k = 0; k <= regionIdxStart.Count - 1; k++)
+				var ctx = new HawkVpContext
 				{
-					priceDictionary = new Dictionary<double, VolItem>();
-					dictionaryList.Add(priceDictionary);
+					VolItems = listVolItem,
+					ListPtr = listPtr,
+					SessionStartList = sessionStartList,
+					Bars0 = BarsArray[0],
+					Bars1 = BarsArray[1],
+					Bars1LastValidIndex = Math.Max(0, listVolItem.Count - 2)
+				};
 
-					int startIdx = regionIdxStart[k];
-					int endIdx = regionIdxEnd[k];
-					for (int i = startIdx; i <= endIdx; i++)
-					{
-						price = BarsArray[1].GetClose(i - 1);				//note listVolItem[i] is matched with Close[i - 1]
-						if (!dictionaryList[k].ContainsKey(price))
-						{
-							VolItem v = new VolItem();
-							dictionaryList[k].Add(price, v);							//new dictionary element
-							dictionaryList[k][price].up = listVolItem[i].up;
-							dictionaryList[k][price].down = listVolItem[i].down;
-							dictionaryList[k][price].total = listVolItem[i].total;
-						}
-						else
-						{
-							dictionaryList[k][price].up += listVolItem[i].up;			//update existing dictionary  element
-							dictionaryList[k][price].down += listVolItem[i].down;
-							dictionaryList[k][price].total += listVolItem[i].total;
-						}
-					}
+				var regionsBar0 = new List<(int startBar0, int endBar0)>();
+				for (int i = 0; i < regionBar0Start.Count && i < regionBar0End.Count; i++)
+					regionsBar0.Add((regionBar0Start[i], regionBar0End[i]));
+
+				HawkVpResult result = HawkVpEngine.CalculateProfiles(ctx, regionsBar0);
+
+				dictionaryList.Clear();
+				regionIdxStart.Clear();
+				regionIdxEnd.Clear();
+				for (int i = 0; i < result.Regions.Count; i++)
+				{
+					dictionaryList.Add(result.Regions[i].ProfileByPrice);
+					regionIdxStart.Add(result.Regions[i].StartBar1);
+					regionIdxEnd.Add(result.Regions[i].EndBar1);
 				}
 
 				if(RegionFrom == HawkVolumeProfileRegionFromType.Window && RegionTo == HawkVolumeProfileRegionToType.Window)
@@ -485,78 +478,78 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 					LogEvent("Volume Profile created (Window Mode).");
 				}
 			}
+			catch(Exception ex)
+			{
+				LogCritical($"Volume calculation aborted: {ex.Message}");
+				return;
+			}
 		}
 
 		void getRegion(ChartControl chartControl, ChartScale chartScale, ChartPanel chartPanel)
 		{
-			if(ChartBars != null)
-			{
-				regionIdxStart.Clear();
-				regionIdxEnd.Clear();
-				barWidthFacList.Clear();
-				xposList.Clear();
+			if(ChartBars == null)
+				return;
 
-				if(RegionFrom == HawkVolumeProfileRegionFromType.All)
+			regionIdxStart.Clear();
+			regionIdxEnd.Clear();
+			regionBar0Start.Clear();
+			regionBar0End.Clear();
+			barWidthFacList.Clear();
+			xposList.Clear();
+
+			if (RegionFrom == HawkVolumeProfileRegionFromType.Daily && RegionTo == HawkVolumeProfileRegionToType.Daily)
+			{
+				firstWindowBar = ChartBars.FromIndex;
+				lastWindowBar = ChartBars.ToIndex;
+				fillSessionStartsInWindowList();
+			}
+
+			int effectiveChartToIndex = RegionTo == HawkVolumeProfileRegionToType.Current ? BarsArray[0].Count - 1 : ChartBars.ToIndex;
+
+			var builtRegions = HawkVpEngine.BuildRegions(
+				RegionFrom,
+				RegionTo,
+				ChartBars.FromIndex,
+				effectiveChartToIndex,
+				dateRange(chartControl, DateFrom),
+				dateRange(chartControl, DateTo),
+				t => ChartBars.GetBarIdxByTime(chartControl, t),
+				sessionStartsInWindowList);
+
+			for (int i = 0; i < builtRegions.Count; i++)
+			{
+				int startBar0 = builtRegions[i].startBar0;
+				int endBar0 = builtRegions[i].endBar0;
+				if (BarsArray[0].Count <= 0)
+					continue;
+				startBar0 = Math.Max(0, Math.Min(startBar0, BarsArray[0].Count - 1));
+				endBar0 = Math.Max(0, Math.Min(endBar0, BarsArray[0].Count - 1));
+				if (startBar0 > endBar0)
 				{
-					regionStartBar0 = 0;
-					regionStartBar1 = GetRegionStartBar1(regionStartBar0);		//fine data composes larger bars
-					boundaryFromX = chartControl.GetXByBarIndex(ChartBars, regionStartBar0);
-					regionIdxStart.Add(regionStartBar1);
+					int tmp = startBar0;
+					startBar0 = endBar0;
+					endBar0 = tmp;
 				}
-				else if(RegionFrom == HawkVolumeProfileRegionFromType.Window)
+				regionBar0Start.Add(startBar0);
+				regionBar0End.Add(endBar0);
+			}
+
+			if (RegionTo == HawkVolumeProfileRegionToType.Window || RegionTo == HawkVolumeProfileRegionToType.Date || RegionTo == HawkVolumeProfileRegionToType.Current)
+			{
+				if (regionBar0Start.Count > 0)
 				{
-					regionStartBar0 = ChartBars.FromIndex;									//first bar on chart has index = 0 and recorded in listPtr[1] with last granular bar idx
-					regionStartBar1 = GetRegionStartBar1(regionStartBar0);		//fine data composes larger bars
+					regionStartBar0 = regionBar0Start[0];
+					regionEndBar0 = regionBar0End[0];
+					int renderEndBar0 = RegionTo == HawkVolumeProfileRegionToType.Current ? ChartBars.ToIndex : regionEndBar0;
 					boundaryFromX = chartControl.GetXByBarIndex(ChartBars, regionStartBar0);
-					regionIdxStart.Add(regionStartBar1);
+					boundaryToX = chartControl.GetXByBarIndex(ChartBars, renderEndBar0);
+					windowBarWidthFacList(chartPanel);
+					windowXpos(chartControl);
 				}
-				else if(RegionFrom == HawkVolumeProfileRegionFromType.Date)
+				if(RegionTo == HawkVolumeProfileRegionToType.Date && regionBar0Start.Count > 0)
 				{
 					dateF = dateRange(chartControl, DateFrom);
-					regionStartBar0 = ChartBars.GetBarIdxByTime(chartControl, dateF);
-					regionStartBar1 = GetRegionStartBar1(regionStartBar0);		//fine data composes larger bars
-					boundaryFromX = chartControl.GetXByBarIndex(ChartBars, regionStartBar0);
-					regionIdxStart.Add(regionStartBar1);
-				}
-				else if(RegionFrom == HawkVolumeProfileRegionFromType.Bar)
-				{
-				}
-				else if(RegionFrom == HawkVolumeProfileRegionFromType.Daily)
-				{
-				}
-				else if(RegionFrom == HawkVolumeProfileRegionFromType.None)
-				{
-				}
-
-
-				if(RegionTo == HawkVolumeProfileRegionToType.Current)
-				{
-					regionEndBar0 = BarsArray[0].Count - 1;
-					regionEndBar1 = listVolItem.Count - 2;		//extra volItems added in configure
-					boundaryToX = chartControl.GetXByBarIndex(ChartBars, regionEndBar0);
-					regionIdxEnd.Add(regionEndBar1);
-					windowBarWidthFacList(chartPanel);
-					windowXpos(chartControl);
-				}
-				else if(RegionTo == HawkVolumeProfileRegionToType.Window)
-				{
-					regionEndBar0 = ChartBars.ToIndex;
-					loadRegionEndBar1();
-					boundaryToX = chartControl.GetXByBarIndex(ChartBars, regionEndBar0);
-					regionIdxEnd.Add(regionEndBar1);
-					windowBarWidthFacList(chartPanel);
-					windowXpos(chartControl);
-				}
-				else if(RegionTo == HawkVolumeProfileRegionToType.Date)
-				{
 					dateT = dateRange(chartControl, DateTo);
-					regionEndBar0 = ChartBars.GetBarIdxByTime(chartControl, dateT);
-					loadRegionEndBar1();
-					boundaryToX = chartControl.GetXByBarIndex(ChartBars, regionEndBar0);
-					regionIdxEnd.Add(regionEndBar1);
-					windowBarWidthFacList(chartPanel);
-					windowXpos(chartControl);
-
 					string regionDateSignature = $"Region(Date): {dateF:HH:mm}->{dateT:HH:mm} bars {regionStartBar0}->{regionEndBar0}";
 					if(_lastToolRangeSignature != regionDateSignature)
 					{
@@ -564,105 +557,47 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 						LogEvent(regionDateSignature);
 					}
 				}
-				else if(RegionTo == HawkVolumeProfileRegionToType.Bar)
-				{
-					firstWindowBar = ChartBars.FromIndex;
-					lastWindowBar = ChartBars.ToIndex;
-					for (int i = firstWindowBar; i <= lastWindowBar; i++)
-					{
-						regionStartBar0 = i;
-						regionStartBar1 = GetRegionStartBar1(regionStartBar0);		//fine data composes larger bars
-						regionIdxStart.Add(regionStartBar1);
-						regionEndBar0 = i;
-						loadRegionEndBar1();
-						regionIdxEnd.Add(regionEndBar1);
-
-						barWidthP = chartControl.BarWidth + 5;	// + some small Margin,  note that .BarWidth is distance from wick to body edge
-						regionStartX = chartControl.GetXByBarIndex(ChartBars, regionStartBar0);
-						if (regionStartBar0 < BarsArray[0].Count - 1)
-						{
-							regionWidth = Math.Max(.80 * ((chartControl.GetXByBarIndex(ChartBars, regionStartBar0 + 1) - regionStartX) - (2 * barWidthP)), 0);
-						}
-						else
-						{
-							regionWidth = Math.Max(.80 * ((regionStartX - chartControl.GetXByBarIndex(ChartBars, regionStartBar0 - 1)) - (2 * barWidthP)), 0);
-						}
-						regionStartX = regionStartX + (barWidthP);
-						regionEndX = regionStartX + regionWidth;
-
-						barBarWidthFacList();
-						barXpos();
-					}
-
-				}
-				else if(RegionTo == HawkVolumeProfileRegionToType.Daily)
-				{
-					firstWindowBar = ChartBars.FromIndex;
-					lastWindowBar = ChartBars.ToIndex;
-					fillSessionStartsInWindowList();		//build list of FirstBarOfSession bars in window
-
-					for (int i = 0; i <= sessionStartsInWindowList.Count - 1; i++)
-					{
-						regionStartBar0 = sessionStartsInWindowList[i];
-						regionStartBar1 = GetRegionStartBar1(regionStartBar0);		//fine data composes larger bars
-						regionIdxStart.Add(regionStartBar1);
-						if(i + 1 <= sessionStartsInWindowList.Count - 1)
-						{
-							if(sessionStartsInWindowList[i + 1] <= lastWindowBar)
-							{
-								regionEndBar0 = sessionStartsInWindowList[i + 1] - 1;
-							}
-							else
-							{
-								regionEndBar0 = lastWindowBar;
-							}
-						}
-						else
-						{
-							if(lastWindowBar >= BarsArray[0].Count - 1)
-							{
-								regionEndBar0 = BarsArray[0].Count - 1;
-							}
-							else
-							{
-								regionEndBar0 = lastWindowBar;
-							}
-						}
-						loadRegionEndBar1();
-						regionEndBar1 = regionEndBar1 - 1;
-						regionIdxEnd.Add(regionEndBar1);
-
-						barWidthP = chartControl.BarWidth;	//.BarWidth is distance from wick to body edge
-						regionStartX = chartControl.GetXByBarIndex(ChartBars, regionStartBar0);
-						regionWidth = Math.Max(.80 * ((chartControl.GetXByBarIndex(ChartBars, regionEndBar0) - regionStartX) - (2 * barWidthP)), 0);
-						regionStartX = regionStartX + (barWidthP);
-						regionEndX = regionStartX + regionWidth;
-
-						barBarWidthFacList();
-						barXpos();
-					}
-
-				}
-
-				else if(RegionTo == HawkVolumeProfileRegionToType.None)
-				{
-				}
 			}
-			else
+			else if (RegionTo == HawkVolumeProfileRegionToType.Bar)
 			{
-				return;
+				for (int i = 0; i < regionBar0Start.Count; i++)
+				{
+					regionStartBar0 = regionBar0Start[i];
+					barWidthP = chartControl.BarWidth + 5;
+					regionStartX = chartControl.GetXByBarIndex(ChartBars, regionStartBar0);
+					if (regionStartBar0 < BarsArray[0].Count - 1)
+						regionWidth = Math.Max(.80 * ((chartControl.GetXByBarIndex(ChartBars, regionStartBar0 + 1) - regionStartX) - (2 * barWidthP)), 0);
+					else
+						regionWidth = Math.Max(.80 * ((regionStartX - chartControl.GetXByBarIndex(ChartBars, regionStartBar0 - 1)) - (2 * barWidthP)), 0);
+					regionStartX = regionStartX + (barWidthP);
+					regionEndX = regionStartX + regionWidth;
+					barBarWidthFacList();
+					barXpos();
+				}
 			}
-
-
+			else if (RegionTo == HawkVolumeProfileRegionToType.Daily)
+			{
+				for (int i = 0; i < regionBar0Start.Count; i++)
+				{
+					regionStartBar0 = regionBar0Start[i];
+					regionEndBar0 = regionBar0End[i];
+					barWidthP = chartControl.BarWidth;
+					regionStartX = chartControl.GetXByBarIndex(ChartBars, regionStartBar0);
+					regionWidth = Math.Max(.80 * ((chartControl.GetXByBarIndex(ChartBars, regionEndBar0) - regionStartX) - (2 * barWidthP)), 0);
+					regionStartX = regionStartX + (barWidthP);
+					regionEndX = regionStartX + regionWidth;
+					barBarWidthFacList();
+					barXpos();
+				}
+			}
 		}
-
 
 		//load barWidthFacList with setup numbers for later processing
 		void windowBarWidthFacList(ChartPanel chartPanel)
 		{
 			if(ScaleType == HawkVolumeProfileScaleType.MaxOfLadder)
 			{
-				barWidthFacList.Add(windowFac * chartPanel.W);		//order matters in mixed (integer & double) math.  Decimals less than zero will be zero
+				barWidthFacList.Add(windowFac * chartPanel.W);
 			}
 			else
 			{
@@ -675,7 +610,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			if(ScaleType == HawkVolumeProfileScaleType.MaxOfLadder)
 			{
 				barWidthFacList.Add(regionWidth);
-
 			}
 			else
 			{
@@ -694,7 +628,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				xposList.Add(chartControl.CanvasRight - Margin);
 			}
 		}
-
 
 		void barXpos()
 		{
@@ -721,42 +654,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				date = firstChartBarTime;
 			}
 			return date;
-		}
-
-
-		int GetRegionStartBar1(int startBar0)
-		{
-			if(startBar0 <= 0 || listPtr.Count == 0)
-				return 1;
-
-			int ptrIndex = Math.Min(startBar0 - 1, listPtr.Count - 1);
-			return listPtr[ptrIndex] + 2;
-		}
-
-		void loadRegionEndBar1()
-		{
-			if(regionEndBar0 == (BarsArray[0].Count - 1))
-			{
-				regionEndBar1 = listVolItem.Count - 2;		//extra volItems added in configure
-			}
-			else	//not the working bar
-			{
-				if(listPtr.Count == 0)
-				{
-					regionEndBar1 = 0;
-					return;
-				}
-
-				regionEndBar0 = Math.Max(0, Math.Min(regionEndBar0, listPtr.Count - 1));
-				if((BarsArray[1].Count - 1) >= listPtr[regionEndBar0] + 1)	//if it exists
-				{
-					regionEndBar1 = listPtr[regionEndBar0] + 1;
-				}
-				else
-				{
-					regionEndBar1 = listPtr[regionEndBar0];
-				}
-			}
 		}
 
 		void fillSessionStartsInWindowList()
