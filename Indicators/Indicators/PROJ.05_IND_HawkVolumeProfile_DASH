@@ -562,7 +562,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 					// Robustez: normaliza X caso venha invertido em alguns builds/condições de zoom
 					if(boundaryFromX > boundaryToX)
 					{
-						double tx = boundaryFromX;
+						int tx = boundaryFromX;
 						boundaryFromX = boundaryToX;
 						boundaryToX = tx;
 					}
