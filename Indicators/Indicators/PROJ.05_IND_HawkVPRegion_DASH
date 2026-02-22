@@ -91,15 +91,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 				return;
 			}
 
-			bool usedChartBars = ChartBars != null;
-			var cb = usedChartBars ? ChartBars : (ChartPanel != null ? ChartPanel.ChartBars : null);
-			LogTool($"[HawkVpRegion] cb source={(usedChartBars ? "ChartBars" : "ChartPanel")}", 2000);
-
-			if (cb == null || cb.Bars == null || cb.Bars.Count <= 0)
-			{
-				LogTool("[HawkVpRegion] cb/bars null or empty", 1500);
-				return;
-			}
+			LogTool("[HawkVpRegion] mapping=XByTime/GetBarIdxByX", 2000);
 
 			DateTime t1 = StartAnchor.Time;
 			DateTime t2 = EndAnchor.Time;
@@ -116,18 +108,30 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 				t2 = tmp;
 			}
 
-			int startBar0 = cb.GetBarIdxByTime(chartControl, t1);
-			int endBar0   = cb.GetBarIdxByTime(chartControl, t2);
+			float x1 = chartControl.GetXByTime(t1);
+			float x2 = chartControl.GetXByTime(t2);
+			int startBar0 = chartControl.GetBarIdxByX((int)x1);
+			int endBar0   = chartControl.GetBarIdxByX((int)x2);
 			if (startBar0 < 0 || endBar0 < 0)
 			{
-				LogTool($"[HawkVpRegion] GetBarIdxByTime invalid ({startBar0},{endBar0})", 1500);
+				LogTool($"[HawkVpRegion] bar idx invalid ({startBar0},{endBar0})", 1500);
 				return;
 			}
 
-			int bars0Max = cb.Bars.Count - 1;
+			int bars0Max = Math.Max(startBar0, endBar0);
+			try
+			{
+				var cbi = chartControl.ChartBars;
+				if (cbi != null && cbi.Bars != null && cbi.Bars.Count > 0)
+					bars0Max = cbi.Bars.Count - 1;
+			}
+			catch
+			{
+				// Best-effort clamp only; selection is still published without explicit ChartBars access.
+			}
 
 			startBar0 = Math.Max(0, Math.Min(startBar0, bars0Max));
-			endBar0 = Math.Max(0, Math.Min(endBar0, bars0Max));
+			endBar0   = Math.Max(0, Math.Min(endBar0, bars0Max));
 
 			if (startBar0 > endBar0)
 			{
