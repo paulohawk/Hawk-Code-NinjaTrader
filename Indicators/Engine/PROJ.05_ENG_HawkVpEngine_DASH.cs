@@ -7,6 +7,50 @@ using NinjaTrader.NinjaScript.Indicators.Hawk.Volume;
 
 namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume.Engine
 {
+	public sealed class HawkVpSelection
+	{
+		public int ChartKey;
+		public DateTime StartTime;
+		public DateTime EndTime;
+		public int StartBar0;
+		public int EndBar0;
+		public DateTime UpdatedUtc;
+	}
+
+	public static class HawkVpSelectionBus
+	{
+		private static readonly Dictionary<int, HawkVpSelection> _byChartKey = new Dictionary<int, HawkVpSelection>();
+		private static readonly object _lock = new object();
+
+		public static void Set(int chartKey, HawkVpSelection sel)
+		{
+			if (chartKey == 0 || sel == null)
+				return;
+
+			lock (_lock)
+			{
+				_byChartKey[chartKey] = sel;
+			}
+		}
+
+		public static bool TryGet(int chartKey, out HawkVpSelection sel)
+		{
+			lock (_lock)
+			{
+				return _byChartKey.TryGetValue(chartKey, out sel);
+			}
+		}
+
+		public static void Clear(int chartKey)
+		{
+			lock (_lock)
+			{
+				if (_byChartKey.ContainsKey(chartKey))
+					_byChartKey.Remove(chartKey);
+			}
+		}
+	}
+
 	public sealed class HawkVpContext
 	{
 		public IList<Indicators.Hawk.Volume.HawkVolumeProfile.VolItem> VolItems;
