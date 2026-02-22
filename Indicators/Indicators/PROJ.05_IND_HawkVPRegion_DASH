@@ -15,6 +15,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 	public class HawkVpRegion : RegionHighlightBase
 	{
 		private DateTime _lastPublishUtc = DateTime.MinValue;
+		private int _chartKey;
 
 		[NinjaScriptProperty]
 		[Display(Name = "PublishRange", GroupName = "Parameters", Order = 1)]
@@ -39,18 +40,18 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 			}
 			else if (State == State.Terminated)
 			{
-				if (ChartControl != null)
-					HawkVpSelectionBus.Clear(ChartControl.GetHashCode());
+				if (_chartKey != 0)
+					HawkVpSelectionBus.Clear(_chartKey);
 			}
 		}
 
 		public override void OnRender(ChartControl chartControl, ChartScale chartScale)
 		{
 			base.OnRender(chartControl, chartScale);
-			TryPublishSelection();
+			TryPublishSelection(chartControl);
 		}
 
-		private void TryPublishSelection()
+		private void TryPublishSelection(ChartControl chartControl)
 		{
 			if (!PublishRange)
 				return;
@@ -59,7 +60,11 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 			if ((nowUtc - _lastPublishUtc).TotalMilliseconds < PublishThrottleMs)
 				return;
 
-			if (ChartControl == null || ChartBars == null || StartAnchor == null || EndAnchor == null)
+			if (chartControl == null || StartAnchor == null || EndAnchor == null)
+				return;
+
+			var cb = chartControl.ChartBars;
+			if (cb == null || cb.Bars == null || cb.Bars.Count <= 0)
 				return;
 
 			DateTime t1 = StartAnchor.Time;
@@ -74,14 +79,12 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 				t2 = tmp;
 			}
 
-			int startBar0 = ChartBars.GetBarIdxByTime(ChartControl, t1);
-			int endBar0 = ChartBars.GetBarIdxByTime(ChartControl, t2);
+			int startBar0 = cb.GetBarIdxByTime(chartControl, t1);
+			int endBar0 = cb.GetBarIdxByTime(chartControl, t2);
 			if (startBar0 < 0 || endBar0 < 0)
 				return;
 
-			int bars0Max = ChartBars.Bars != null ? ChartBars.Bars.Count - 1 : -1;
-			if (bars0Max < 0)
-				return;
+			int bars0Max = cb.Bars.Count - 1;
 
 			startBar0 = Math.Max(0, Math.Min(startBar0, bars0Max));
 			endBar0 = Math.Max(0, Math.Min(endBar0, bars0Max));
@@ -93,11 +96,12 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 				endBar0 = tmp;
 			}
 
-			int chartKey = ChartControl.GetHashCode();
-			nowUtc = DateTime.UtcNow;
-			HawkVpSelectionBus.Set(chartKey, new HawkVpSelection
+			if (_chartKey == 0)
+				_chartKey = chartControl.GetHashCode();
+
+			HawkVpSelectionBus.Set(_chartKey, new HawkVpSelection
 			{
-				ChartKey = chartKey,
+				ChartKey = _chartKey,
 				StartTime = t1,
 				EndTime = t2,
 				StartBar0 = startBar0,
