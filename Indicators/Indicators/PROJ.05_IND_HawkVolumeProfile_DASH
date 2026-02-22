@@ -134,7 +134,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		private bool _renderLogged;
 		private bool _fullyInitialized;
 		private string _lastToolRangeSignature;
-		private DateTime _lastSeenToolUtc = DateTime.MinValue;
 		private DateTime _lastSeenToolBusUtc = DateTime.MinValue;
 		private DateTime _lastToolMissLogUtc = DateTime.MinValue;
 
@@ -328,6 +327,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			Print($"[HawkVP] {message}");
 		}
 
+
+
 		private void LogCritical(string message, bool logOnce = true)
 		{
 			if(_loggedEvents == null)
@@ -503,15 +504,30 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				if(!HawkVpSelectionBus.TryGet(chartControl.GetHashCode(), out sel))
 					return false;
 
-				if(sel == null || sel.StartBar0 < 0 || sel.EndBar0 < 0)
+				if(sel == null
+					|| sel.StartTime == DateTime.MinValue
+					|| sel.EndTime == DateTime.MinValue)
 					return false;
 
 				if(BarsArray == null || BarsArray.Length == 0 || BarsArray[0] == null || BarsArray[0].Count <= 0)
 					return false;
 
+				DateTime tStart = sel.StartTime <= sel.EndTime ? sel.StartTime : sel.EndTime;
+				DateTime tEnd = sel.StartTime <= sel.EndTime ? sel.EndTime : sel.StartTime;
+
+				int start = BarsArray[0].GetBar(tStart);
+				int end = BarsArray[0].GetBar(tEnd);
+				if((start < 0 || end < 0) && ChartBars != null)
+				{
+					start = ChartBars.GetBarIdxByTime(chartControl, tStart);
+					end = ChartBars.GetBarIdxByTime(chartControl, tEnd);
+				}
+				if(start < 0 || end < 0)
+					return false;
+
 				int max = BarsArray[0].Count - 1;
-				int start = Math.Max(0, Math.Min(sel.StartBar0, max));
-				int end = Math.Max(0, Math.Min(sel.EndBar0, max));
+				start = Math.Max(0, Math.Min(start, max));
+				end = Math.Max(0, Math.Min(end, max));
 
 				if(start > end)
 				{
@@ -537,12 +553,14 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 					windowXpos(chartControl);
 				}
 
-				if(sel.UpdatedUtc != _lastSeenToolUtc)
+				string rangeSig = $"{start}:{end}";
+				if(rangeSig != _lastToolRangeSignature)
 				{
-					_lastSeenToolUtc = sel.UpdatedUtc;
+					_lastToolRangeSignature = rangeSig;
 					lastBar0 = -1000;
 					lastBar1 = -1000;
-					LogEvent($"ToolSel APPLY bars {start}->{end}", false);
+					if(EnableDebugLog)
+						Print($"[HawkVP] ToolSel APPLY bars {start}->{end}");
 				}
 
 				return true;
@@ -564,10 +582,12 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				if(sel.UpdatedUtc != _lastSeenToolBusUtc)
 				{
 					_lastSeenToolBusUtc = sel.UpdatedUtc;
-					LogEvent($"ToolSel key={key} bars {sel.StartBar0}->{sel.EndBar0} ageMs={(DateTime.UtcNow - sel.UpdatedUtc).TotalMilliseconds:0}", false);
+					LogEvent($"ToolSel key={key} time {sel.StartTime:HH:mm:ss}->{sel.EndTime:HH:mm:ss} ageMs={(DateTime.UtcNow - sel.UpdatedUtc).TotalMilliseconds:0}", false);
 				}
 				return;
 			}
+
+			_lastToolRangeSignature = null;
 
 			DateTime nowUtc = DateTime.UtcNow;
 			if(EnableDebugLog && (nowUtc - _lastToolMissLogUtc).TotalSeconds >= 10)

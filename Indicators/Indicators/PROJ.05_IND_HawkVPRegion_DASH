@@ -31,6 +31,11 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 		public int PublishThrottleMs
 		{ get; set; }
 
+		[NinjaScriptProperty]
+		[Display(Name = "EnableToolLog", GroupName = "Parameters", Order = 3)]
+		public bool EnableToolLog
+		{ get; set; }
+
 		protected override void OnStateChange()
 		{
 			base.OnStateChange();
@@ -40,11 +45,14 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 				Mode = RegionHighlightMode.Time;
 				PublishRange = true;
 				PublishThrottleMs = 150;
-				Output.Process("[HawkVpRegion] SetDefaults ok", PrintTo.OutputTab1);
+				EnableToolLog = false;
+				if (EnableToolLog)
+					Output.Process("[HawkVpRegion] SetDefaults ok", PrintTo.OutputTab1);
 			}
 			else if (State == State.Terminated)
 			{
-				Output.Process($"[HawkVpRegion] Terminated key={_chartKey}", PrintTo.OutputTab1);
+				if (EnableToolLog)
+					Output.Process($"[HawkVpRegion] Terminated key={_chartKey}", PrintTo.OutputTab1);
 				if (_chartKey != 0)
 					HawkVpSelectionBus.Clear(_chartKey);
 			}
@@ -59,6 +67,9 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 
 		private void LogTool(string msg, int minMs = 250)
 		{
+			if (!EnableToolLog)
+				return;
+
 			DateTime nowUtc = DateTime.UtcNow;
 			if ((nowUtc - _lastLogUtc).TotalMilliseconds < minMs)
 				return;
@@ -106,40 +117,14 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 				t2 = tmp;
 			}
 
-			// SlotIndex é o jeito mais estável no DrawingTool (Mode=Time):
-			// - evita ChartControl.GetBarIdxByX (inexistente em alguns builds)
-			// - evita ChartControl.ChartBars (inexistente em alguns builds)
-			double s1 = StartAnchor.SlotIndex;
-			double s2 = EndAnchor.SlotIndex;
-			if (double.IsNaN(s1) || double.IsNaN(s2))
-			{
-				LogTool("[HawkVpRegion] slotIndex NaN", 1500);
-				return;
-			}
-			if (s1 < 0 || s2 < 0)
-			{
-				LogTool($"[HawkVpRegion] slotIndex invalid ({s1:0.##},{s2:0.##})", 1500);
-				return;
-			}
-
-			int startBar0 = (int)Math.Round(s1);
-			int endBar0   = (int)Math.Round(s2);
-
-			// Clamp mínimo (sem depender de Bars.Count):
-			startBar0 = Math.Max(0, startBar0);
-			endBar0   = Math.Max(0, endBar0);
-
-			if (startBar0 > endBar0)
-			{
-				int tmp = startBar0;
-				startBar0 = endBar0;
-				endBar0 = tmp;
-			}
+			const int startBar0 = -1;
+			const int endBar0 = -1;
 
 			if (_chartKey == 0)
 				_chartKey = chartControl.GetHashCode();
 
-			Output.Process($"[HawkVpRegion] PUBLISH key={_chartKey} {t1:HH:mm:ss}->{t2:HH:mm:ss} bars {startBar0}->{endBar0}", PrintTo.OutputTab1);
+			if (EnableToolLog)
+				Output.Process($"[HawkVpRegion] PUBLISH key={_chartKey} {t1:HH:mm:ss}->{t2:HH:mm:ss} bars TIME_ONLY", PrintTo.OutputTab1);
 
 			HawkVpSelectionBus.Set(_chartKey, new HawkVpSelection
 			{
@@ -151,7 +136,8 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 				UpdatedUtc = nowUtc
 			});
 
-			Output.Process($"[HawkVpRegion] PUBLISHED key={_chartKey} utc={nowUtc:O}", PrintTo.OutputTab1);
+			if (EnableToolLog)
+				Output.Process($"[HawkVpRegion] PUBLISHED key={_chartKey} utc={nowUtc:O}", PrintTo.OutputTab1);
 
 			_lastPublishUtc = nowUtc;
 		}
