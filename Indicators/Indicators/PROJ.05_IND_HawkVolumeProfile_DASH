@@ -44,6 +44,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 {
 	public class HawkVolumeProfile : Indicator
 	{
+		private const string IND_VERSION = "R3-Hawk-2026";
 		#region Properties
 		internal class VolItem
 		{
@@ -126,6 +127,9 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		private int lastBar0 = -1000;
 		private int lastBar1 = -1000;
 		private int calcMode = 0;
+		private HashSet<string> _loggedEvents;
+		private bool _renderLogged;
+		private string _lastToolRangeSignature;
 
 		#endregion
 
@@ -165,6 +169,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				ImbalanceRatio				= 2;
 				ShowRegionBoundaries		= false;
 				ShowPerformance				= false;
+				EnableDebugLog				= false;
 
 				Granularity					= HawkVolumeProfileGranularityType.Tick;
 				GranularityPeriod			= 100;
@@ -199,7 +204,10 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				barSpacing = BarSpacingPercent / 100;
 				valueAreaFac = ValueAreaPercent / 100;
 				transitionComplete = false;
-				ClearOutputWindow();
+				_loggedEvents = new HashSet<string>();
+				LogEvent("Initializing...", false);
+				LogEvent($"Indicator: {Name}", false);
+				LogEvent($"Version: {IND_VERSION}", false);
 
 
 				if(RegionFrom == HawkVolumeProfileRegionFromType.Bar || RegionTo == HawkVolumeProfileRegionToType.Bar)
@@ -257,10 +265,23 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 					listVolItem.Add(new VolItem());		//add 2nd item
 				}
 
+				LogEvent($"Calculate Mode: {Calculate}", false);
+
 
 			}
 			else if (State == State.DataLoaded)
 			{
+				_renderLogged = false;
+				_lastToolRangeSignature = string.Empty;
+				try
+				{
+					LogEvent($"TickReplay: {(IsTickReplays[0] ? "Enabled" : "Disabled")}", false);
+				}
+				catch
+				{
+					LogEvent("TickReplay: Unknown (not ready)", false);
+				}
+				LogEvent("Data loaded successfully.", false);
 
 			}
 			else if (State == State.Historical)
@@ -273,6 +294,46 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				transitionComplete = true;
 
 			}
+			else if(State == State.Terminated)
+			{
+				LogEvent("Indicator removed from chart.", false);
+			}
+		}
+
+		private void LogEvent(string message, bool logOnce = true)
+		{
+			if(!EnableDebugLog)
+				return;
+
+			if(_loggedEvents == null)
+				_loggedEvents = new HashSet<string>();
+
+			if(logOnce)
+			{
+				if(_loggedEvents.Contains(message))
+					return;
+
+				_loggedEvents.Add(message);
+			}
+
+			Print($"[HawkVP] {message}");
+		}
+
+		private void LogCritical(string message, bool logOnce = true)
+		{
+			if(_loggedEvents == null)
+				_loggedEvents = new HashSet<string>();
+
+			string key = $"[CRITICAL]{message}";
+			if(logOnce)
+			{
+				if(_loggedEvents.Contains(key))
+					return;
+
+				_loggedEvents.Add(key);
+			}
+
+			Print($"[HawkVP][CRITICAL] {message}");
 		}
 
 
@@ -376,7 +437,15 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 
 		void makeVPDic(ChartControl chartControl, ChartScale chartScale, ChartPanel chartPanel)
 		{
-			getRegion(chartControl, chartScale, chartPanel);
+			try
+			{
+				getRegion(chartControl, chartScale, chartPanel);
+			}
+			catch(Exception ex)
+			{
+				LogCritical($"Volume calculation aborted: {ex.Message}");
+				return;
+			}
 
 			dictionaryList.Clear();
 			if(regionIdxStart.Count !=0)
@@ -406,6 +475,11 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 							dictionaryList[k][price].total += listVolItem[i].total;
 						}
 					}
+				}
+
+				if(RegionFrom == HawkVolumeProfileRegionFromType.Window && RegionTo == HawkVolumeProfileRegionToType.Window)
+				{
+					LogEvent("Volume Profile created (Window Mode).");
 				}
 			}
 		}
@@ -479,6 +553,13 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 					regionIdxEnd.Add(regionEndBar1);
 					windowBarWidthFacList(chartPanel);
 					windowXpos(chartControl);
+
+					string regionDateSignature = $"Region(Date): {dateF:HH:mm}->{dateT:HH:mm} bars {regionStartBar0}->{regionEndBar0}";
+					if(_lastToolRangeSignature != regionDateSignature)
+					{
+						_lastToolRangeSignature = regionDateSignature;
+						LogEvent(regionDateSignature);
+					}
 				}
 				else if(RegionTo == HawkVolumeProfileRegionToType.Bar)
 				{
@@ -765,7 +846,20 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 
 
 
-			makeVPDic(chartControl, chartScale, chartPanel);
+			try
+			{
+				makeVPDic(chartControl, chartScale, chartPanel);
+				if(!_renderLogged)
+				{
+					_renderLogged = true;
+					LogEvent("Render pipeline initialized successfully.");
+				}
+			}
+			catch(Exception ex)
+			{
+				LogCritical($"Render failure: {ex.Message}");
+				return;
+			}
 
 
 			if(ShowRegionBoundaries)
@@ -1463,6 +1557,11 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 
 		[Display(ResourceType = typeof(Custom.Resource), Name = "Show Performance", Description="Elapsed time to generate the volume profile and repaint the screen",  Order = 23, GroupName = "NinjaScriptParameters")]
 		public bool ShowPerformance
+		{ get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name="Enable Debug Log", Order=999, GroupName="Diagnostics")]
+		public bool EnableDebugLog
 		{ get; set; }
 
 		[NinjaScriptProperty]
