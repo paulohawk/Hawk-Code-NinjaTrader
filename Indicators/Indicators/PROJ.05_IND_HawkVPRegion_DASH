@@ -63,8 +63,8 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 			if (chartControl == null || StartAnchor == null || EndAnchor == null)
 				return;
 
-			var cb = ChartPanel != null ? ChartPanel.ChartBars : null;
-			if (cb == null || cb.Bars == null || cb.Bars.Count <= 0)
+			var bars = Bars;
+			if (bars == null || bars.Count <= 0)
 				return;
 
 			DateTime t1 = StartAnchor.Time;
@@ -79,12 +79,12 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 				t2 = tmp;
 			}
 
-			int startBar0 = cb.GetBarIdxByTime(chartControl, t1);
-			int endBar0 = cb.GetBarIdxByTime(chartControl, t2);
+			int startBar0 = bars.GetBar(t1);
+			int endBar0 = bars.GetBar(t2);
 			if (startBar0 < 0 || endBar0 < 0)
 				return;
 
-			int bars0Max = cb.Bars.Count - 1;
+			int bars0Max = bars.Count - 1;
 
 			startBar0 = Math.Max(0, Math.Min(startBar0, bars0Max));
 			endBar0 = Math.Max(0, Math.Min(endBar0, bars0Max));
