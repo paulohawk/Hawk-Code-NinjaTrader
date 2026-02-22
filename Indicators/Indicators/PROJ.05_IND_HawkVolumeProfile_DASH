@@ -785,7 +785,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				return;
 
 			if(ScaleType == HawkVolumeProfileScaleType.MaxOfLadder)
-				barWidthFacList.Add(windowFac * toolWidth);
+				barWidthFacList.Add(toolWidth);
 			else
 				barWidthFacList.Add(FixedScalingNumber);
 		}
