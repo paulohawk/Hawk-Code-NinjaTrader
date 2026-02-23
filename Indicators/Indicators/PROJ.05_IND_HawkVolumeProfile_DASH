@@ -140,6 +140,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		private string _lastToolRangeSignature;
 		private DateTime _lastSeenToolBusUtc = DateTime.MinValue;
 		private DateTime _lastToolMissLogUtc = DateTime.MinValue;
+		private bool _lastToolSelectionHitState;
+		private int _lastRegionsCount = -1;
 		private double _toolX0 = 0;
 		private double _toolX1 = 0;
 		private bool _toolActive = false;
@@ -152,6 +154,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		private double currentDayHigh = 0;
 		private double currentDayLow = 0;
 		private long currentTotalVolume = 0;
+		private string _infoPanelNoDataReason = "Sem dados válidos";
 
 		private int _cachedSessionStart = -1;
 		private int _cachedSessionEnd = -1;
@@ -211,13 +214,19 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				ShowRegionBoundaries		= false;
 				ShowPerformance				= false;
 				EnableDebugLog				= false;
+				EnableVerboseLog			= false;
 				ToolMode					= false;
 				ShowInfoPanel				= true;
 				PanelMargin					= 8f;
-				PanelPadding				= 10f;
+				PanelPadding				= 9f;
 				PanelLift					= 6f;
 				PanelFont					= "Segoe UI";
-				PanelFontSize				= 14f;
+				PanelFontSize				= 12f;
+				PanelBorderColor			= new SolidColorBrush(Media.Color.FromArgb(0xFF, 0xD4, 0xA0, 0x17));
+				PanelTextColor				= new SolidColorBrush(Media.Color.FromArgb(0xE6, 0xCC, 0xCC, 0xCC));
+				PanelBgTopColor				= new SolidColorBrush(Media.Color.FromArgb(0xC0, 0x50, 0x50, 0x50));
+				PanelBgBottomColor			= new SolidColorBrush(Media.Color.FromArgb(0xB4, 0x28, 0x28, 0x28));
+				PanelHeaderColor			= new SolidColorBrush(Media.Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF));
 
 				Granularity					= HawkVolumeProfileGranularityType.Tick;
 				GranularityPeriod			= 100;
@@ -435,6 +444,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 							if(sessionStartList.Count == 0 || sessionStartList[sessionStartList.Count - 1] != CurrentBars[0])
 								sessionStartList.Add(CurrentBars[0]);
 							_dailyCacheValid = false;
+							_cachedSessionStart = -1;
+							_cachedSessionEnd = -1;
 						}
 
 						lastBar0 = CurrentBars[0];
@@ -463,6 +474,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 						if(sessionStartList.Count == 0 || sessionStartList[sessionStartList.Count - 1] != CurrentBars[0])
 							sessionStartList.Add(CurrentBars[0]);
 						_dailyCacheValid = false;
+						_cachedSessionStart = -1;
+						_cachedSessionEnd = -1;
 					}
 
 
@@ -559,8 +572,11 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 					for (int i = 0; i < regionBar0Start.Count && i < regionBar0End.Count; i++)
 						regionsBar0.Add((regionBar0Start[i], regionBar0End[i]));
 				}
-				if(EnableDebugLog)
+				if(EnableVerboseLog && regionsBar0.Count != _lastRegionsCount)
+				{
+					_lastRegionsCount = regionsBar0.Count;
 					LogEvent($"regionsBar0.Count={regionsBar0.Count}", false);
+				}
 
 				HawkVpResult result = HawkVpEngine.CalculateProfiles(ctx, regionsBar0);
 
@@ -574,9 +590,10 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 					regionIdxEnd.Add(result.Regions[i].EndBar1);
 				}
 
-				UpdateDailyPanel(ctx, result, regionsBar0);
+				bool dailyUpdated = UpdateDailyPanel(ctx, result, regionsBar0);
 				UpdateInfoPanelText();
-				LogDailyPanelIfChanged();
+				if(dailyUpdated)
+					LogDailyPanelIfChanged();
 
 				if(RegionFrom == HawkVolumeProfileRegionFromType.Window && RegionTo == HawkVolumeProfileRegionToType.Window)
 				{
@@ -719,6 +736,10 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 
 			if(HawkVpSelectionBus.TryGet(key, out var sel) && sel != null)
 			{
+				if(!_lastToolSelectionHitState)
+					LogEvent($"ToolSel state miss->hit key={key}", false);
+				_lastToolSelectionHitState = true;
+
 				if(sel.UpdatedUtc != _lastSeenToolBusUtc)
 				{
 					_lastSeenToolBusUtc = sel.UpdatedUtc;
@@ -732,10 +753,12 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			_toolActive = false;
 			_toolX0 = 0;
 			_toolX1 = 0;
+			if(_lastToolSelectionHitState)
+				LogEvent($"ToolSel state hit->miss key={key}", false);
+			_lastToolSelectionHitState = false;
 
 			DateTime nowUtc = DateTime.UtcNow;
-
-			if(EnableDebugLog && (nowUtc - _lastToolMissLogUtc).TotalSeconds >= 10)
+			if(EnableDebugLog && (nowUtc - _lastToolMissLogUtc).TotalSeconds >= 45)
 			{
 				_lastToolMissLogUtc = nowUtc;
 				LogEvent($"ToolSel miss key={key}", false);
@@ -1439,14 +1462,23 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 					float xPanel = (float)(chartPanel.X + PanelMargin);
 					float yPanel = (float)(chartPanel.Y + chartPanel.H - boxH - PanelMargin - PanelLift);
 					var boxRect = new RectangleF(xPanel, yPanel, boxW, boxH);
+					var roundedRect = new D2D.RoundedRectangle
+					{
+						Rect = boxRect,
+						RadiusX = 6f,
+						RadiusY = 6f
+					};
 
 					_dxGradientBrush.StartPoint = new Vector2(boxRect.Left, boxRect.Top);
 					_dxGradientBrush.EndPoint = new Vector2(boxRect.Left, boxRect.Bottom);
 
-					RenderTarget.FillRectangle(boxRect, _dxGradientBrush);
-					var hiRect = new RectangleF(boxRect.Left, boxRect.Top, boxRect.Width, Math.Min(18f, boxRect.Height));
-					RenderTarget.FillRectangle(hiRect, _dxHighlightBrush);
-					RenderTarget.DrawRectangle(boxRect, _dxBorderBrush, 1.0f);
+					RenderTarget.FillRoundedRectangle(roundedRect, _dxGradientBrush);
+
+					float headerHeight = Math.Min(boxRect.Height, PanelFontSize + PanelPadding);
+					var headerRect = new RectangleF(boxRect.Left, boxRect.Top, boxRect.Width, headerHeight);
+					RenderTarget.FillRectangle(headerRect, _dxHighlightBrush);
+
+					RenderTarget.DrawRoundedRectangle(roundedRect, _dxBorderBrush, 1.4f);
 					RenderTarget.DrawTextLayout(new Vector2(xPanel + PanelPadding, yPanel + PanelPadding), textLayout, _dxTextBrush);
 				}
 			}
@@ -1466,8 +1498,12 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 
 
 
-		private void UpdateDailyPanel(HawkVpContext ctx, HawkVpResult baseResult, List<(int startBar0, int endBar0)> baseRegionsBar0)
+		private bool UpdateDailyPanel(HawkVpContext ctx, HawkVpResult baseResult, List<(int startBar0, int endBar0)> baseRegionsBar0)
 		{
+			_infoPanelNoDataReason = ToolMode
+				? "Sem dados no range selecionado"
+				: "Sem dados válidos (aguardando volume do dia)";
+
 			currentPoc = 0;
 			currentVah = 0;
 			currentVal = 0;
@@ -1478,7 +1514,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			int sessionStart;
 			int sessionEnd;
 			if(!TryGetCurrentSessionRange(out sessionStart, out sessionEnd))
-				return;
+				return false;
 
 			int currentBarCount = (BarsArray != null && BarsArray.Length > 0 && BarsArray[0] != null) ? BarsArray[0].Count : -1;
 
@@ -1487,7 +1523,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				&& _cachedSessionEnd == sessionEnd
 				&& _cachedLastBarCount == currentBarCount)
 			{
-				return;
+				return false;
 			}
 
 			_cachedSessionStart = sessionStart;
@@ -1496,7 +1532,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			_dailyCacheValid = true;
 
 			if(ctx == null)
-				return;
+				return false;
 
 			Dictionary<double, VolItem> profile = null;
 			if(baseResult != null && baseResult.Regions != null && baseRegionsBar0 != null)
@@ -1517,14 +1553,25 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				var dailyRegions = new List<(int startBar0, int endBar0)> { (sessionStart, sessionEnd) };
 				HawkVpResult dailyResult = HawkVpEngine.CalculateProfiles(ctx, dailyRegions);
 				if(dailyResult == null || dailyResult.Regions == null || dailyResult.Regions.Count == 0)
-					return;
+				{
+					LogEvent($"NoDailyData session={sessionStart}->{sessionEnd} bars={currentBarCount} profile=0", true);
+					return true;
+				}
 
 				profile = dailyResult.Regions[0].ProfileByPrice;
 				if(profile == null || profile.Count == 0)
-					return;
+				{
+					LogEvent($"NoDailyData session={sessionStart}->{sessionEnd} bars={currentBarCount} profile=0", true);
+					return true;
+				}
 			}
 
 			ComputeProfileStats(profile, out currentPoc, out currentVah, out currentVal, out currentTotalVolume);
+			if(currentTotalVolume <= 0)
+			{
+				LogEvent($"NoDailyData session={sessionStart}->{sessionEnd} bars={currentBarCount} profile={profile.Count}", true);
+				return true;
+			}
 
 			double hi = double.MinValue;
 			double lo = double.MaxValue;
@@ -1540,6 +1587,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				currentDayHigh = hi;
 				currentDayLow = lo;
 			}
+
+			return true;
 		}
 
 		private bool TryGetCurrentSessionRange(out int start, out int end)
@@ -1701,7 +1750,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 
 			if(currentTotalVolume <= 0)
 			{
-				infoPanelText = "Hawk Volume Profile\nSem dados válidos";
+				infoPanelText = $"Hawk Volume Profile\n{_infoPanelNoDataReason}";
 				return;
 			}
 
@@ -1728,16 +1777,20 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				_textFormat = new DW.TextFormat(_dwriteFactory, PanelFont, PanelFontSize)
 				{
 					TextAlignment = DW.TextAlignment.Leading,
-					ParagraphAlignment = DW.ParagraphAlignment.Near
+					ParagraphAlignment = DW.ParagraphAlignment.Near,
+					WordWrapping = DW.WordWrapping.NoWrap
 				};
 
-				_dxBorderBrush = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0xFF, 0xD4, 0xA0, 0x17)));
-				_dxTextBrush = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0xE6, 0xCC, 0xCC, 0xCC)));
+				_dxBorderBrush = new D2D.SolidColorBrush(RenderTarget, ToColor4((PanelBorderColor as SolidColorBrush)?.Color ?? Media.Color.FromArgb(0xFF, 0xD4, 0xA0, 0x17)));
+				_dxTextBrush = new D2D.SolidColorBrush(RenderTarget, ToColor4((PanelTextColor as SolidColorBrush)?.Color ?? Media.Color.FromArgb(0xE6, 0xCC, 0xCC, 0xCC)));
+
+				Media.Color panelBgTop = (PanelBgTopColor as SolidColorBrush)?.Color ?? Media.Color.FromArgb(0xC0, 0x50, 0x50, 0x50);
+				Media.Color panelBgBottom = (PanelBgBottomColor as SolidColorBrush)?.Color ?? Media.Color.FromArgb(0xB4, 0x28, 0x28, 0x28);
 
 				var stops = new[]
 				{
-					new D2D.GradientStop { Color = ToColor4(Media.Color.FromArgb(0xC0, 0x50, 0x50, 0x50)), Position = 0.0f },
-					new D2D.GradientStop { Color = ToColor4(Media.Color.FromArgb(0xB4, 0x28, 0x28, 0x28)), Position = 1.0f }
+					new D2D.GradientStop { Color = ToColor4(panelBgTop), Position = 0.0f },
+					new D2D.GradientStop { Color = ToColor4(panelBgBottom), Position = 1.0f }
 				};
 
 				_dxGradientStops = new D2D.GradientStopCollection(RenderTarget, stops);
@@ -1750,7 +1803,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 					},
 					_dxGradientStops);
 
-				_dxHighlightBrush = new D2D.SolidColorBrush(RenderTarget, ToColor4(Media.Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)));
+				_dxHighlightBrush = new D2D.SolidColorBrush(RenderTarget, ToColor4((PanelHeaderColor as SolidColorBrush)?.Color ?? Media.Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)));
 			}
 
 			base.OnRenderTargetChanged();
@@ -2089,6 +2142,11 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		{ get; set; }
 
 		[NinjaScriptProperty]
+		[Display(Name="Enable Verbose Log", Order=1000, GroupName="Diagnostics")]
+		public bool EnableVerboseLog
+		{ get; set; }
+
+		[NinjaScriptProperty]
 		[Display(Name="Tool Mode", GroupName="Parameters", Order=999)]
 		public bool ToolMode
 		{ get; set; }
@@ -2125,6 +2183,66 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		[Display(Name = "Panel Font Size", GroupName = "Panel", Order = 6)]
 		public float PanelFontSize
 		{ get; set; }
+
+		[XmlIgnore]
+		[Display(Name = "Panel Border Color", GroupName = "Panel", Order = 7)]
+		public Brush PanelBorderColor
+		{ get; set; }
+
+		[Browsable(false)]
+		public string PanelBorderColorSerialize
+		{
+			get { return Serialize.BrushToString(PanelBorderColor); }
+			set { PanelBorderColor = Serialize.StringToBrush(value); }
+		}
+
+		[XmlIgnore]
+		[Display(Name = "Panel Text Color", GroupName = "Panel", Order = 8)]
+		public Brush PanelTextColor
+		{ get; set; }
+
+		[Browsable(false)]
+		public string PanelTextColorSerialize
+		{
+			get { return Serialize.BrushToString(PanelTextColor); }
+			set { PanelTextColor = Serialize.StringToBrush(value); }
+		}
+
+		[XmlIgnore]
+		[Display(Name = "Panel Bg Top", GroupName = "Panel", Order = 9)]
+		public Brush PanelBgTopColor
+		{ get; set; }
+
+		[Browsable(false)]
+		public string PanelBgTopColorSerialize
+		{
+			get { return Serialize.BrushToString(PanelBgTopColor); }
+			set { PanelBgTopColor = Serialize.StringToBrush(value); }
+		}
+
+		[XmlIgnore]
+		[Display(Name = "Panel Bg Bottom", GroupName = "Panel", Order = 10)]
+		public Brush PanelBgBottomColor
+		{ get; set; }
+
+		[Browsable(false)]
+		public string PanelBgBottomColorSerialize
+		{
+			get { return Serialize.BrushToString(PanelBgBottomColor); }
+			set { PanelBgBottomColor = Serialize.StringToBrush(value); }
+		}
+
+		[XmlIgnore]
+		[Display(Name = "Panel Header Color", GroupName = "Panel", Order = 11)]
+		public Brush PanelHeaderColor
+		{ get; set; }
+
+		[Browsable(false)]
+		public string PanelHeaderColorSerialize
+		{
+			get { return Serialize.BrushToString(PanelHeaderColor); }
+			set { PanelHeaderColor = Serialize.StringToBrush(value); }
+		}
 
 		[NinjaScriptProperty]
 		[Display(ResourceType = typeof(Custom.Resource), Name = "Granularity", Description="",  Order = 24, GroupName = "NinjaScriptParameters")]
