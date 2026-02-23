@@ -51,11 +51,6 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 				AreaBrush = Brushes.DimGray;
 				AreaOpacity = 5;
 
-				OutlineBrush = Brushes.Transparent;
-				OutlineWidth = 2;
-				OutlineOpacity = 100;
-				OutlineVisible = true;
-
 				if (EnableToolLog)
 					Output.Process("[HawkVpRegion] SetDefaults ok", PrintTo.OutputTab1);
 			}
