@@ -1474,12 +1474,15 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 
 					RenderTarget.FillRoundedRectangle(roundedRect, _dxGradientBrush);
 
-					float headerHeight = Math.Min(boxRect.Height, PanelFontSize + PanelPadding);
+					float headerHeight = Math.Min(
+						boxRect.Height,
+						PanelFontSize + (PanelPadding * 1.2f)
+					);
 					var headerRect = new RectangleF(boxRect.Left, boxRect.Top, boxRect.Width, headerHeight);
 					RenderTarget.FillRectangle(headerRect, _dxHighlightBrush);
 
 					RenderTarget.DrawRoundedRectangle(roundedRect, _dxBorderBrush, 1.4f);
-					RenderTarget.DrawTextLayout(new Vector2(xPanel + PanelPadding, yPanel + PanelPadding), textLayout, _dxTextBrush);
+					RenderTarget.DrawTextLayout(new Vector2(xPanel + PanelPadding, yPanel + PanelPadding + 1f), textLayout, _dxTextBrush);
 				}
 			}
 
@@ -1504,12 +1507,12 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				? "Sem dados no range selecionado"
 				: "Sem dados válidos (aguardando volume do dia)";
 
-			currentPoc = 0;
-			currentVah = 0;
-			currentVal = 0;
-			currentDayHigh = 0;
-			currentDayLow = 0;
-			currentTotalVolume = 0;
+			double newPoc = currentPoc;
+			double newVah = currentVah;
+			double newVal = currentVal;
+			double newHigh = currentDayHigh;
+			double newLow = currentDayLow;
+			long newVolume = currentTotalVolume;
 
 			int sessionStart;
 			int sessionEnd;
@@ -1566,8 +1569,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				}
 			}
 
-			ComputeProfileStats(profile, out currentPoc, out currentVah, out currentVal, out currentTotalVolume);
-			if(currentTotalVolume <= 0)
+			ComputeProfileStats(profile, out newPoc, out newVah, out newVal, out newVolume);
+			if(newVolume <= 0)
 			{
 				LogEvent($"NoDailyData session={sessionStart}->{sessionEnd} bars={currentBarCount} profile={profile.Count}", true);
 				return true;
@@ -1584,9 +1587,16 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 
 			if(hi > double.MinValue && lo < double.MaxValue)
 			{
-				currentDayHigh = hi;
-				currentDayLow = lo;
+				newHigh = hi;
+				newLow = lo;
 			}
+
+			currentPoc = newPoc;
+			currentVah = newVah;
+			currentVal = newVal;
+			currentDayHigh = newHigh;
+			currentDayLow = newLow;
+			currentTotalVolume = newVolume;
 
 			return true;
 		}
