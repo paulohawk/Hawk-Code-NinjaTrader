@@ -2,6 +2,7 @@
 using System;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
+using System.Windows.Media;
 using NinjaTrader.Code;
 using NinjaTrader.Gui.Chart;
 using NinjaTrader.Gui.Tools;
@@ -46,6 +47,21 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 				PublishRange = true;
 				PublishThrottleMs = 150;
 				EnableToolLog = false;
+
+				AreaBrush = Brushes.DimGray;
+				AreaOpacity = 5;
+
+				AnchorBrush = Brushes.DarkGray;
+				AnchorDashStyle = DashStyleHelper.Dash;
+				AnchorWidth = 1;
+				AnchorOpacity = 100;
+
+				OutlineBrush = Brushes.Transparent;
+				OutlineDashStyle = DashStyleHelper.Solid;
+				OutlineWidth = 2;
+				OutlineOpacity = 100;
+				OutlineVisible = true;
+
 				if (EnableToolLog)
 					Output.Process("[HawkVpRegion] SetDefaults ok", PrintTo.OutputTab1);
 			}
