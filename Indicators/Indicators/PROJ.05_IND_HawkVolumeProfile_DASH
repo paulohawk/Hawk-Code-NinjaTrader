@@ -244,9 +244,9 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				DeltaNegativeBrush			= Brushes.DarkGoldenrod;
 				TextPosColorBrush			= Brushes.Snow;
 				TextNegColorBrush			= Brushes.Maroon;
-				LinearGradientBrush poc = new LinearGradientBrush();
-				poc.GradientStops.Add(new GradientStop(Media.Color.FromArgb(0xFF, 0x80, 0x80, 0x80), 0.0));
-				poc.GradientStops.Add(new GradientStop(Media.Color.FromArgb(0xFF, 0x2F, 0x2F, 0x2F), 1.0));
+				var poc = new System.Windows.Media.LinearGradientBrush();
+				poc.GradientStops.Add(new System.Windows.Media.GradientStop(System.Windows.Media.Color.FromArgb(0xFF, 0x80, 0x80, 0x80), 0.0));
+				poc.GradientStops.Add(new System.Windows.Media.GradientStop(System.Windows.Media.Color.FromArgb(0xFF, 0x2F, 0x2F, 0x2F), 1.0));
 				poc.StartPoint = new System.Windows.Point(0, 0);
 				poc.EndPoint = new System.Windows.Point(0, 1);
 				PocColorBrush				= poc;
