@@ -51,13 +51,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 				AreaBrush = Brushes.DimGray;
 				AreaOpacity = 5;
 
-				AnchorBrush = Brushes.DarkGray;
-				AnchorDashStyle = DashStyleHelper.Dash;
-				AnchorWidth = 1;
-				AnchorOpacity = 100;
-
 				OutlineBrush = Brushes.Transparent;
-				OutlineDashStyle = DashStyleHelper.Solid;
 				OutlineWidth = 2;
 				OutlineOpacity = 100;
 				OutlineVisible = true;
