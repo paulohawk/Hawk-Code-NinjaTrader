@@ -139,7 +139,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		private bool _fullyInitialized;
 		private string _lastToolRangeSignature;
 		private DateTime _lastSeenToolBusUtc = DateTime.MinValue;
-		private DateTime _lastToolMissLogUtc = DateTime.MinValue;
 		private bool _lastToolSelectionHitState;
 		private int _lastRegionsCount = -1;
 		private double _toolX0 = 0;
@@ -218,10 +217,12 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 				ToolMode					= false;
 				ShowInfoPanel				= true;
 				PanelMargin					= 8f;
-				PanelPadding				= 9f;
-				PanelLift					= 6f;
+				PanelPadding				= 10f;
+				PanelLift					= 45f;
 				PanelFont					= "Segoe UI";
-				PanelFontSize				= 12f;
+				PanelFontSize				= 10f;
+				PanelCornerRadius		= 4f;
+				PanelVolumeLabel			= "contratos";
 				PanelBorderColor			= new SolidColorBrush(Media.Color.FromArgb(0xFF, 0xD4, 0xA0, 0x17));
 				PanelTextColor				= new SolidColorBrush(Media.Color.FromArgb(0xE6, 0xCC, 0xCC, 0xCC));
 				PanelBgTopColor				= new SolidColorBrush(Media.Color.FromArgb(0xC0, 0x50, 0x50, 0x50));
@@ -756,13 +757,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 			if(_lastToolSelectionHitState)
 				LogEvent($"ToolSel state hit->miss key={key}", false);
 			_lastToolSelectionHitState = false;
-
-			DateTime nowUtc = DateTime.UtcNow;
-			if(EnableDebugLog && (nowUtc - _lastToolMissLogUtc).TotalSeconds >= 45)
-			{
-				_lastToolMissLogUtc = nowUtc;
-				LogEvent($"ToolSel miss key={key}", false);
-			}
 		}
 
 		void getRegion(ChartControl chartControl, ChartScale chartScale, ChartPanel chartPanel)
@@ -1459,30 +1453,27 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 					float boxW = textLayout.Metrics.Width + 2f * PanelPadding;
 					float boxH = textLayout.Metrics.Height + 2f * PanelPadding;
 
-					float xPanel = (float)(chartPanel.X + PanelMargin);
-					float yPanel = (float)(chartPanel.Y + chartPanel.H - boxH - PanelMargin - PanelLift);
-					var boxRect = new RectangleF(xPanel, yPanel, boxW, boxH);
+					float xPanel = (float)Math.Floor(chartPanel.X + PanelMargin) + 0.5f;
+					float yPanel = (float)Math.Floor(chartPanel.Y + chartPanel.H - PanelLift - boxH) + 0.5f;
 					var roundedRect = new D2D.RoundedRectangle
 					{
-						Rect = boxRect,
-						RadiusX = 6f,
-						RadiusY = 6f
+						Rect = new RectangleF(xPanel, yPanel, boxW, boxH),
+						RadiusX = PanelCornerRadius,
+						RadiusY = PanelCornerRadius
 					};
 
-					_dxGradientBrush.StartPoint = new Vector2(boxRect.Left, boxRect.Top);
-					_dxGradientBrush.EndPoint = new Vector2(boxRect.Left, boxRect.Bottom);
-
+					_dxGradientBrush.StartPoint = new Vector2(xPanel, yPanel);
+					_dxGradientBrush.EndPoint = new Vector2(xPanel, yPanel + boxH);
 					RenderTarget.FillRoundedRectangle(roundedRect, _dxGradientBrush);
 
-					float headerHeight = Math.Min(
-						boxRect.Height,
-						PanelFontSize + (PanelPadding * 1.2f)
-					);
-					var headerRect = new RectangleF(boxRect.Left, boxRect.Top, boxRect.Width, headerHeight);
-					RenderTarget.FillRectangle(headerRect, _dxHighlightBrush);
+					RenderTarget.DrawLine(
+						new Vector2(xPanel + PanelCornerRadius, yPanel + 1f),
+						new Vector2(xPanel + boxW - PanelCornerRadius, yPanel + 1f),
+						_dxHighlightBrush,
+						1f);
 
 					RenderTarget.DrawRoundedRectangle(roundedRect, _dxBorderBrush, 1.4f);
-					RenderTarget.DrawTextLayout(new Vector2(xPanel + PanelPadding, yPanel + PanelPadding + 1f), textLayout, _dxTextBrush);
+					RenderTarget.DrawTextLayout(new Vector2((float)Math.Floor(xPanel + PanelPadding) + 0.5f, (float)Math.Floor(yPanel + PanelPadding) + 0.5f), textLayout, _dxTextBrush);
 				}
 			}
 
@@ -1760,21 +1751,16 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 
 			if(currentTotalVolume <= 0)
 			{
-				infoPanelText = $"Hawk Volume Profile\n{_infoPanelNoDataReason}";
+				infoPanelText = _infoPanelNoDataReason;
 				return;
 			}
 
 			double dayRange = currentDayHigh - currentDayLow;
 
 			infoPanelText =
-				$"Hawk Volume Profile\n" +
-				$"POC: {currentPoc:N2}\n" +
-				$"VAH: {currentVah:N2}\n" +
-				$"VAL: {currentVal:N2}\n" +
-				$"High: {currentDayHigh:N2}\n" +
-				$"Low: {currentDayLow:N2}\n" +
-				$"Range: {dayRange:N2}\n" +
-				$"Total Vol: {currentTotalVolume:N0}";
+				$"POC: {currentPoc:N2} PTS | VAH: {currentVah:N2} PTS | VAL: {currentVal:N2} PTS\n" +
+				$"High: {currentDayHigh:N2} PTS | Low: {currentDayLow:N2} PTS | Range: {dayRange:N2} PTS\n" +
+				$"Vol: {currentTotalVolume:N0} ({PanelVolumeLabel})";
 		}
 
 		public override void OnRenderTargetChanged()
@@ -1803,7 +1789,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 					new D2D.GradientStop { Color = ToColor4(panelBgBottom), Position = 1.0f }
 				};
 
-				_dxGradientStops = new D2D.GradientStopCollection(RenderTarget, stops);
+				_dxGradientStops = new D2D.GradientStopCollection(RenderTarget, stops, D2D.Gamma.StandardRgb, D2D.ExtendMode.Clamp);
 				_dxGradientBrush = new D2D.LinearGradientBrush(
 					RenderTarget,
 					new D2D.LinearGradientBrushProperties
@@ -2194,8 +2180,18 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		public float PanelFontSize
 		{ get; set; }
 
+		[NinjaScriptProperty]
+		[Display(Name = "Panel Corner Radius", GroupName = "Panel", Order = 7)]
+		public float PanelCornerRadius
+		{ get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Panel Volume Label", GroupName = "Panel", Order = 8)]
+		public string PanelVolumeLabel
+		{ get; set; }
+
 		[XmlIgnore]
-		[Display(Name = "Panel Border Color", GroupName = "Panel", Order = 7)]
+		[Display(Name = "Panel Border Color", GroupName = "Panel", Order = 9)]
 		public Brush PanelBorderColor
 		{ get; set; }
 
@@ -2207,7 +2203,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		}
 
 		[XmlIgnore]
-		[Display(Name = "Panel Text Color", GroupName = "Panel", Order = 8)]
+		[Display(Name = "Panel Text Color", GroupName = "Panel", Order = 10)]
 		public Brush PanelTextColor
 		{ get; set; }
 
@@ -2219,7 +2215,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		}
 
 		[XmlIgnore]
-		[Display(Name = "Panel Bg Top", GroupName = "Panel", Order = 9)]
+		[Display(Name = "Panel Bg Top", GroupName = "Panel", Order = 11)]
 		public Brush PanelBgTopColor
 		{ get; set; }
 
@@ -2231,7 +2227,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		}
 
 		[XmlIgnore]
-		[Display(Name = "Panel Bg Bottom", GroupName = "Panel", Order = 10)]
+		[Display(Name = "Panel Bg Bottom", GroupName = "Panel", Order = 12)]
 		public Brush PanelBgBottomColor
 		{ get; set; }
 
@@ -2243,7 +2239,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 		}
 
 		[XmlIgnore]
-		[Display(Name = "Panel Header Color", GroupName = "Panel", Order = 11)]
+		[Display(Name = "Panel Header Color", GroupName = "Panel", Order = 13)]
 		public Brush PanelHeaderColor
 		{ get; set; }
 
