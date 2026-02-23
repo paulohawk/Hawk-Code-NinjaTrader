@@ -1436,8 +1436,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Hawk.Volume
 					float boxW = textLayout.Metrics.Width + 2f * PanelPadding;
 					float boxH = textLayout.Metrics.Height + 2f * PanelPadding;
 
-					float xPanel = (float)chartControl.CanvasLeft + PanelMargin;
-					float yPanel = (float)chartControl.CanvasBottom - boxH - PanelMargin - PanelLift;
+					float xPanel = (float)(chartPanel.X + PanelMargin);
+					float yPanel = (float)(chartPanel.Y + chartPanel.H - boxH - PanelMargin - PanelLift);
 					var boxRect = new RectangleF(xPanel, yPanel, boxW, boxH);
 
 					_dxGradientBrush.StartPoint = new Vector2(boxRect.Left, boxRect.Top);
