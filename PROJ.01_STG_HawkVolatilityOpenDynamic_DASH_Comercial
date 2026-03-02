@@ -3866,9 +3866,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (!IsRealtimeLive())
                 return;
 
-            if (!IsHedgeActive())
-                return;
-
             if (e.MarketDataType != MarketDataType.Last)
                 return;
 
@@ -3876,8 +3873,13 @@ namespace NinjaTrader.NinjaScript.Strategies
                 return;
 
             EnsureCycleSynced(Position, Position.AveragePrice);
-            if (bracketNeedsAttention || IsHedgeBracketProtectionRequired())
-                BracketManager_Update(false);
+
+            if (IsHedgeActive())
+            {
+                if (bracketNeedsAttention || IsHedgeBracketProtectionRequired())
+                    BracketManager_Update(false);
+            }
+
             ApplyRealtimeLiveBreakEven(e.Price);
         }
 
