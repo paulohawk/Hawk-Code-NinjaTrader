@@ -42,6 +42,15 @@ using TextAlignment = System.Windows.TextAlignment;
 // Version note: módulo legado de volatilidade removido (Bloco 1).
 namespace NinjaTrader.NinjaScript.Indicators
 {
+    internal enum SmartLogLevel
+    {
+        None = 0,
+        Error = 1,
+        Info = 2,
+        Debug = 3,
+        Trace = 4
+    }
+
     public class SmartBoletaIndicator : Indicator
     {
         private const int AttachPollMs = 1000;
@@ -52,6 +61,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private static readonly Dictionary<int, WeakReference<SmartBoletaIndicator>> ActivePerChart = new Dictionary<int, WeakReference<SmartBoletaIndicator>>();
         private static readonly Dictionary<int, string> BoletaIdPerChart = new Dictionary<int, string>();
+        private SmartLogLevel _currentLogLevel = SmartLogLevel.Info;
+        private DateTime _lastFallbackLog = DateTime.MinValue;
+        private int _lastQtyLogged = -1;
+        private DateTime _lastQtySelectorMissingLog = DateTime.MinValue;
 
         #region HARDLOCK_MIN (Risk) - infra mínima e ultra compatível (TXT, sem XML/Serializer)
 
@@ -90,7 +103,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 string line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}][{BoletaId ?? "B??"}] {msg}";
 
                 // Output window do Ninja
-                try { Print("[HARDLOCK-DIAG] " + line); } catch { }
+                SmartLog(SmartLogLevel.Debug, "[HARDLOCK-DIAG] " + msg);
 
                 // arquivo
                 try
@@ -714,7 +727,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             catch (Exception ex)
             {
-                SafePrint("EvaluateMaxContractsPerTradeDecision ex: " + ex.Message);
+                SmartLog("EvaluateMaxContractsPerTradeDecision ex: " + ex.Message);
                 return d; // fail-open
             }
         }
@@ -735,14 +748,14 @@ namespace NinjaTrader.NinjaScript.Indicators
                 embeddedControl?.SetLastOrderInfo($"RISK: Qty limitado a {max} (sizing).");
 
                 ShowTransientPopup($"RISK: Quantidade limitada a {max} contratos.\nMotivo: {reasonForUser}");
-                SafePrint($"[TRACE][QtyClamp] sizing desired={q} clamped={clamped} max={max} reason={reasonForUser}");
+                SmartLog($"[TRACE][QtyClamp] sizing desired={q} clamped={clamped} max={max} reason={reasonForUser}");
 
                 SavePrefs();
                 return clamped;
             }
             catch (Exception ex)
             {
-                SafePrint("ClampQtyToMaxContractsPerTradeForSizing ex: " + ex.Message);
+                SmartLog("ClampQtyToMaxContractsPerTradeForSizing ex: " + ex.Message);
                 return desiredQty;
             }
         }
@@ -981,7 +994,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 {
                     if (ActivePerChart.TryGetValue(chartKey, out var wr) && wr.TryGetTarget(out var existing) && existing != null && existing != this)
                     {
-                        SafePrint("Já existe boleta ativa neste chart; não criarei outra.");
+                        SmartLog("Já existe boleta ativa neste chart; não criarei outra.");
                         return;
                     }
                     ActivePerChart[chartKey] = new WeakReference<SmartBoletaIndicator>(this);
@@ -1007,7 +1020,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     ChartControl.Dispatcher.InvokeAsync(HookChartTraderAndInsert, DispatcherPriority.Background);
 
                 StartAttachTimer();
-                SafePrint($"DataLoaded: attach timer iniciado. BoletaId={BoletaId}");
+                SmartLog($"DataLoaded: attach timer iniciado. BoletaId={BoletaId}");
 
                 SubscribeExecutions();
                 SubscribeDecoratorAccountEvents();
@@ -1042,7 +1055,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             else if (State == State.Terminated)
             {
-                SafePrint("Terminated: cleaning up.");
+                SmartLog("Terminated: cleaning up.");
                 StopAttachTimer();
                 StopDecoTimer();
                 RemoveEmbedded();
@@ -1093,7 +1106,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 };
                 PrefsById[BoletaId] = sp;
             }
-            catch (Exception ex) { SafePrint("SavePrefs ex: " + ex.Message); }
+            catch (Exception ex) { SmartLog("SavePrefs ex: " + ex.Message); }
         }
 
         private void LoadPrefs()
@@ -1152,7 +1165,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     embeddedControl.SetAtrState(false);
                     embeddedControl.SetRrSizingState(false);
                     embeddedControl.SetQtyButtonsEnabled(true);
-                    SafePrint("LoadPrefs: fallback para modo manual (prefs antigas/sem sizing).");
+                    SmartLog("LoadPrefs: fallback para modo manual (prefs antigas/sem sizing).");
                 }
 
                 embeddedControl.SetOnClickState(sp.OnClickOn);
@@ -1160,7 +1173,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                 embeddedControl.UpdateBulletsAfterStateChange();
             }
-            catch (Exception ex) { SafePrint("LoadPrefs ex: " + ex.Message); }
+            catch (Exception ex) { SmartLog("LoadPrefs ex: " + ex.Message); }
         }
 
         private void StartDecoTimer()
@@ -1176,12 +1189,12 @@ namespace NinjaTrader.NinjaScript.Indicators
                         ComputeOrderDecorations();
                         ForceRefreshDecorations();
                     }
-                    catch (Exception ex) { SafePrint("DecoTimer ex: " + ex.Message); }
+                    catch (Exception ex) { SmartLog("DecoTimer ex: " + ex.Message); }
                 };
                 decoTimer.Start();
-                SafePrint("DecoTimer started (2s).");
+                SmartLog("DecoTimer started (2s).");
             }
-            catch (Exception ex) { SafePrint("StartDecoTimer ex: " + ex.Message); }
+            catch (Exception ex) { SmartLog("StartDecoTimer ex: " + ex.Message); }
         }
 
         private void StopDecoTimer()
@@ -1197,14 +1210,43 @@ namespace NinjaTrader.NinjaScript.Indicators
             catch { }
         }
 
-        public void SafePrint(string message)
+        private SmartLogLevel InferLogLevel(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+                return SmartLogLevel.Info;
+
+            if (message.IndexOf("[TRACE]", StringComparison.OrdinalIgnoreCase) >= 0)
+                return SmartLogLevel.Trace;
+
+            if (message.IndexOf(" ex:", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                message.IndexOf(" error", StringComparison.OrdinalIgnoreCase) >= 0)
+                return SmartLogLevel.Error;
+
+            if (message.IndexOf("fallback", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                message.IndexOf("sync", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                message.IndexOf("timer", StringComparison.OrdinalIgnoreCase) >= 0)
+                return SmartLogLevel.Debug;
+
+            return SmartLogLevel.Info;
+        }
+
+        public void SmartLog(string message)
+        {
+            SmartLog(InferLogLevel(message), message);
+        }
+
+        public void SmartLog(SmartLogLevel level, string message)
         {
             try
             {
-                Print($"[SmartBoleta][{BoletaId ?? "B??"}] {DateTime.Now:HH:mm:ss.fff} - {message}");
+                if (level > _currentLogLevel)
+                    return;
+
+                string levelTag = level.ToString().ToUpperInvariant();
+                Print($"[SmartBoleta][{levelTag}] {DateTime.Now:HH:mm:ss.fff} - {message}");
                 if (!EnableDiagnosticLogging) return;
 
-                string line = $"[SmartBoleta][{BoletaId ?? "B??"}] {DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} - {message}";
+                string line = $"[SmartBoleta][{levelTag}] {DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} - {message}";
                 Directory.CreateDirectory(IOPath.GetDirectoryName(LogPath));
                 File.AppendAllText(LogPath, line + Environment.NewLine);
             }
@@ -1228,14 +1270,22 @@ namespace NinjaTrader.NinjaScript.Indicators
                         var qtySelector = hostWin.FindFirst("ChartTraderControlQuantitySelector") as QuantityUpDown;
                         if (qtySelector == null)
                         {
-                            SafePrint("Qty sync skipped: Quantity selector not found.");
+                            if ((DateTime.Now - _lastQtySelectorMissingLog).TotalSeconds > 5)
+                            {
+                                _lastQtySelectorMissingLog = DateTime.Now;
+                                SmartLog(SmartLogLevel.Debug, "Qty sync skipped: Quantity selector not found.");
+                            }
                             return;
                         }
 
                         qtySelector.Value = qty;
-                        SafePrint($"Qty sync to ChartTrader: {qty}");
+                        if (_lastQtyLogged != qty)
+                        {
+                            _lastQtyLogged = qty;
+                            SmartLog(SmartLogLevel.Debug, $"Qty sync to ChartTrader: {qty}");
+                        }
                     }
-                    catch (Exception ex) { SafePrint("Qty sync error: " + ex.Message); }
+                    catch (Exception ex) { SmartLog(SmartLogLevel.Error, "Qty sync error: " + ex.Message); }
                 }));
             }
             catch { }
@@ -1286,13 +1336,17 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             var fallback = FindAncestorAccount();
             selectedAccountCached = fallback;
-            SafePrint($"GetSelectedAccount fallback -> {(fallback?.Name ?? "null")}");
+            if ((DateTime.Now - _lastFallbackLog).TotalSeconds > 5)
+            {
+                _lastFallbackLog = DateTime.Now;
+                SmartLog(SmartLogLevel.Debug, $"GetSelectedAccount fallback -> {(fallback?.Name ?? "null")}");
+            }
             return fallback;
         }
 
         private double? TryGetAccountValue(Account acc, AccountItem item)
         {
-            return AccountValueProvider.TryGetAccountValueUsd(acc, item, SafePrint);
+            return AccountValueProvider.TryGetAccountValueUsd(acc, item, SmartLog);
         }
 
         private void UpdatePnlDisplay()
@@ -1300,15 +1354,15 @@ namespace NinjaTrader.NinjaScript.Indicators
             try
             {
                 Account acc = GetSelectedAccount();
-                double? realized = AccountValueProvider.TryGetRealizedPnlUsd(acc, SafePrint);
-                SafePrint($"PnL check: account={(acc?.Name ?? "null")} realized={(realized.HasValue ? realized.Value.ToString("N2") : "null")}");
+                double? realized = AccountValueProvider.TryGetRealizedPnlUsd(acc, SmartLog);
+                SmartLog($"PnL check: account={(acc?.Name ?? "null")} realized={(realized.HasValue ? realized.Value.ToString("N2") : "null")}");
 
                 ChartControl?.Dispatcher?.BeginInvoke(new Action(() =>
                 {
                     embeddedControl?.SetPnl(realized);
                 }));
             }
-            catch (Exception ex) { SafePrint("UpdatePnlDisplay ex: " + ex.Message); }
+            catch (Exception ex) { SmartLog("UpdatePnlDisplay ex: " + ex.Message); }
         }
 
 
@@ -1358,7 +1412,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             catch (Exception ex)
             {
-                SafePrint("RefreshRrDisplay ex: " + ex.Message);
+                SmartLog("RefreshRrDisplay ex: " + ex.Message);
             }
         }
 
@@ -1633,11 +1687,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                 }
                 catch { }
 
-                SafePrint($"[HARDLOCK] aplicado. reason={reason} acc={(accName ?? "null")} scope={(chartScope ? "chart" : "global")} until={_hardLockUntilLocal:HH:mm} key={(_hardLockKey ?? "null")} kind={_hardLockKind}");
+                SmartLog($"[HARDLOCK] aplicado. reason={reason} acc={(accName ?? "null")} scope={(chartScope ? "chart" : "global")} until={_hardLockUntilLocal:HH:mm} key={(_hardLockKey ?? "null")} kind={_hardLockKind}");
             }
             catch (Exception ex)
             {
-                SafePrint("HardLock_RefreshCacheAndApplyUi ex: " + ex.Message);
+                SmartLog("HardLock_RefreshCacheAndApplyUi ex: " + ex.Message);
             }
         }
 
@@ -1672,9 +1726,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                     catch { }
                 };
                 rrTimer.Start();
-                SafePrint("RR timer started (250ms).");
+                SmartLog("RR timer started (250ms).");
             }
-            catch (Exception ex) { SafePrint("StartRrTimer ex: " + ex.Message); }
+            catch (Exception ex) { SmartLog("StartRrTimer ex: " + ex.Message); }
         }
 
         private void StopRrTimer()
@@ -1696,7 +1750,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             attachTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(AttachPollMs) };
             attachTimer.Tick += (s, e) =>
             {
-                try { HookChartTraderAndInsert(); } catch (Exception ex) { SafePrint("attachTimer tick ex: " + ex.Message); }
+                try { HookChartTraderAndInsert(); } catch (Exception ex) { SmartLog("attachTimer tick ex: " + ex.Message); }
             };
             attachTimer.Start();
         }
@@ -1710,10 +1764,10 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             try
             {
-                if (ChartControl == null) { SafePrint("Hook: ChartControl null"); return; }
+                if (ChartControl == null) { SmartLog("Hook: ChartControl null"); return; }
 
                 chartWindow = Window.GetWindow(ChartControl.Parent) as Gui.Chart.Chart;
-                if (chartWindow == null) { SafePrint("Hook: chartWindow null"); return; }
+                if (chartWindow == null) { SmartLog("Hook: chartWindow null"); return; }
 
                 try { chartTrader = chartWindow.FindFirst("ChartWindowChartTraderControl") as Gui.Chart.ChartTrader; } catch { }
                 if (chartTrader == null) chartTrader = FindVisualChildren<Gui.Chart.ChartTrader>(chartWindow).FirstOrDefault();
@@ -1724,7 +1778,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                 WireAccountSelector(); // conecta ao selector de conta
 
-                if (!TabSelected()) { RegisterTabHandler(); SafePrint("Hook: tab not selected - waiting"); return; }
+                if (!TabSelected()) { RegisterTabHandler(); SmartLog("Hook: tab not selected - waiting"); return; }
 
                 if (!panelActive) InsertEmbedded();
                 else
@@ -1733,7 +1787,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     try { RefreshPositionAndOrders(); } catch { }
                 }
             }
-            catch (Exception ex) { SafePrint("HookChartTraderAndInsert ex: " + ex.Message); }
+            catch (Exception ex) { SmartLog("HookChartTraderAndInsert ex: " + ex.Message); }
         }
 
         private void WireAccountSelector()
@@ -1751,7 +1805,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 accountSelector = sel;
                 accountSelector.SelectionChanged += AccountSelector_SelectionChanged;
                 selectedAccountCached = accountSelector.SelectedAccount;
-                SafePrint("Account selector wired.");
+                SmartLog("Account selector wired.");
 
                 // ✅ NOVO: sempre que wire, reseta tracking para a conta atual (evita misturar contas)
                 try { ResetRiskPositionTrackingForSelectedAccount("wire"); } catch { }
@@ -1761,7 +1815,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             catch (Exception ex)
             {
-                SafePrint("WireAccountSelector ex: " + ex.Message);
+                SmartLog("WireAccountSelector ex: " + ex.Message);
             }
         }
 
@@ -1791,11 +1845,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                     _riskLastPositionQty = 0;
                 }
 
-                SafePrint($"[TRACE][RoundTrip] tracking reset: reason={reason} acc={(_riskTrackedAccountName ?? "null")} inst={(Instrument?.FullName ?? "null")}");
+                SmartLog($"[TRACE][RoundTrip] tracking reset: reason={reason} acc={(_riskTrackedAccountName ?? "null")} inst={(Instrument?.FullName ?? "null")}");
             }
             catch (Exception ex)
             {
-                SafePrint("ResetRiskPositionTrackingForSelectedAccount ex: " + ex.Message);
+                SmartLog("ResetRiskPositionTrackingForSelectedAccount ex: " + ex.Message);
             }
         }
 
@@ -1804,7 +1858,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             try
             {
                 selectedAccountCached = accountSelector?.SelectedAccount;
-                SafePrint($"Account changed -> {selectedAccountCached?.Name ?? "null"}");
+                SmartLog($"Account changed -> {selectedAccountCached?.Name ?? "null"}");
 
                 // ✅ NOVO: não carregar tracking da conta anterior
                 ResetRiskPositionTrackingForSelectedAccount("account_changed");
@@ -1820,7 +1874,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             catch (Exception ex)
             {
-                SafePrint("AccountSelector_SelectionChanged ex: " + ex.Message);
+                SmartLog("AccountSelector_SelectionChanged ex: " + ex.Message);
             }
         }
 
@@ -1858,12 +1912,12 @@ namespace NinjaTrader.NinjaScript.Indicators
                                 if (panelActive) RemoveEmbedded();
                             }
                         }
-                        catch (Exception ex) { SafePrint("TabHandler ex: " + ex.Message); }
+                        catch (Exception ex) { SmartLog("TabHandler ex: " + ex.Message); }
                     };
                     chartWindow.MainTabControl.SelectionChanged += tabHandler;
                 }
             }
-            catch (Exception ex) { SafePrint("RegisterTabHandler ex: " + ex.Message); }
+            catch (Exception ex) { SmartLog("RegisterTabHandler ex: " + ex.Message); }
         }
 
         private void InsertEmbedded()
@@ -1912,7 +1966,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 }
 
                 panelActive = true;
-                SafePrint($"InsertEmbedded: UI inserida. BoletaId={BoletaId}");
+                SmartLog($"InsertEmbedded: UI inserida. BoletaId={BoletaId}");
                 RegisterTabHandler();
                 UpdateEmbeddedForSelectedTab();
                 try { RefreshPositionAndOrders(); } catch { }
@@ -1925,9 +1979,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                 // ✅ HARDLOCK: ao criar UI, checa o arquivo e reaplica bloqueio persistido (se existir)
                 try { HardLock_RefreshCacheAndApplyUi("insert_embedded"); } catch { }
 
-                try { if (attachTimer != null) { attachTimer.Stop(); attachTimer = null; SafePrint("attach timer parado após attach."); } } catch { }
+                try { if (attachTimer != null) { attachTimer.Stop(); attachTimer = null; SmartLog("attach timer parado após attach."); } } catch { }
             }
-            catch (Exception ex) { SafePrint("InsertEmbedded ex: " + ex.Message); }
+            catch (Exception ex) { SmartLog("InsertEmbedded ex: " + ex.Message); }
         }
 
         private void RemoveEmbedded()
@@ -1964,9 +2018,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                 // O estado real de bloqueio vem do arquivo (HardLock) + EvaluateRisk.
                 // _riskOverlayShown deve ser resetado apenas no reset diário (EnsureRiskResetDaily) ou quando o lock expirar.
 
-                SafePrint("RemoveEmbedded: UI removida (defensivo).");
+                SmartLog("RemoveEmbedded: UI removida (defensivo).");
             }
-            catch (Exception ex) { SafePrint("RemoveEmbedded ex: " + ex.Message); }
+            catch (Exception ex) { SmartLog("RemoveEmbedded ex: " + ex.Message); }
         }
 
         private void UpdateEmbeddedForSelectedTab()
@@ -1985,14 +2039,14 @@ namespace NinjaTrader.NinjaScript.Indicators
                 embeddedControl.SetEndDayLabel(EndDayTime, EndDayScope);
                 embeddedControl.UpdateBulletsAfterStateChange();
             }
-            catch (Exception ex) { SafePrint("UpdateEmbeddedForSelectedTab ex: " + ex.Message); }
+            catch (Exception ex) { SmartLog("UpdateEmbeddedForSelectedTab ex: " + ex.Message); }
         }
 
         public void OpenEndDayDialog()
         {
             try
             {
-                SafePrint("OpenEndDayDialog: start");
+                SmartLog("OpenEndDayDialog: start");
                 var ownerWin = chartWindow ?? FindAncestorWindow(ChartControl) as Gui.Chart.Chart;
 
                 var dlg = new Window()
@@ -2058,7 +2112,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                         embeddedControl?.UpdateBulletsAfterStateChange();
                         SavePrefs();
                     }
-                    catch (Exception ex) { SafePrint("EndDay OK parse error: " + ex.Message); }
+                    catch (Exception ex) { SmartLog("EndDay OK parse error: " + ex.Message); }
 
                     try { dlg.Dispatcher.BeginInvoke(new Action(() => { dlg.DialogResult = true; dlg.Close(); })); } catch { try { dlg.Close(); } catch { } }
                 };
@@ -2073,7 +2127,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             catch (Exception ex)
             {
-                SafePrint("OpenEndDayDialog error: " + ex.Message);
+                SmartLog("OpenEndDayDialog error: " + ex.Message);
             }
         }
 		// =========================
@@ -2107,7 +2161,7 @@ protected override void OnBarUpdate()
     }
     catch (Exception ex)
     {
-        SafePrint("OnBarUpdate ex: " + ex.Message);
+        SmartLog("OnBarUpdate ex: " + ex.Message);
     }
 }
 
@@ -2148,7 +2202,7 @@ private void ComputeAtrAutoAndApply()
     }
     catch (Exception ex)
     {
-        SafePrint("ComputeAtrAutoAndApply ex: " + ex.Message);
+        SmartLog("ComputeAtrAutoAndApply ex: " + ex.Message);
     }
 }
 
@@ -2200,7 +2254,7 @@ private void RunPeriodicRefresh()
                     _beActive = true;
 
                     ShowTransientPopup("Break-even armado: aguardando ticks mínimos.");
-                    SafePrint("BE armado: aguardando ticks mínimos para aplicar.");
+                    SmartLog("BE armado: aguardando ticks mínimos para aplicar.");
 
                     // limpa o request one-shot para não spammar popup
                     _beFireRequest = false;
@@ -2219,7 +2273,7 @@ private void RunPeriodicRefresh()
                     try { applied = TryApplyBreakEvenOneShot(); }
                     catch (Exception exBe)
                     {
-                        SafePrint("TryApplyBreakEvenOneShot ex: " + exBe.Message);
+                        SmartLog("TryApplyBreakEvenOneShot ex: " + exBe.Message);
                         applied = false;
                     }
 
@@ -2239,7 +2293,7 @@ private void RunPeriodicRefresh()
         }
         catch (Exception ex)
         {
-            SafePrint("BE motor ex: " + ex.Message);
+            SmartLog("BE motor ex: " + ex.Message);
         }
 
         // NOVO: polling (mesmo princípio do ATR). Detecta a transição "não-flat -> flat" e dispara overlay se RISK bloqueou.
@@ -2253,7 +2307,7 @@ private void RunPeriodicRefresh()
     }
     catch (Exception ex)
     {
-        SafePrint("RunPeriodicRefresh ex: " + ex.Message);
+        SmartLog("RunPeriodicRefresh ex: " + ex.Message);
     }
 }
 
@@ -2305,7 +2359,7 @@ private void ApplyAtrValues(int atrTicks, double atrDollarPerContract, double ti
         if (embeddedControl != null && embeddedControl.IsAtrEnabled())
             ApplyAtrSizing(atrTicks, atrDollarPerContract);
     }
-    catch (Exception ex) { SafePrint("ATR sizing ex: " + ex.Message); }
+    catch (Exception ex) { SmartLog("ATR sizing ex: " + ex.Message); }
 
     // Fail-safe: se ATR ON e stop financeiro inválido, desligar ATR e liberar qty
     if (embeddedControl != null && embeddedControl.IsAtrEnabled())
@@ -2315,7 +2369,7 @@ private void ApplyAtrValues(int atrTicks, double atrDollarPerContract, double ti
         {
             embeddedControl.ForceAtrOffAndEnableQty();
             ShowTransientPopup("ATR desligado: defina Stop ($) para usar ATR.");
-            SafePrint("ATR auto-off: Stop($) inválido durante ATR ON.");
+            SmartLog("ATR auto-off: Stop($) inválido durante ATR ON.");
             SavePrefs();
         }
     }
@@ -2331,7 +2385,7 @@ private (bool hasPos, double avgPrice, string ticker) GetOpenPositionInfo(bool v
         string chartInst = Instrument?.FullName ?? "(null)";
         string chartMI = Instrument?.MasterInstrument?.Name ?? "(null)";
 
-        if (verbose) SafePrint($"GetOpenPositionInfo: chartInst={chartInst} chartMI={chartMI}");
+        if (verbose) SmartLog($"GetOpenPositionInfo: chartInst={chartInst} chartMI={chartMI}");
 
         foreach (var acc in Account.All)
         {
@@ -2361,7 +2415,7 @@ private (bool hasPos, double avgPrice, string ticker) GetOpenPositionInfo(bool v
                                     bool match = (pFull == chartInst) || (!string.IsNullOrEmpty(pMI) && pMI == chartMI);
                                     if (match)
                                     {
-                                        if (verbose) SafePrint($"Found position in acc={acc.Name} inst={pFull} qty={qty} avg={avg}");
+                                        if (verbose) SmartLog($"Found position in acc={acc.Name} inst={pFull} qty={qty} avg={avg}");
                                         return (true, avg, pFull);
                                     }
                                 }
@@ -2374,8 +2428,8 @@ private (bool hasPos, double avgPrice, string ticker) GetOpenPositionInfo(bool v
             catch { }
         }
     }
-    catch (Exception ex) { if (verbose) SafePrint("GetOpenPositionInfo ex: " + ex.Message); }
-    if (verbose) SafePrint("GetOpenPositionInfo: no position found.");
+    catch (Exception ex) { if (verbose) SmartLog("GetOpenPositionInfo ex: " + ex.Message); }
+    if (verbose) SmartLog("GetOpenPositionInfo: no position found.");
     return (false, 0.0, "");
 }
 
@@ -2464,7 +2518,7 @@ private (double? chartStop, double? chartExit) GetChartStopAndExit(bool verbose 
                             }
                         }
 
-                        if (verbose) SafePrint($"Order inspected: acc={ord.Account?.Name} inst={oFull} type={orderTypeName} state={stateName} price={(price.HasValue ? price.Value.ToString("N2") : "null")}");
+                        if (verbose) SmartLog($"Order inspected: acc={ord.Account?.Name} inst={oFull} type={orderTypeName} state={stateName} price={(price.HasValue ? price.Value.ToString("N2") : "null")}");
 
                         if (!string.IsNullOrEmpty(orderTypeName))
                         {
@@ -2490,7 +2544,7 @@ private (double? chartStop, double? chartExit) GetChartStopAndExit(bool verbose 
                             if (!foundExit.HasValue && price.HasValue) foundExit = price.Value;
                         }
                     }
-                    catch (Exception exOrd) { if (verbose) SafePrint("Order inspect ex: " + exOrd.Message); }
+                    catch (Exception exOrd) { if (verbose) SmartLog("Order inspect ex: " + exOrd.Message); }
                 }
             }
             catch { }
@@ -2498,7 +2552,7 @@ private (double? chartStop, double? chartExit) GetChartStopAndExit(bool verbose 
     }
     catch { }
 
-    if (verbose) SafePrint($"GetChartStopAndExit: inspected={inspected} stop={(foundStop.HasValue ? foundStop.Value.ToString("N2") : "null")} exit={(foundExit.HasValue ? foundExit.Value.ToString("N2") : "null")}");
+    if (verbose) SmartLog($"GetChartStopAndExit: inspected={inspected} stop={(foundStop.HasValue ? foundStop.Value.ToString("N2") : "null")} exit={(foundExit.HasValue ? foundExit.Value.ToString("N2") : "null")}");
     return (foundStop, foundExit);
 }
 
@@ -2535,7 +2589,7 @@ private void RefreshPositionAndOrders()
             }
         }));
     }
-    catch (Exception ex) { SafePrint("RefreshPositionAndOrders ex: " + ex.Message); }
+    catch (Exception ex) { SmartLog("RefreshPositionAndOrders ex: " + ex.Message); }
 }
 
 private void ApplyAtrSizing(int atrTicks, double atrDollarPerContract)
@@ -2595,7 +2649,7 @@ private bool ApplyAtrSizingWithValidation(int atrTicks, double atrDollarPerContr
     }
     catch (Exception ex)
     {
-        SafePrint("ApplyAtrSizingWithValidation error: " + ex.Message);
+        SmartLog("ApplyAtrSizingWithValidation error: " + ex.Message);
         if (fromToggle) embeddedControl?.ForceAtrOffAndEnableQty();
         else embeddedControl?.SetQtyButtonsEnabled(true);
         return false;
@@ -2713,7 +2767,7 @@ private void PollFlatEdgeAndMaybeShowRiskOverlay()
         if (!_lastFlatForRisk.HasValue)
         {
             _lastFlatForRisk = isFlatNow;
-            SafePrint($"RiskFlatPoll init: acc={acc.Name} scope={EscopoRisk} flat={isFlatNow}");
+            SmartLog($"RiskFlatPoll init: acc={acc.Name} scope={EscopoRisk} flat={isFlatNow}");
             return;
         }
 
@@ -2729,7 +2783,7 @@ private void PollFlatEdgeAndMaybeShowRiskOverlay()
 
             _lastFlatEdgeUtc = DateTime.UtcNow;
 
-            SafePrint($"RiskFlatPoll EDGE: acc={acc.Name} scope={EscopoRisk} => virou FLAT. blocked={IsRiskBlocked()} trades={_riskTrades} contracts={_riskContracts}");
+            SmartLog($"RiskFlatPoll EDGE: acc={acc.Name} scope={EscopoRisk} => virou FLAT. blocked={IsRiskBlocked()} trades={_riskTrades} contracts={_riskContracts}");
 
             // Garante que o Risk foi reavaliado após o FLAT (caso limite de trades dependa disso)
             EvaluateRisk(false);
@@ -2750,13 +2804,13 @@ private void PollFlatEdgeAndMaybeShowRiskOverlay()
                 _riskOverlayArmed = false;
                 _riskOverlayPendingMessage = null;
 
-                SafePrint("RiskFlatPoll: overlay exibido (Risk bloqueado + virou FLAT).");
+                SmartLog("RiskFlatPoll: overlay exibido (Risk bloqueado + virou FLAT).");
             }
         }
     }
     catch (Exception ex)
     {
-        SafePrint("PollFlatEdgeAndMaybeShowRiskOverlay ex: " + ex.Message);
+        SmartLog("PollFlatEdgeAndMaybeShowRiskOverlay ex: " + ex.Message);
     }
 }
 
@@ -2774,7 +2828,7 @@ private bool TryShowRiskOverlayIfArmedAndFlat(Account accForScope, string reason
             bool flatNowDbg = true;
             try { flatNowDbg = IsFlatForRiskScope(accForScope); } catch { }
 
-            SafePrint($"[TRACE][OverlayTry] reason={reason} acc={(accForScope?.Name ?? "null")} inst={(Instrument?.FullName ?? "null")} scope={EscopoRisk} flat={flatNowDbg} qty={qtyNowDbg} blocked={IsRiskBlocked()} armed={_riskOverlayArmed} shown={_riskOverlayShown} trades={_riskTrades} contracts={_riskContracts}");
+            SmartLog($"[TRACE][OverlayTry] reason={reason} acc={(accForScope?.Name ?? "null")} inst={(Instrument?.FullName ?? "null")} scope={EscopoRisk} flat={flatNowDbg} qty={qtyNowDbg} blocked={IsRiskBlocked()} armed={_riskOverlayArmed} shown={_riskOverlayShown} trades={_riskTrades} contracts={_riskContracts}");
         }
         catch { }
 
@@ -2806,12 +2860,12 @@ private bool TryShowRiskOverlayIfArmedAndFlat(Account accForScope, string reason
         _riskOverlayArmed = false;
         _riskOverlayPendingMessage = null;
 
-        SafePrint($"Risk overlay disparado ao ficar FLAT (armed -> shown). reason={reason} acc={(accForScope?.Name ?? "null")} scope={EscopoRisk}");
+        SmartLog($"Risk overlay disparado ao ficar FLAT (armed -> shown). reason={reason} acc={(accForScope?.Name ?? "null")} scope={EscopoRisk}");
         return true;
     }
     catch (Exception ex)
     {
-        SafePrint("TryShowRiskOverlayIfArmedAndFlat(acc) ex: " + ex.Message);
+        SmartLog("TryShowRiskOverlayIfArmedAndFlat(acc) ex: " + ex.Message);
         return false;
     }
 }
@@ -2826,7 +2880,7 @@ private void TryShowRiskOverlayIfArmedAndFlat()
     }
     catch (Exception ex)
     {
-        SafePrint("TryShowRiskOverlayIfArmedAndFlat ex: " + ex.Message);
+        SmartLog("TryShowRiskOverlayIfArmedAndFlat ex: " + ex.Message);
     }
 }
 
@@ -2838,7 +2892,7 @@ private Account ResolveAccountWithPosition()
         var posSel = GetPositionForInstrument(selected, Instrument);
         if (posSel != null && posSel.Quantity != 0)
         {
-            SafePrint($"Conta selecionada com posição: {selected.Name}");
+            SmartLog($"Conta selecionada com posição: {selected.Name}");
             return selected;
         }
     }
@@ -2848,7 +2902,7 @@ private Account ResolveAccountWithPosition()
         var p = GetPositionForInstrument(acc, Instrument);
         if (p != null && p.Quantity != 0)
         {
-            SafePrint($"Conta com posição encontrada: {acc.Name}");
+            SmartLog($"Conta com posição encontrada: {acc.Name}");
             return acc;
         }
     }
@@ -2856,12 +2910,12 @@ private Account ResolveAccountWithPosition()
     var sim = Account.All.FirstOrDefault(a => a.Name != null && a.Name.Equals("Sim101", StringComparison.OrdinalIgnoreCase));
     if (sim != null)
     {
-        SafePrint("Fallback para Sim101");
+        SmartLog("Fallback para Sim101");
         return sim;
     }
 
     var first = Account.All.FirstOrDefault(a => a != null && a.Name != null) ?? Account.All.FirstOrDefault();
-    if (first != null) SafePrint($"Fallback para primeira conta: {first.Name}");
+    if (first != null) SmartLog($"Fallback para primeira conta: {first.Name}");
     return first;
 }
 
@@ -2915,7 +2969,7 @@ private int CancelAllActiveOrdersForInstrument(Account acc, Instrument inst)
             canceled = toCancel.Count;
         }
     }
-    catch (Exception ex) { SafePrint("CancelAllActiveOrdersForInstrument ex: " + ex.Message); }
+    catch (Exception ex) { SmartLog("CancelAllActiveOrdersForInstrument ex: " + ex.Message); }
     return canceled;
 }
 
@@ -2934,10 +2988,10 @@ private void CleanupFlatOrders(Account acc)
 
         if (_flatCleanupDone) return; // evita repetição
         int canceled = CancelAllActiveOrdersForInstrument(acc, Instrument);
-        if (canceled > 0) SafePrint($"Flat cleanup: canceladas {canceled} ordens ativas pós-flat.");
+        if (canceled > 0) SmartLog($"Flat cleanup: canceladas {canceled} ordens ativas pós-flat.");
         _flatCleanupDone = true;
     }
-    catch (Exception ex) { SafePrint("CleanupFlatOrders ex: " + ex.Message); }
+    catch (Exception ex) { SmartLog("CleanupFlatOrders ex: " + ex.Message); }
     return;
 }
 
@@ -2948,21 +3002,21 @@ private bool TryApplyBreakEvenOneShot()
     {
         if (IsFlat())
         {
-            SafePrint("BE ignorado: posição flat.");
+            SmartLog("BE ignorado: posição flat.");
             return false;
         }
 
         var acc = ResolveAccountWithPosition();
         if (acc == null)
         {
-            SafePrint("BE falhou: account null.");
+            SmartLog("BE falhou: account null.");
             return false;
         }
 
         var pos = GetPositionForInstrument(acc, Instrument);
         if (pos == null || pos.Quantity == 0)
         {
-            SafePrint($"BE ignorado: posição não encontrada na conta {acc.Name}. Instrumento={Instrument?.FullName}");
+            SmartLog($"BE ignorado: posição não encontrada na conta {acc.Name}. Instrumento={Instrument?.FullName}");
             return false;
         }
 
@@ -2973,7 +3027,7 @@ private bool TryApplyBreakEvenOneShot()
         double tickSize = Instrument?.MasterInstrument?.TickSize ?? 0.0;
         if (tickSize <= 0)
         {
-            SafePrint("BE falhou: tickSize <= 0.");
+            SmartLog("BE falhou: tickSize <= 0.");
             return false;
         }
 
@@ -2985,12 +3039,12 @@ private bool TryApplyBreakEvenOneShot()
         int beTicks = Math.Max(0, BreakEvenTicks);
         double minFavor = beTicks * Math.Max(1.0, MinFavorFactor);
 
-        SafePrint($"BE start: dir={(isShort ? "Short" : "Long")} avg={avg:F2} last={last:F2} favorTicks={favorTicksInt} minFavor={minFavor} qty={qtyAbs} acc={acc.Name}");
+        SmartLog($"BE start: dir={(isShort ? "Short" : "Long")} avg={avg:F2} last={last:F2} favorTicks={favorTicksInt} minFavor={minFavor} qty={qtyAbs} acc={acc.Name}");
 
         if (favorTicksInt < minFavor)
         {
             // ✅ FIX: não mostrar popup aqui (isso roda em loop no motor)
-            SafePrint("BE ainda não: ticks insuficientes (silencioso).");
+            SmartLog("BE ainda não: ticks insuficientes (silencioso).");
             return false;
         }
 
@@ -3000,7 +3054,7 @@ private bool TryApplyBreakEvenOneShot()
 
         // Cancelar todas as ordens ativas (stop/target) antes de recriar o stop BE
         int canceled = CancelAllActiveOrdersForInstrument(acc, Instrument);
-        SafePrint($"BE: canceladas {canceled} ordens ativas (stop/target) antes de recriar o stop BE.");
+        SmartLog($"BE: canceladas {canceled} ordens ativas (stop/target) antes de recriar o stop BE.");
 
         // Cria novo stop no preço de BE, com a quantidade total da posição
         OrderAction action = isShort ? OrderAction.BuyToCover : OrderAction.Sell;
@@ -3019,7 +3073,7 @@ private bool TryApplyBreakEvenOneShot()
             null);
 
         acc.Submit(new[] { newStop });
-        SafePrint($"BE OK (novo stop): stop @ {bePrice:F2} qty={qtyAbs} action={action} acc={acc.Name}");
+        SmartLog($"BE OK (novo stop): stop @ {bePrice:F2} qty={qtyAbs} action={action} acc={acc.Name}");
         ShowTransientPopup($"Break-even aplicado: stop @ {bePrice:F2}");
         SavePrefs();
 
@@ -3027,7 +3081,7 @@ private bool TryApplyBreakEvenOneShot()
     }
     catch (Exception ex)
     {
-        SafePrint("BE exception: " + ex.Message);
+        SmartLog("BE exception: " + ex.Message);
         ShowTransientPopup("Break-even falhou: " + ex.Message);
         return false;
     }
@@ -3043,7 +3097,7 @@ private void SubscribeExecutions()
             acc.ExecutionUpdate += OnExecutionUpdate;
         }
     }
-    catch (Exception ex) { SafePrint("SubscribeExecutions ex: " + ex.Message); }
+    catch (Exception ex) { SmartLog("SubscribeExecutions ex: " + ex.Message); }
 }
 
 private void UnsubscribeExecutions()
@@ -3101,7 +3155,7 @@ private void RiskUpdateRoundTripCounters(Account accountForCheck)
                 // ===== LOGS =====
                 try
                 {
-                    SafePrint($"[TRACE][RoundTrip] seed acc={accountForCheck.Name} inst={(Instrument?.FullName ?? "null")} qtyNow={qtyNow} trades={_riskTrades}");
+                    SmartLog($"[TRACE][RoundTrip] seed acc={accountForCheck.Name} inst={(Instrument?.FullName ?? "null")} qtyNow={qtyNow} trades={_riskTrades}");
                 }
                 catch { }
 
@@ -3116,7 +3170,7 @@ private void RiskUpdateRoundTripCounters(Account accountForCheck)
     }
     catch (Exception ex)
     {
-        SafePrint("RiskUpdateRoundTripCounters ex: " + ex.Message);
+        SmartLog("RiskUpdateRoundTripCounters ex: " + ex.Message);
     }
 }
 
@@ -3148,7 +3202,7 @@ private bool WouldExceedMaxContractsPerTrade(Account account, OrderAction action
     }
     catch (Exception ex)
     {
-        SafePrint("WouldExceedMaxContractsPerTrade ex: " + ex.Message);
+        SmartLog("WouldExceedMaxContractsPerTrade ex: " + ex.Message);
         return false;
     }
 }
@@ -3186,7 +3240,7 @@ private void OnExecutionUpdate(object sender, ExecutionEventArgs e)
         {
             int posQtyNowDbg = 0;
             try { posQtyNowDbg = GetPositionForInstrument(exec.Account, Instrument)?.Quantity ?? 0; } catch { }
-            SafePrint($"[TRACE][ExecUpdate] acc={exec.Account?.Name} inst={exec.Instrument?.FullName} qtyExec={exec.Quantity} state={state} posQtyNow={posQtyNowDbg} trades={_riskTrades} contracts={_riskContracts} blocked={IsRiskBlocked()} armed={_riskOverlayArmed} shown={_riskOverlayShown}");
+            SmartLog($"[TRACE][ExecUpdate] acc={exec.Account?.Name} inst={exec.Instrument?.FullName} qtyExec={exec.Quantity} state={state} posQtyNow={posQtyNowDbg} trades={_riskTrades} contracts={_riskContracts} blocked={IsRiskBlocked()} armed={_riskOverlayArmed} shown={_riskOverlayShown}");
         }
         catch { }
 
@@ -3199,7 +3253,7 @@ private void OnExecutionUpdate(object sender, ExecutionEventArgs e)
         // Mantém apenas um seed/sync do tracker (opcional)
         RiskUpdateRoundTripCounters(exec.Account);
 
-        SafePrint($"Exec contabilizada para Risk: trades={_riskTrades} contratosDia={_riskContracts} qtyExec={exec.Quantity}");
+        SmartLog($"Exec contabilizada para Risk: trades={_riskTrades} contratosDia={_riskContracts} qtyExec={exec.Quantity}");
 
         // Limpeza pós-flat imediatamente após execução
         CleanupFlatOrders(exec.Account);
@@ -3212,7 +3266,7 @@ private void OnExecutionUpdate(object sender, ExecutionEventArgs e)
     }
     catch (Exception ex)
     {
-        SafePrint("OnExecutionUpdate Risk ex: " + ex.Message);
+        SmartLog("OnExecutionUpdate Risk ex: " + ex.Message);
     }
 }
 
@@ -3264,7 +3318,7 @@ private void EnsureRiskResetDaily()
         try { HardLock_CleanupExpired(); } catch { }
 
         embeddedControl?.SetRiskState(RiskState.Ok, _riskOn, "");
-        SafePrint("Risk: reset diário.");
+        SmartLog("Risk: reset diário.");
 
         // ✅ NOVO: prepara tracking para a conta selecionada (se existir)
         try { ResetRiskPositionTrackingForSelectedAccount("daily_reset"); } catch { }
@@ -3294,7 +3348,7 @@ private void EnsureRiskResetDaily()
                 var mi = embeddedControl.GetType().GetMethod(methodName, new[] { typeof(bool) });
                 if (mi == null) return;
                 mi.Invoke(embeddedControl, new object[] { arg });
-                SafePrint($"[TRACE][UI] embeddedControl.{methodName}({arg}) OK");
+                SmartLog($"[TRACE][UI] embeddedControl.{methodName}({arg}) OK");
             }
             catch { }
         }
@@ -3327,7 +3381,7 @@ private void EnsureRiskResetDaily()
                 else
                     Apply();
 
-                SafePrint($"[TRACE][UI] SetBeToggleVisualSafe enabled={enabled} reason={reason}");
+                SmartLog($"[TRACE][UI] SetBeToggleVisualSafe enabled={enabled} reason={reason}");
             }
             catch { }
         }
@@ -3394,13 +3448,13 @@ private void EnsureRiskResetDaily()
                     ShowTransientPopup("Bloqueado por RISK até 00:00.");
                 }
 
-                SafePrint("[HARDLOCK] tentativa de desligar Risk ignorada (hardlock ativo).");
+                SmartLog("[HARDLOCK] tentativa de desligar Risk ignorada (hardlock ativo).");
                 SavePrefs();
                 return;
             }
 
             _riskOn = enabled;
-            SafePrint("Risk toggle: " + enabled);
+            SmartLog("Risk toggle: " + enabled);
 
             // ✅ NOVO: ao ligar/desligar o Risk, não herdar tracking antigo da conta/posição
             try { ResetRiskPositionTrackingForSelectedAccount("risk_toggle"); } catch { }
@@ -3456,7 +3510,7 @@ private void EnsureRiskResetDaily()
                     if (!_lastFlatForRisk.HasValue)
                     {
                         _lastFlatForRisk = isFlatNow;
-                        SafePrint($"[TRACE][RiskRT] init(global) acc={sel.Name} flat={isFlatNow} trades={_riskTrades}");
+                        SmartLog($"[TRACE][RiskRT] init(global) acc={sel.Name} flat={isFlatNow} trades={_riskTrades}");
                         return;
                     }
 
@@ -3466,7 +3520,7 @@ private void EnsureRiskResetDaily()
                     if (!wasFlat && isFlatNow)
                     {
                         _riskTrades += 1;
-                        SafePrint($"Risk round-trip contabilizado (global flat): trades={_riskTrades}");
+                        SmartLog($"Risk round-trip contabilizado (global flat): trades={_riskTrades}");
                     }
 
                     return;
@@ -3493,7 +3547,7 @@ private void EnsureRiskResetDaily()
                         _riskLastPositionQty = qtyNow;
                         _riskLastPositionInitialized = true;
 
-                        SafePrint($"[TRACE][RiskRT] init(chart) acc={sel.Name} inst={(Instrument?.FullName ?? "null")} qtyNow={qtyNow} trades={_riskTrades}");
+                        SmartLog($"[TRACE][RiskRT] init(chart) acc={sel.Name} inst={(Instrument?.FullName ?? "null")} qtyNow={qtyNow} trades={_riskTrades}");
                         return;
                     }
 
@@ -3503,7 +3557,7 @@ private void EnsureRiskResetDaily()
                     if (qtyPrev != 0 && qtyNow == 0)
                     {
                         _riskTrades += 1;
-                        SafePrint($"Risk round-trip contabilizado (flat via PositionUpdate): trades={_riskTrades}");
+                        SmartLog($"Risk round-trip contabilizado (flat via PositionUpdate): trades={_riskTrades}");
                     }
 
                     _riskLastPositionQty = qtyNow;
@@ -3511,7 +3565,7 @@ private void EnsureRiskResetDaily()
             }
             catch (Exception ex)
             {
-                SafePrint("RiskOnPositionUpdateMaybeCountRoundTrip ex: " + ex.Message);
+                SmartLog("RiskOnPositionUpdateMaybeCountRoundTrip ex: " + ex.Message);
             }
         }
 
@@ -3525,7 +3579,7 @@ private void EnsureRiskResetDaily()
                     var acc0 = GetSelectedAccount();
                     int posQtyNowDbg = 0;
                     try { posQtyNowDbg = GetPositionForInstrument(acc0, Instrument)?.Quantity ?? 0; } catch { }
-                    SafePrint($"[TRACE][EvalRisk] enter fromExec={fromExec} acc={(acc0?.Name ?? "null")} inst={(Instrument?.FullName ?? "null")} posQtyNow={posQtyNowDbg} trades={_riskTrades} contracts={_riskContracts} blocked={IsRiskBlocked()} armed={_riskOverlayArmed} shown={_riskOverlayShown}");
+                    SmartLog($"[TRACE][EvalRisk] enter fromExec={fromExec} acc={(acc0?.Name ?? "null")} inst={(Instrument?.FullName ?? "null")} posQtyNow={posQtyNowDbg} trades={_riskTrades} contracts={_riskContracts} blocked={IsRiskBlocked()} armed={_riskOverlayArmed} shown={_riskOverlayShown}");
                 }
                 catch { }
 
@@ -3561,7 +3615,7 @@ private void EnsureRiskResetDaily()
                             _riskOverlayPendingMessage = null;
                         }
 
-                        SafePrint("[HARDLOCK] EvaluateRisk: bloqueio soberano aplicado.");
+                        SmartLog("[HARDLOCK] EvaluateRisk: bloqueio soberano aplicado.");
                     }
                     catch { }
                     return;
@@ -3579,7 +3633,7 @@ private void EnsureRiskResetDaily()
                     _riskOverlayArmed = false;
                     _riskOverlayPendingMessage = null;
 
-                    try { SafePrint("[TRACE][EvalRisk] exit: AtivarRisk=false"); } catch { }
+                    try { SmartLog("[TRACE][EvalRisk] exit: AtivarRisk=false"); } catch { }
                     return;
                 }
 
@@ -3595,13 +3649,13 @@ private void EnsureRiskResetDaily()
                     _riskOverlayArmed = false;
                     _riskOverlayPendingMessage = null;
 
-                    try { SafePrint("[TRACE][EvalRisk] exit: _riskOn=false"); } catch { }
+                    try { SmartLog("[TRACE][EvalRisk] exit: _riskOn=false"); } catch { }
                     return;
                 }
 
                 double pnl = 0.0;
                 var acc = GetSelectedAccount();
-                var pVal = AccountValueProvider.TryGetRealizedPnlUsd(acc, SafePrint);
+                var pVal = AccountValueProvider.TryGetRealizedPnlUsd(acc, SmartLog);
                 pnl = pVal ?? 0.0;
 
                 bool breachLoss = false, breachTrades = false, breachContracts = false, breachProfit = false;
@@ -3630,7 +3684,7 @@ private void EnsureRiskResetDaily()
                 // ===== LOGS (decisão) =====
                 try
                 {
-                    SafePrint($"[TRACE][EvalRisk] pnl={pnl:N2} breachLoss={breachLoss} breachTrades={breachTrades} breachContracts={breachContracts} breachProfit={breachProfit} warn={warn} trades={_riskTrades} contracts={_riskContracts}");
+                    SmartLog($"[TRACE][EvalRisk] pnl={pnl:N2} breachLoss={breachLoss} breachTrades={breachTrades} breachContracts={breachContracts} breachProfit={breachProfit} warn={warn} trades={_riskTrades} contracts={_riskContracts}");
                 }
                 catch { }
 
@@ -3643,7 +3697,7 @@ private void EnsureRiskResetDaily()
                     // ✅ NÃO chamar ForceMainToggleBlocked (efeitos colaterais / regressões).
                     SetTradingFromChartEnabled(false);
 
-                    try { SafePrint("[TRACE][EvalRisk] exit: already blocked"); } catch { }
+                    try { SmartLog("[TRACE][EvalRisk] exit: already blocked"); } catch { }
                     return;
                 }
 
@@ -3701,11 +3755,11 @@ private void EnsureRiskResetDaily()
                 _riskOverlayArmed = false;
                 _riskOverlayPendingMessage = null;
 
-                try { SafePrint("[TRACE][EvalRisk] exit: OK"); } catch { }
+                try { SmartLog("[TRACE][EvalRisk] exit: OK"); } catch { }
             }
             catch (Exception ex)
             {
-                SafePrint("EvaluateRisk ex: " + ex.Message);
+                SmartLog("EvaluateRisk ex: " + ex.Message);
             }
         }
 
@@ -3720,7 +3774,7 @@ private void EnsureRiskResetDaily()
                 bool flatNowDbg = true;
                 try { flatNowDbg = IsFlatForRiskScope(acc0); } catch { }
 
-                SafePrint($"[TRACE][RiskBlock] msg='{logMsg}' acc={(acc0?.Name ?? "null")} inst={(Instrument?.FullName ?? "null")} scope={EscopoRisk} flat={flatNowDbg} qty={posQtyNowDbg} trades={_riskTrades} contracts={_riskContracts} blocked(before)={IsRiskBlocked()} armed={_riskOverlayArmed} shown={_riskOverlayShown}");
+                SmartLog($"[TRACE][RiskBlock] msg='{logMsg}' acc={(acc0?.Name ?? "null")} inst={(Instrument?.FullName ?? "null")} scope={EscopoRisk} flat={flatNowDbg} qty={posQtyNowDbg} trades={_riskTrades} contracts={_riskContracts} blocked(before)={IsRiskBlocked()} armed={_riskOverlayArmed} shown={_riskOverlayShown}");
             }
             catch { }
 
@@ -3731,7 +3785,7 @@ private void EnsureRiskResetDaily()
             _riskBlocked = true;
             _riskBlockedUntil = NextMidnight();
             _mainToggleLockedByRisk = lockMain;
-            SafePrint("RISK BLOQUEADO: " + logMsg + $" até {_riskBlockedUntil:HH:mm}");
+            SmartLog("RISK BLOQUEADO: " + logMsg + $" até {_riskBlockedUntil:HH:mm}");
 
             // =========================================================
             // ✅ HARDLOCK: persistir no arquivo + atualizar cache em memória
@@ -3773,11 +3827,11 @@ private void EnsureRiskResetDaily()
                 _hardLockKey = key;
                 _hardLockKind = kind;
 
-                SafePrint($"[HARDLOCK] Upsert key={key} untilUtc={untilUtc:yyyy-MM-dd HH:mm:ss} kind={kind}");
+                SmartLog($"[HARDLOCK] Upsert key={key} untilUtc={untilUtc:yyyy-MM-dd HH:mm:ss} kind={kind}");
             }
             catch (Exception ex)
             {
-                SafePrint("HardLock Upsert ex: " + ex.Message);
+                SmartLog("HardLock Upsert ex: " + ex.Message);
                 try { HardLockDiag("TriggerRiskBlock HardLock Upsert ex: " + ex); } catch { }
             }
 
@@ -3809,7 +3863,7 @@ private void EnsureRiskResetDaily()
 
                     _riskOverlayShown = true;
 
-                    try { SafePrint("[TRACE][RiskBlock] overlay shown immediately (flat in scope)"); } catch { }
+                    try { SmartLog("[TRACE][RiskBlock] overlay shown immediately (flat in scope)"); } catch { }
                 }
             }
             else
@@ -3819,9 +3873,9 @@ private void EnsureRiskResetDaily()
                 {
                     _riskOverlayArmed = true;
                     _riskOverlayPendingMessage = overlayMsg;
-                    SafePrint("Risk overlay ARMADO (posição aberta). Será exibido ao ficar FLAT.");
+                    SmartLog("Risk overlay ARMADO (posição aberta). Será exibido ao ficar FLAT.");
 
-                    try { SafePrint("[TRACE][RiskBlock] overlay ARMED (flat=false in scope)"); } catch { }
+                    try { SmartLog("[TRACE][RiskBlock] overlay ARMED (flat=false in scope)"); } catch { }
                 }
             }
 
@@ -3867,7 +3921,7 @@ private void EnsureRiskResetDaily()
                     ChartPanel.PreviewKeyUp += ChartPanel_PreviewKeyUp;
                 }
             }
-            catch (Exception ex) { SafePrint("RegisterChartHandlers ex: " + ex.Message); }
+            catch (Exception ex) { SmartLog("RegisterChartHandlers ex: " + ex.Message); }
         }
 
         public void UnregisterChartHandlers()
@@ -3881,7 +3935,7 @@ private void EnsureRiskResetDaily()
                     ChartPanel.PreviewKeyUp -= ChartPanel_PreviewKeyUp;
                 }
             }
-            catch (Exception ex) { SafePrint("UnregisterChartHandlers ex: " + ex.Message); }
+            catch (Exception ex) { SmartLog("UnregisterChartHandlers ex: " + ex.Message); }
         }
 
         private void ChartPanel_PreviewKeyDown(object sender, KeyEventArgs e)
@@ -3909,7 +3963,7 @@ private void EnsureRiskResetDaily()
                 bool flatNowDbg = true;
                 try { flatNowDbg = IsFlatForRiskScope(acc0); } catch { }
 
-                SafePrint($"[TRACE][Click] acc={(acc0?.Name ?? "null")} inst={(Instrument?.FullName ?? "null")} scope={EscopoRisk} buyKeyDown={buyButton} sellKeyDown={sellButton} tradingFromChart={tradingFromChart} flat={flatNowDbg} qty={posQtyNowDbg} trades={_riskTrades} contracts={_riskContracts} blocked={IsRiskBlocked()} armed={_riskOverlayArmed} shown={_riskOverlayShown}");
+                SmartLog($"[TRACE][Click] acc={(acc0?.Name ?? "null")} inst={(Instrument?.FullName ?? "null")} scope={EscopoRisk} buyKeyDown={buyButton} sellKeyDown={sellButton} tradingFromChart={tradingFromChart} flat={flatNowDbg} qty={posQtyNowDbg} trades={_riskTrades} contracts={_riskContracts} blocked={IsRiskBlocked()} armed={_riskOverlayArmed} shown={_riskOverlayShown}");
             }
             catch { }
 
@@ -3941,7 +3995,7 @@ private void EnsureRiskResetDaily()
             if (EndDayTime.HasValue && DateTime.Now.TimeOfDay >= EndDayTime.Value)
             {
                 embeddedControl?.SetLastOrderInfo("Bloqueado: horário limite atingido");
-                SafePrint("Envio bloqueado por EndDay.");
+                SmartLog("Envio bloqueado por EndDay.");
                 if (EnableOverlayOnEndDay) overlayController?.EnsureOverlayShown(OverlayOpacity, OverlayDurationSeconds, OverlayMessage);
                 e.Handled = true;
                 return;
@@ -3989,7 +4043,7 @@ private void EnsureRiskResetDaily()
                             // ===== LOGS (preparação da ordem) =====
                             try
                             {
-                                SafePrint($"[TRACE][ClickOrderPrep] acc={(myAccount?.Name ?? "null")} inst={(Instrument?.FullName ?? "null")} buy={buyButton} sell={sellButton} qty={myQuantity} priceClicked={priceClicked:F2} trades={_riskTrades} contracts={_riskContracts} blocked={IsRiskBlocked()}");
+                                SmartLog($"[TRACE][ClickOrderPrep] acc={(myAccount?.Name ?? "null")} inst={(Instrument?.FullName ?? "null")} buy={buyButton} sell={sellButton} qty={myQuantity} priceClicked={priceClicked:F2} trades={_riskTrades} contracts={_riskContracts} blocked={IsRiskBlocked()}");
                             }
                             catch { }
 
@@ -4004,7 +4058,7 @@ private void EnsureRiskResetDaily()
                                 {
                                     embeddedControl?.SetLastOrderInfo($"RISK: bloqueado. Máx contratos/trade = {MaxContractsPerTrade}.");
                                     ShowTransientPopup($"RISK: bloqueado.\nMáx contratos/trade = {MaxContractsPerTrade}\nAtual: {d.currentAbs}  |  Após ordem: {d.projectedAbs}");
-                                    SafePrint($"[TRACE][MaxPerTrade] BLOCK click: acc={myAccount.Name} action={intendedAction} reqQty={myQuantity} curAbs={d.currentAbs} projAbs={d.projectedAbs} max={MaxContractsPerTrade}");
+                                    SmartLog($"[TRACE][MaxPerTrade] BLOCK click: acc={myAccount.Name} action={intendedAction} reqQty={myQuantity} curAbs={d.currentAbs} projAbs={d.projectedAbs} max={MaxContractsPerTrade}");
                                     return;
                                 }
 
@@ -4019,7 +4073,7 @@ private void EnsureRiskResetDaily()
 
                                     embeddedControl?.SetLastOrderInfo($"RISK: Qty limitado a {myQuantity} (máx {MaxContractsPerTrade}).");
                                     ShowTransientPopup($"RISK: Quantidade limitada a {myQuantity} contratos.\nMáx por trade = {MaxContractsPerTrade}");
-                                    SafePrint($"[TRACE][MaxPerTrade] CLAMP click: acc={myAccount.Name} action={intendedAction} reqQty={old} newQty={myQuantity} curAbs={d.currentAbs} projAbs={d.projectedAbs} max={MaxContractsPerTrade}");
+                                    SmartLog($"[TRACE][MaxPerTrade] CLAMP click: acc={myAccount.Name} action={intendedAction} reqQty={old} newQty={myQuantity} curAbs={d.currentAbs} projAbs={d.projectedAbs} max={MaxContractsPerTrade}");
                                 }
                             }
 
@@ -4066,18 +4120,18 @@ private void EnsureRiskResetDaily()
                         // ===== LOGS (submit) =====
                         try
                         {
-                            SafePrint($"[TRACE][OrderSubmit] acc={(myAccount?.Name ?? "null")} inst={(Instrument?.FullName ?? "null")} order={(myOrder != null ? myOrder.ToString() : "null")} trades={_riskTrades} contracts={_riskContracts} blocked={IsRiskBlocked()}");
+                            SmartLog($"[TRACE][OrderSubmit] acc={(myAccount?.Name ?? "null")} inst={(Instrument?.FullName ?? "null")} order={(myOrder != null ? myOrder.ToString() : "null")} trades={_riskTrades} contracts={_riskContracts} blocked={IsRiskBlocked()}");
                         }
                         catch { }
 
                         myAccount?.Submit(new[] { myOrder });
 
                         embeddedControl?.SetLastOrderInfo(myOrder?.ToString() ?? "Order submitted");
-                        SafePrint($"OnClick: order qty={myQuantity} price={priceClicked}");
+                        SmartLog($"OnClick: order qty={myQuantity} price={priceClicked}");
                     }
                     catch (Exception ex2)
                     {
-                        SafePrint("LeftMouseDown OnClick error: " + ex2.Message);
+                        SmartLog("LeftMouseDown OnClick error: " + ex2.Message);
                         embeddedControl?.SetLastOrderInfo("Erro ao enviar ordem: " + ex2.Message);
                     }
                 }, null);
@@ -4090,13 +4144,13 @@ private void EnsureRiskResetDaily()
         {
             tradingFromChart = enabled;
             if (enabled) RegisterChartHandlers(); else UnregisterChartHandlers();
-            SafePrint("SetTradingFromChartEnabled: " + enabled);
+            SmartLog("SetTradingFromChartEnabled: " + enabled);
         }
 
         internal void NotifyMainToggle(bool enabled)
         {
             _mainEnabled = enabled;
-            SafePrint($"Main toggle notify: {_mainEnabled}");
+            SmartLog($"Main toggle notify: {_mainEnabled}");
             if (_mainEnabled || ForceDecorationsOverride)
                 ComputeOrderDecorations();
             else
@@ -4203,7 +4257,7 @@ private void EnsureRiskResetDaily()
                 // força visual OFF (robusto)
                 SetBeToggleVisualSafe(false, "manual_off");
 
-                SafePrint("BE toggle OFF (manual).");
+                SmartLog("BE toggle OFF (manual).");
             }
             else
             {
@@ -4213,7 +4267,7 @@ private void EnsureRiskResetDaily()
                 // força visual ON (robusto)
                 SetBeToggleVisualSafe(true, "manual_on");
 
-                SafePrint("BE toggle ON (armed).");
+                SmartLog("BE toggle ON (armed).");
             }
 
             SavePrefs();
@@ -4241,7 +4295,7 @@ private void EnsureRiskResetDaily()
                         embeddedControl.SetRrSizingState(false);
                         embeddedControl.SetQtyButtonsEnabled(true);
                         ShowTransientPopup("RR desligado: defina Stop ($) para usar RR.");
-                        SafePrint("RR auto-off (NotifyStopChanged): Stop($) inválido.");
+                        SmartLog("RR auto-off (NotifyStopChanged): Stop($) inválido.");
                         SavePrefs();
                         return;
                     }
@@ -4275,7 +4329,7 @@ private void EnsureRiskResetDaily()
                     {
                         embeddedControl.ForceAtrOffAndEnableQty();
                         ShowTransientPopup("ATR desligado: defina Stop ($) para usar ATR.");
-                        SafePrint("ATR auto-off (NotifyStopChanged): Stop($) inválido.");
+                        SmartLog("ATR auto-off (NotifyStopChanged): Stop($) inválido.");
                         SavePrefs();
                         return;
                     }
@@ -4298,7 +4352,7 @@ private void EnsureRiskResetDaily()
             }
             catch (Exception ex)
             {
-                SafePrint("NotifyStopChanged ex: " + ex.Message);
+                SmartLog("NotifyStopChanged ex: " + ex.Message);
             }
         }
 
@@ -4384,7 +4438,7 @@ private void EnsureRiskResetDaily()
             }
             catch (Exception ex)
             {
-                SafePrint("DrawAtrVisuals ex: " + ex.Message);
+                SmartLog("DrawAtrVisuals ex: " + ex.Message);
             }
         }
 
@@ -4421,7 +4475,7 @@ private void EnsureRiskResetDaily()
                     }
                 }
             }
-            catch (Exception ex) { SafePrint("SubscribeDecoratorAccountEvents ex: " + ex.Message); }
+            catch (Exception ex) { SmartLog("SubscribeDecoratorAccountEvents ex: " + ex.Message); }
         }
 
         private void UnsubscribeDecoratorAccountEvents()
@@ -4451,7 +4505,7 @@ private void EnsureRiskResetDaily()
                 if (st != OrderState.Accepted && st != OrderState.Working && st != OrderState.PartFilled && st != OrderState.Filled) return;
                 ComputeOrderDecorations();
             }
-            catch (Exception ex) { SafePrint("OnOrderUpdateDecorator ex: " + ex.Message); }
+            catch (Exception ex) { SmartLog("OnOrderUpdateDecorator ex: " + ex.Message); }
         }
 
         private void OnExecutionUpdateDecorator(object sender, ExecutionEventArgs e)
@@ -4461,7 +4515,7 @@ private void EnsureRiskResetDaily()
                 if (e?.Execution == null) return;
                 ComputeOrderDecorations();
             }
-            catch (Exception ex) { SafePrint("OnExecutionUpdateDecorator ex: " + ex.Message); }
+            catch (Exception ex) { SmartLog("OnExecutionUpdateDecorator ex: " + ex.Message); }
         }
 
         private void OnPositionUpdateDecorator(object sender, PositionEventArgs e)
@@ -4482,7 +4536,7 @@ private void EnsureRiskResetDaily()
                                  (e.Position.Instrument.FullName == Instrument.FullName ||
                                   e.Position.Instrument.MasterInstrument?.Name == Instrument.MasterInstrument?.Name);
 
-                    SafePrint($"[TRACE][PosUpdate] acc={accName} eInst={eInst} chartInst={(Instrument?.FullName ?? "null")} matchChart={matchChart} qty={qty} trades={_riskTrades} contracts={_riskContracts} blocked={IsRiskBlocked()} armed={_riskOverlayArmed} shown={_riskOverlayShown}");
+                    SmartLog($"[TRACE][PosUpdate] acc={accName} eInst={eInst} chartInst={(Instrument?.FullName ?? "null")} matchChart={matchChart} qty={qty} trades={_riskTrades} contracts={_riskContracts} blocked={IsRiskBlocked()} armed={_riskOverlayArmed} shown={_riskOverlayShown}");
                 }
                 catch { }
 
@@ -4495,7 +4549,7 @@ private void EnsureRiskResetDaily()
                     // ===== LOGS (FLAT via PositionUpdate) =====
                     try
                     {
-                        SafePrint($"[TRACE][PosUpdateFlat] acc={(e.Position?.Account?.Name ?? "null")} inst={(Instrument?.FullName ?? "null")} qty=0 trades={_riskTrades} contracts={_riskContracts} blocked={IsRiskBlocked()} armed={_riskOverlayArmed} shown={_riskOverlayShown}");
+                        SmartLog($"[TRACE][PosUpdateFlat] acc={(e.Position?.Account?.Name ?? "null")} inst={(Instrument?.FullName ?? "null")} qty=0 trades={_riskTrades} contracts={_riskContracts} blocked={IsRiskBlocked()} armed={_riskOverlayArmed} shown={_riskOverlayShown}");
                     }
                     catch { }
 
@@ -4513,7 +4567,7 @@ private void EnsureRiskResetDaily()
                     SetBeToggleVisualSafe(false, "auto_off_flat_forced");
 
                     SavePrefs();
-                    SafePrint("BE auto-off (FORCED): posição ficou FLAT (matchChart).");
+                    SmartLog("BE auto-off (FORCED): posição ficou FLAT (matchChart).");
 
                     // ✅ reavalia risk ao ficar flat (principalmente quando limite é por trades)
                     EvaluateRisk(false);
@@ -4521,7 +4575,7 @@ private void EnsureRiskResetDaily()
 
                 ComputeOrderDecorations();
             }
-            catch (Exception ex) { SafePrint("OnPositionUpdateDecorator ex: " + ex.Message); }
+            catch (Exception ex) { SmartLog("OnPositionUpdateDecorator ex: " + ex.Message); }
         }
 
         private void OnAccountItemUpdateDecorator(object sender, AccountItemEventArgs e)
@@ -4531,7 +4585,7 @@ private void EnsureRiskResetDaily()
                 if (e.AccountItem != AccountItem.UnrealizedProfitLoss) return;
                 ComputeOrderDecorations();
             }
-            catch (Exception ex) { SafePrint("OnAccountItemUpdateDecorator ex: " + ex.Message); }
+            catch (Exception ex) { SmartLog("OnAccountItemUpdateDecorator ex: " + ex.Message); }
         }
 
         private void ComputeOrderDecorations()
@@ -4559,7 +4613,7 @@ private void EnsureRiskResetDaily()
 
                 if (sel == null)
                 {
-                    SafePrint("ComputeOrderDecorations: nenhuma conta resolvida (fallback falhou).");
+                    SmartLog("ComputeOrderDecorations: nenhuma conta resolvida (fallback falhou).");
                     return;
                 }
 
@@ -4622,7 +4676,7 @@ private void EnsureRiskResetDaily()
                     }
                 }
 
-                SafePrint($"ComputeOrderDecorations: main={_mainEnabled} override={ForceDecorationsOverride} acc={sel.Name} posCount={posCount} ordCount={ordCount} render={renderCount}");
+                SmartLog($"ComputeOrderDecorations: main={_mainEnabled} override={ForceDecorationsOverride} acc={sel.Name} posCount={posCount} ordCount={ordCount} render={renderCount}");
             }
             ForceRefreshDecorations();
         }
@@ -4747,7 +4801,7 @@ private void EnsureRiskResetDaily()
             }
             catch (Exception ex)
             {
-                SafePrint("RenderOrderDecorations ex: " + ex.Message);
+                SmartLog("RenderOrderDecorations ex: " + ex.Message);
             }
         }
 
@@ -4808,14 +4862,14 @@ internal class EndDayOverlayController
                     _host = Window.GetWindow(_parent.ChartControl);
                     if (_host == null)
                     {
-                        _parent.SafePrint("Overlay: host window null.");
+                        _parent.SmartLog("Overlay: host window null.");
                         return;
                     }
 
                     var root = _host.Content as FrameworkElement;
                     if (root == null)
                     {
-                        _parent.SafePrint("Overlay: host root null (Window.Content não é FrameworkElement).");
+                        _parent.SmartLog("Overlay: host root null (Window.Content não é FrameworkElement).");
                         return;
                     }
 
@@ -4832,11 +4886,11 @@ internal class EndDayOverlayController
 
                     ScheduleFallback(durationSeconds);
 
-                    _parent.SafePrint("Overlay: exibido (Adorner).");
+                    _parent.SmartLog("Overlay: exibido (Adorner).");
                 }
                 catch (Exception ex)
                 {
-                    _parent.SafePrint("Overlay EnsureOverlayShown ex: " + ex.Message);
+                    _parent.SmartLog("Overlay EnsureOverlayShown ex: " + ex.Message);
                 }
             });
         }
@@ -4873,11 +4927,11 @@ internal class EndDayOverlayController
             }
 
             if (_adornerLayer == null)
-                _parent.SafePrint("Overlay: não foi possível obter/criar AdornerLayer.");
+                _parent.SmartLog("Overlay: não foi possível obter/criar AdornerLayer.");
         }
         catch (Exception ex)
         {
-            _parent.SafePrint("Overlay EnsureAdornerLayer ex: " + ex.Message);
+            _parent.SmartLog("Overlay EnsureAdornerLayer ex: " + ex.Message);
         }
     }
 
@@ -4904,12 +4958,12 @@ internal class EndDayOverlayController
                 catch { }
 
                 _adorner = null;
-                _parent.SafePrint("Overlay: removido.");
+                _parent.SmartLog("Overlay: removido.");
             }
         }
         catch (Exception ex)
         {
-            _parent.SafePrint("Overlay RemoveOverlay ex: " + ex.Message);
+            _parent.SmartLog("Overlay RemoveOverlay ex: " + ex.Message);
         }
     }
 
@@ -4925,7 +4979,7 @@ internal class EndDayOverlayController
         }
         catch (Exception ex)
         {
-            _parent.SafePrint("Overlay AttachHostEvents ex: " + ex.Message);
+            _parent.SmartLog("Overlay AttachHostEvents ex: " + ex.Message);
         }
     }
 
@@ -4938,7 +4992,7 @@ internal class EndDayOverlayController
         }
         catch (Exception ex)
         {
-            _parent.SafePrint("Overlay HostWindow_PositionOrSizeChanged ex: " + ex.Message);
+            _parent.SmartLog("Overlay HostWindow_PositionOrSizeChanged ex: " + ex.Message);
         }
     }
 
@@ -4959,7 +5013,7 @@ internal class EndDayOverlayController
         }
         catch (Exception ex)
         {
-            _parent.SafePrint("Overlay ScheduleFallback ex: " + ex.Message);
+            _parent.SmartLog("Overlay ScheduleFallback ex: " + ex.Message);
         }
     }
 
@@ -4987,7 +5041,7 @@ internal class EndDayOverlayController
         }
         catch (Exception ex)
         {
-            _parent.SafePrint("Overlay RunOnUi ex: " + ex.Message);
+            _parent.SmartLog("Overlay RunOnUi ex: " + ex.Message);
         }
     }
 
@@ -5426,7 +5480,7 @@ public class SmartBoletaEmbeddedControl : Grid
             _tbMinus.Foreground = Brushes.Gray;
             UpdateBulletsAfterStateChange();
             _parent.SyncQtyToChartTrader(_qty);
-            _parent.SafePrint($"Qty set to {_qty}");
+            _parent.SmartLog($"Qty set to {_qty}");
             _parent.SavePrefs();
         };
         _tbMinus.MouseLeave += (s, e) => _tbMinus.Foreground = Brushes.Gray;
@@ -5443,7 +5497,7 @@ public class SmartBoletaEmbeddedControl : Grid
             _tbPlus.Foreground = Brushes.Gray;
             UpdateBulletsAfterStateChange();
             _parent.SyncQtyToChartTrader(_qty);
-            _parent.SafePrint($"Qty set to {_qty}");
+            _parent.SmartLog($"Qty set to {_qty}");
             _parent.SavePrefs();
         };
         _tbPlus.MouseLeave += (s, e) => _tbPlus.Foreground = Brushes.Gray;
@@ -5533,7 +5587,7 @@ public class SmartBoletaEmbeddedControl : Grid
             {
                 if (!IsMainEnabled()) { _tbStopEdit.Foreground = Brushes.Gray; return; }
                 _tbStopEdit.Foreground = Brushes.Gray;
-                _parent.SafePrint("Stop/Edit clicked (financial stop)");
+                _parent.SmartLog("Stop/Edit clicked (financial stop)");
                 OpenStopInputDialog();
                 _parent.NotifyStopChanged();
             };
@@ -5999,7 +6053,7 @@ public class SmartBoletaEmbeddedControl : Grid
                     _beStateText.Text = "Off";
                     _beStateText.Foreground = Brushes.Gray;
                     UpdateBulletsAfterStateChange();
-                    _parent.SafePrint("BE forced Off");
+                    _parent.SmartLog("BE forced Off");
                 };
 
                 if (Dispatcher.CheckAccess())
@@ -6021,7 +6075,7 @@ public class SmartBoletaEmbeddedControl : Grid
                     _beStateText.Text = "On";
                     _beStateText.Foreground = BronzeBrush;
                     UpdateBulletsAfterStateChange();
-                    _parent.SafePrint("BE forced On");
+                    _parent.SmartLog("BE forced On");
                 };
 
                 if (Dispatcher.CheckAccess())
@@ -6058,7 +6112,7 @@ public class SmartBoletaEmbeddedControl : Grid
             _tbMainToggle.Text = _mainEnabled ? "On" : "Off";
             _tbMainToggle.Foreground = _mainEnabled ? BronzeBrush : Brushes.Gray;
             _mainStateBullet.Fill = _mainEnabled ? MainOnBrush : InactiveBulletBrush;
-            _parent.SafePrint($"Main toggled {(_mainEnabled ? "On" : "Off")}");
+            _parent.SmartLog($"Main toggled {(_mainEnabled ? "On" : "Off")}");
             _parent.NotifyMainToggle(_mainEnabled);
 
             if (!_mainEnabled)
@@ -6158,7 +6212,7 @@ public class SmartBoletaEmbeddedControl : Grid
     _bulletBe.Fill = _beEnabled ? BronzeBrush : InactiveBulletBrush;
     _beStateText.Text = _beEnabled ? "On" : "Off";
     _beStateText.Foreground = _beEnabled ? BronzeBrush : Brushes.Gray;
-    _parent.SafePrint($"BE toggled {(_beEnabled ? "On" : "Off")}");
+    _parent.SmartLog($"BE toggled {(_beEnabled ? "On" : "Off")}");
     _parent.NotifyBeToggle(_beEnabled);
     UpdateBulletsAfterStateChange();
 }
@@ -6178,7 +6232,7 @@ private void ToggleOnClick()
     _tbOnClickToggle.Foreground = _onClickEnabled ? BronzeBrush : Brushes.Gray;
     _bulletOnClick.Fill = _onClickEnabled ? BronzeBrush : InactiveBulletBrush;
     _parent.SetTradingFromChartEnabled(_onClickEnabled);
-    _parent.SafePrint($"OnClick toggled {(_onClickEnabled ? "On" : "Off")}");
+    _parent.SmartLog($"OnClick toggled {(_onClickEnabled ? "On" : "Off")}");
     UpdateBulletsAfterStateChange();
     UpdateTopInfoVisibility();
 
@@ -6216,7 +6270,7 @@ private void ToggleAtr()
         _tbAtrToggle.Text = "Off";
         _tbAtrToggle.Foreground = Brushes.Gray;
         SetQtyButtonsEnabled(true);
-        _parent.SafePrint("ATR toggled Off");
+        _parent.SmartLog("ATR toggled Off");
     }
 
     UpdateBulletsAfterStateChange();
@@ -6230,7 +6284,7 @@ public void ForceAtrOffAndEnableQty()
         _tbAtrToggle.Foreground = Brushes.Gray;
         SetQtyButtonsEnabled(true);
         UpdateBulletsAfterStateChange();
-        _parent.SafePrint("ATR forced Off (validation).");
+        _parent.SmartLog("ATR forced Off (validation).");
     }
     catch { }
 }
@@ -6350,7 +6404,7 @@ public void SetRiskState(RiskState state, bool enabled, string status)
 public void UpdateForChart(ChartControl chartControl)
 {
     try { _ = chartControl?.Instrument?.FullName ?? "unknown"; }
-    catch (Exception ex) { _parent.SafePrint("Embedded UpdateForChart ex: " + ex.Message); }
+    catch (Exception ex) { _parent.SmartLog("Embedded UpdateForChart ex: " + ex.Message); }
 }
 
 public void SetHotkeyMapping(string buyKey, string sellKey)
@@ -6444,7 +6498,7 @@ private void OpenStopInputDialog()
 {
     try
     {
-        _parent.SafePrint("OpenStopInputDialog: start");
+        _parent.SmartLog("OpenStopInputDialog: start");
 
         var ownerWin = Window.GetWindow(this);
 
@@ -6525,7 +6579,7 @@ private void OpenStopInputDialog()
                     _txtStop.Foreground = Brushes.White;
                 }
             }
-            catch (Exception ex) { _parent.SafePrint("Stop OK parse error: " + ex.Message); }
+            catch (Exception ex) { _parent.SmartLog("Stop OK parse error: " + ex.Message); }
 
             try { dlg.Dispatcher.BeginInvoke(new Action(() => { dlg.DialogResult = true; dlg.Close(); })); } catch { try { dlg.Close(); } catch { } }
 
@@ -6544,11 +6598,11 @@ private void OpenStopInputDialog()
         input.Loaded += (s, e) => { input.Focus(); input.SelectAll(); };
 
         dlg.ShowDialog();
-        _parent.SafePrint("OpenStopInputDialog: dialog closed");
+        _parent.SmartLog("OpenStopInputDialog: dialog closed");
     }
     catch (Exception ex)
     {
-        _parent.SafePrint("OpenStopInputDialog error: " + ex.Message);
+        _parent.SmartLog("OpenStopInputDialog error: " + ex.Message);
     }
 }
 
