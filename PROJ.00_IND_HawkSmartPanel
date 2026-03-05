@@ -39,6 +39,7 @@ using TextAlignment = System.Windows.TextAlignment;
 #endregion
 
 // Hawk - Smart Panel (SmartBoletaIndicator)
+// Version note: módulo legado de volatilidade removido (Bloco 1).
 namespace NinjaTrader.NinjaScript.Indicators
 {
     public class SmartBoletaIndicator : Indicator
@@ -456,8 +457,6 @@ namespace NinjaTrader.NinjaScript.Indicators
             public double StopFinancial;
             public bool AtrOn;
 
-            // [DRV SIZING]
-            public bool DrvOn;
 
             // [RR SIZING]
             public bool RrOn;
@@ -512,9 +511,6 @@ namespace NinjaTrader.NinjaScript.Indicators
         private int _lastAtrTicks = 0;
         private double _lastAtrDollarPerContract = 0.0;
 
-        // [DRV SIZING] cache do DRV efetivo (ticks arredondado + $/contrato)
-        private int _lastDrvTicks = 0;
-        private double _lastDrvDollarPerContract = 0.0;
 
         // [RR SIZING] cache do RiskReward ativo (ticks arredondado + $/contrato)
         private int _lastRrTicks = 0;
@@ -629,91 +625,6 @@ namespace NinjaTrader.NinjaScript.Indicators
             OrderType.MIT
         };
 
-        // =========================================================
-        // ✅ DRV FIX (Parte 1A): helpers para evitar DRV "congelado"
-        //
-        // Notas importantes (comprovadas via log em Playback):
-        // - IsDrvIndicatorPlottedOnThisChart() pode retornar FALSE mesmo com o DRV plotado
-        //   (coleções internas variam por build/modo Playback).
-        // - Portanto este helper NÃO deve ser usado como "gate" para bloquear leitura do DrvFeed.
-        // - A Parte 1B deve usar DrvFeed como fonte de verdade (feed-first).
-        // =========================================================
-        private bool IsDrvIndicatorPlottedOnThisChart()
-        {
-            try
-            {
-                var chart = ChartControl?.OwnerChart;
-                if (chart == null) return true; // conservador
-
-                object host =
-                    chart.GetType().GetProperty("ChartIndicators")?.GetValue(chart) ??
-                    chart.GetType().GetProperty("Indicators")?.GetValue(chart) ??
-                    chart.GetType().GetProperty("IndicatorCollection")?.GetValue(chart);
-
-                if (host is System.Collections.IEnumerable ie)
-                {
-                    foreach (var it in ie)
-                    {
-                        if (it == null) continue;
-
-                        object ind = null;
-                        try { ind = it.GetType().GetProperty("Indicator")?.GetValue(it) ?? it; }
-                        catch { ind = it; }
-
-                        if (ind == null) continue;
-
-                        string typeName = "";
-                        try { typeName = ind.GetType().Name ?? ""; } catch { typeName = ""; }
-
-                        // ✅ classe confirmada: DRVIndicator
-                        if (string.Equals(typeName, "DRVIndicator", StringComparison.OrdinalIgnoreCase))
-                            return true;
-                    }
-                }
-
-                return false;
-            }
-            catch
-            {
-                return true; // conservador
-            }
-        }
-
-        private void ClearDrvStateAndUi(string reason)
-        {
-            try
-            {
-                _lastDrvTicks = 0;
-                _lastDrvDollarPerContract = 0.0;
-
-                // UI + sizing: executa no dispatcher
-                try
-                {
-                    ChartControl?.Dispatcher?.BeginInvoke(new Action(() =>
-                    {
-                        try
-                        {
-                            if (embeddedControl == null) return;
-
-                            embeddedControl.SetDrv(null, false);
-                            embeddedControl.UpdateBulletsAfterStateChange();
-
-                            if (embeddedControl.IsDrvSizingEnabled())
-                            {
-                                embeddedControl.SetDrvSizingState(false);
-                                embeddedControl.SetQtyButtonsEnabled(true);
-                                SavePrefs();
-                            }
-                        }
-                        catch { }
-                    }));
-                }
-                catch { }
-
-                SafePrint($"[TRACE][DRV] cleared: reason={reason}");
-            }
-            catch { }
-        }
 
         // =========================================================
         // ✅ NOVO (RISK): clamp/validação de MaxContractsPerTrade
@@ -1163,7 +1074,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                     StopFinancial = embeddedControl.GetStopFinancial(),
                     AtrOn = embeddedControl.IsAtrEnabled(),
 
-                    DrvOn = embeddedControl.IsDrvSizingEnabled(),
                     RrOn = embeddedControl.IsRrSizingEnabled(),
 
                     BeOn = embeddedControl.IsBeEnabled(),
@@ -1221,23 +1131,10 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (sp.RrOn)
                 {
                     embeddedControl.SetAtrState(false);
-                    embeddedControl.SetDrvSizingState(false);
-
                     bool okRr = ApplyRrSizingWithValidationProxy(_lastRrTicks, _lastRrDollarPerContract, true);
                     if (okRr)
                     {
                         embeddedControl.SetRrSizingState(true);
-                        embeddedControl.SetQtyButtonsEnabled(false);
-                    }
-                }
-                else if (sp.DrvOn)
-                {
-                    embeddedControl.SetAtrState(false);
-
-                    bool okDrv = ApplyDrvSizingWithValidationProxy(_lastDrvTicks, _lastDrvDollarPerContract, true);
-                    if (okDrv)
-                    {
-                        embeddedControl.SetDrvSizingState(true);
                         embeddedControl.SetQtyButtonsEnabled(false);
                     }
                 }
@@ -1249,6 +1146,13 @@ namespace NinjaTrader.NinjaScript.Indicators
                         embeddedControl.SetAtrState(true);
                         embeddedControl.SetQtyButtonsEnabled(false);
                     }
+                }
+                else
+                {
+                    embeddedControl.SetAtrState(false);
+                    embeddedControl.SetRrSizingState(false);
+                    embeddedControl.SetQtyButtonsEnabled(true);
+                    SafePrint("LoadPrefs: fallback para modo manual (prefs antigas/sem sizing).");
                 }
 
                 embeddedControl.SetOnClickState(sp.OnClickOn);
@@ -1407,75 +1311,6 @@ namespace NinjaTrader.NinjaScript.Indicators
             catch (Exception ex) { SafePrint("UpdatePnlDisplay ex: " + ex.Message); }
         }
 
-        private void RefreshDrvDisplay()
-        {
-            try
-            {
-                if (embeddedControl == null || Instrument == null) return;
-
-                // =========================================================
-                // ✅ DRV (FIX definitivo p/ Playback): comportamento igual ao RR
-                //
-                // Fonte de verdade = DrvFeed (porque o detector via reflection falha em Playback/builds).
-                //
-                // - DRV no gráfico: DRVIndicator publica em DrvFeed continuamente => mostra valor
-                // - DRV removido: DRVIndicator limpa DrvFeed no Terminated => TryGet falha => mostra "-"
-                //
-                // Resultado: mesmo comportamento do RiskReward:
-                // - existe => mostra
-                // - não existe => hífen (limpa UI/cache e desliga sizing se estiver ON)
-                // =========================================================
-
-                bool ok = false;
-                double drvTicks = 0.0;
-
-                // 1) tenta pegar o "EffectiveTicks" (já com RiskPercentage aplicado)
-                try { ok = DrvFeed.TryGetEffective(Instrument.FullName, out drvTicks); }
-                catch { ok = false; drvTicks = 0.0; }
-
-                // 2) fallback: ADR bruto (compat)
-                if (!ok)
-                {
-                    try { ok = DrvFeed.TryGet(Instrument.FullName, out drvTicks); }
-                    catch { ok = false; drvTicks = 0.0; }
-                }
-
-                // Se não tem feed, comportamento desejado = "-" (igual RR quando a ferramenta não existe)
-                if (!ok || drvTicks <= 0)
-                {
-                    ClearDrvStateAndUi("feed_missing");
-                    return;
-                }
-
-                // cache DRV (ticks arredondado + $/contrato)
-                int drvTicksRounded = (int)Math.Round(drvTicks);
-
-                double tickValue = 0.0;
-                try
-                {
-                    var mi = Instrument?.MasterInstrument;
-                    tickValue = (mi?.TickSize ?? 0) * (mi?.PointValue ?? 0);
-                }
-                catch { }
-
-                _lastDrvTicks = drvTicksRounded;
-                _lastDrvDollarPerContract = drvTicksRounded * tickValue;
-
-                ChartControl?.Dispatcher?.BeginInvoke(new Action(() =>
-                {
-                    try
-                    {
-                        if (embeddedControl == null) return;
-                        embeddedControl.SetDrv(drvTicks, true);
-                    }
-                    catch { }
-                }));
-            }
-            catch (Exception ex)
-            {
-                SafePrint("RefreshDrvDisplay ex: " + ex.Message);
-            }
-        }
 
         private void RefreshRrDisplay()
         {
@@ -1527,47 +1362,6 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 
-        // ===== Proxies DRV Sizing =====
-        public int LastDrvTicks() => _lastDrvTicks;
-        public double LastDrvDollarPerContract() => _lastDrvDollarPerContract;
-
-        public bool ApplyDrvSizingWithValidationProxy(int drvTicks, double drvDollarPerContract, bool fromToggle)
-        {
-            return ApplyAtrSizingWithValidation(drvTicks, drvDollarPerContract, fromToggle);
-        }
-
-        internal void DisableAtrSizingFromDrv()
-        {
-            try
-            {
-                ChartControl?.Dispatcher?.BeginInvoke(new Action(() =>
-                {
-                    if (embeddedControl == null) return;
-                    if (embeddedControl.IsAtrEnabled())
-                        embeddedControl.SetAtrState(false);
-                    embeddedControl.SetQtyButtonsEnabled(true);
-                    SavePrefs();
-                }));
-            }
-            catch { }
-        }
-
-        internal void DisableDrvSizingFromAtr()
-        {
-            try
-            {
-                ChartControl?.Dispatcher?.BeginInvoke(new Action(() =>
-                {
-                    if (embeddedControl == null) return;
-                    if (embeddedControl.IsDrvSizingEnabled())
-                        embeddedControl.SetDrvSizingState(false);
-                    embeddedControl.SetQtyButtonsEnabled(true);
-                    SavePrefs();
-                }));
-            }
-            catch { }
-        }
-
         // ===== Proxies RR Sizing =====
         public int LastRrTicks() => _lastRrTicks;
         public double LastRrDollarPerContract() => _lastRrDollarPerContract;
@@ -1593,23 +1387,8 @@ namespace NinjaTrader.NinjaScript.Indicators
             catch { }
         }
 
-        internal void DisableDrvSizingFromRr()
-        {
-            try
-            {
-                ChartControl?.Dispatcher?.BeginInvoke(new Action(() =>
-                {
-                    if (embeddedControl == null) return;
-                    if (embeddedControl.IsDrvSizingEnabled())
-                        embeddedControl.SetDrvSizingState(false);
-                    embeddedControl.SetQtyButtonsEnabled(true);
-                    SavePrefs();
-                }));
-            }
-            catch { }
-        }
 
-        internal void DisableRrSizingFromAtrOrDrv()
+        internal void DisableRrSizingFromAtr()
         {
             try
             {
@@ -1876,15 +1655,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                 {
                     try
                     {
-                        // ✅ DRV FIX: mantém painel sincronizado e limpa ao remover DRVIndicator do chart
-                        RefreshDrvDisplay();
-
-                        // Se DRV ON, tenta reaplicar sizing (apenas Qty)
-                        if (embeddedControl != null && embeddedControl.IsDrvSizingEnabled())
-                        {
-                            if (_lastDrvTicks > 0 && _lastDrvDollarPerContract > 0)
-                                ApplyDrvSizingWithValidationProxy(_lastDrvTicks, _lastDrvDollarPerContract, false);
-                        }
 
                         // Mantém cache/display RR sempre atualizado
                         RefreshRrDisplay();
@@ -2043,7 +1813,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                 try { HardLock_RefreshCacheAndApplyUi("account_changed"); } catch { }
 
                 UpdatePnlDisplay();
-                RefreshDrvDisplay();
                 RefreshRrDisplay();
                 RefreshPositionAndOrders();
                 EvaluateRisk(false);
@@ -2147,7 +1916,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                 RegisterTabHandler();
                 UpdateEmbeddedForSelectedTab();
                 try { RefreshPositionAndOrders(); } catch { }
-                try { RefreshDrvDisplay(); } catch { }
                 try { RefreshRrDisplay(); } catch { }
                 try { StartRrTimer(); } catch { }
 
@@ -2309,7 +2077,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 		// =========================
-// PATCH: loop de atualização (resolve ATR/DRV/RR)
+// PATCH: loop de atualização (resolve ATR/RR)
 // =========================
 protected override void OnBarUpdate()
 {
@@ -2384,89 +2152,6 @@ private void ComputeAtrAutoAndApply()
     }
 }
 
-// =========================================================
-// ✅ DRV: NOVO - controle de "indicador está plotado no chart?"
-// =========================================================
-//
-// Objetivo: quando o usuário remove o indicador DRV do chart,
-// o display da boleta NÃO pode manter valor congelado.
-// Então:
-// - se DRV não estiver plotado => limpa cache + limpa UI + desliga DRV sizing (se estiver ON)
-//
-// Observação: como o DRV é um indicador externo, sem o código do RefreshDrvDisplay()
-// aqui nesta Parte 2, fazemos uma checagem "best-effort" via reflection no chart
-// procurando qualquer indicador cujo nome/tipo contenha "DRV".
-// Isso evita mexer em Parte 2 de forma invasiva.
-private bool IsDrvIndicatorPlottedOnChart()
-{
-    try
-    {
-        var chart = ChartControl?.OwnerChart;
-        if (chart == null) return true; // conservador: não limpar se não temos chart
-
-        // tenta obter lista/coleção de indicadores do chart (nomes variam por build)
-        object host =
-            chart.GetType().GetProperty("ChartIndicators")?.GetValue(chart) ??
-            chart.GetType().GetProperty("Indicators")?.GetValue(chart) ??
-            chart.GetType().GetProperty("IndicatorCollection")?.GetValue(chart);
-
-        if (host == null) return true; // conservador
-
-        if (host is System.Collections.IEnumerable ie)
-        {
-            foreach (var it in ie)
-            {
-                if (it == null) continue;
-
-                // alguns itens são wrappers, outros são o indicador direto
-                object ind = null;
-                try { ind = it.GetType().GetProperty("Indicator")?.GetValue(it) ?? it; } catch { ind = it; }
-
-                if (ind == null) continue;
-
-                string typeName = "";
-                try { typeName = ind.GetType().Name ?? ""; } catch { typeName = ""; }
-
-                if (typeName.IndexOf("drv", StringComparison.OrdinalIgnoreCase) >= 0)
-                    return true;
-
-                // nome visível (se existir)
-                try
-                {
-                    var dispName = ind.GetType().GetProperty("Name")?.GetValue(ind) as string;
-                    if (!string.IsNullOrEmpty(dispName) && dispName.IndexOf("drv", StringComparison.OrdinalIgnoreCase) >= 0)
-                        return true;
-                }
-                catch { }
-            }
-        }
-
-        return false;
-    }
-    catch
-    {
-        // conservador: não limpar em caso de introspecção falhar
-        return true;
-    }
-}
-
-// =========================================================
-// ✅ DRV: NOVO - helpers de reflection para não depender de métodos do embeddedControl
-// (evita CS1061 caso o controle não tenha SetDrvValue/ClearDrv/etc)
-// =========================================================
-private void TryInvokeEmbeddedControl(string methodName)
-{
-    try
-    {
-        if (embeddedControl == null) return;
-        var mi = embeddedControl.GetType().GetMethod(methodName, Type.EmptyTypes);
-        if (mi == null) return;
-        mi.Invoke(embeddedControl, null);
-        SafePrint($"[TRACE][UI] embeddedControl.{methodName}() OK");
-    }
-    catch { }
-}
-
 private void RunPeriodicRefresh()
 {
     try
@@ -2482,19 +2167,6 @@ private void RunPeriodicRefresh()
         if (embeddedControl == null) return;
 
         UpdatePnlDisplay();
-
-        // =========================================================
-        // ✅ DRV: refresh + clear quando não estiver plotado
-        // =========================================================
-        RefreshDrvDisplay();
-
-        // Se o DRV não estiver no chart, limpa o display (evita dado congelado)
-        try
-        {
-            if (!IsDrvIndicatorPlottedOnChart())
-                ClearDrvStateAndUi("not_plotted");
-        }
-        catch { }
 
         RefreshRrDisplay();
         RefreshPositionAndOrders();
@@ -2908,7 +2580,7 @@ private bool ApplyAtrSizingWithValidation(int atrTicks, double atrDollarPerContr
         int qty = (int)Math.Max(1, allowedContracts); // mínimo 1
         bool wasCappedToMin = allowedContracts < 1;
 
-        // ✅ NOVO: clamp de MaxContractsPerTrade também no sizing (ATR/DRV/RR)
+        // ✅ NOVO: clamp de MaxContractsPerTrade também no sizing (ATR/RR)
         // Observação: este clamp é "só no número", independente da direção; a validação direcional (flip/scale) é no envio da ordem.
         qty = ClampQtyToMaxContractsPerTradeForSizing(qty, reasonForUser: $"Máx contratos/trade = {MaxContractsPerTrade}. (ATR sizing)");
 
@@ -4595,44 +4267,6 @@ private void EnsureRiskResetDaily()
                         return;
                     }
                 }
-
-                // ===== DRV ON =====
-                if (embeddedControl.IsDrvSizingEnabled())
-                {
-                    double stopFinancial = embeddedControl.GetStopFinancial();
-                    if (stopFinancial <= 0)
-                    {
-                        embeddedControl.SetDrvSizingState(false);
-                        embeddedControl.SetQtyButtonsEnabled(true);
-                        ShowTransientPopup("DRV desligado: defina Stop ($) para usar DRV.");
-                        SafePrint("DRV auto-off (NotifyStopChanged): Stop($) inválido.");
-                        SavePrefs();
-                        return;
-                    }
-
-                    if (_lastDrvTicks > 0 && _lastDrvDollarPerContract > 0)
-                    {
-                        bool ok = ApplyDrvSizingWithValidationProxy(_lastDrvTicks, _lastDrvDollarPerContract, false);
-                        if (!ok)
-                        {
-                            embeddedControl.SetDrvSizingState(false);
-                            embeddedControl.SetQtyButtonsEnabled(true);
-                            ShowTransientPopup("DRV desligado: não foi possível recalcular sizing.");
-                        }
-                        SavePrefs();
-                        return;
-                    }
-                    else
-                    {
-                        embeddedControl.SetDrvSizingState(false);
-                        embeddedControl.SetQtyButtonsEnabled(true);
-                        ShowTransientPopup("DRV desligado: indicador DRV indisponível.");
-                        SafePrint("DRV auto-off (NotifyStopChanged): cache DRV inválido.");
-                        SavePrefs();
-                        return;
-                    }
-                }
-
                 // ===== ATR ON =====
                 if (embeddedControl.IsAtrEnabled())
                 {
@@ -5448,7 +5082,7 @@ internal class EndDayOverlayController
 }
 
 // =========================================
-// SmartBoletaEmbeddedControl (DRV + RR sizing + exclusividade ATR/DRV/RR)
+// SmartBoletaEmbeddedControl (RR sizing + exclusividade ATR/RR)
 // =========================================
 public class SmartBoletaEmbeddedControl : Grid
 {
@@ -5488,23 +5122,16 @@ public class SmartBoletaEmbeddedControl : Grid
     private TextBlock _txtStop;
     private TextBlock _tbStopEdit;
 
-    // ATR / DRV (3 linhas)
+    // ATR (3 linhas)
     private WpfEllipse _bulletAtr;
     private TextBlock _tbAtrToggle;
     private TextBlock _atrValueText;
 
-    private WpfEllipse _bulletDrv;            // bullet do label "DRV" (direita) => segue MODO (On/Off)
-    private TextBlock _tbDrvToggle;           // toggle DRV (manual, sizing mode)
-    private TextBlock _drvDisplayText;        // linha 3, direita => segue FEED (dourado quando há feed)
 
     // RR (3 linhas, canto direito alinhado ao bloco Qty)
     private WpfEllipse _bulletRr;             // segue MODO (On/Off)
     private TextBlock _tbRrToggle;            // On/Off RR
     private TextBlock _rrDisplayText;         // ticks / $ (1C) (dourado se feed existe)
-
-    // DRV states
-    private bool _drvFeedAvailable = false;
-    private bool _drvSizingEnabled = false;
 
     // RR states
     private bool _rrFeedAvailable = false;
@@ -5568,7 +5195,7 @@ public class SmartBoletaEmbeddedControl : Grid
         return stack;
     }
 
-    // Somente DRV/Risk/EndDay: texto e depois bullet (alinhado extremo direito)
+    // Somente Risk/EndDay: texto e depois bullet (alinhado extremo direito)
     private StackPanel CreateRightLabelWithBulletRight(string labelText, out WpfEllipse bullet)
     {
         bullet = CreateBullet();
@@ -5593,9 +5220,6 @@ public class SmartBoletaEmbeddedControl : Grid
     public bool IsBeEnabled() => _beEnabled;
     public bool IsAtrEnabled() { try { return _tbAtrToggle != null && _tbAtrToggle.Text == "On"; } catch { return false; } }
     public bool IsOnClickEnabled() => _onClickEnabled;
-    public bool IsDrvSizingEnabled() => _drvSizingEnabled;
-
-    // RR public API (usada pelo Indicator)
     public bool IsRrSizingEnabled() => _rrSizingEnabled;
 
     public void SetRrSizingState(bool on)
@@ -5611,33 +5235,6 @@ public class SmartBoletaEmbeddedControl : Grid
             _tbBoletaId.Text = string.IsNullOrWhiteSpace(id) ? "" : id;
     }
 
-    public void SetDrvSizingState(bool on)
-    {
-        _drvSizingEnabled = on;
-        ApplyDrvVisuals();
-        UpdateBulletsAfterStateChange();
-    }
-
-    private void ApplyDrvVisuals()
-    {
-        try
-        {
-            // Display dourado se feed existe (mesmo em modo OFF)
-            if (_drvDisplayText != null)
-                _drvDisplayText.Foreground = _drvFeedAvailable ? BronzeBrush : LightGrayBrush;
-
-            // Toggle + bullet do label seguem modo
-            if (_tbDrvToggle != null)
-            {
-                _tbDrvToggle.Text = _drvSizingEnabled ? "On" : "Off";
-                _tbDrvToggle.Foreground = _drvSizingEnabled ? BronzeBrush : Brushes.Gray;
-            }
-
-            if (_bulletDrv != null)
-                _bulletDrv.Fill = _drvSizingEnabled ? BronzeBrush : InactiveBulletBrush;
-        }
-        catch { }
-    }
 
     private void ApplyRrVisuals()
     {
@@ -5924,7 +5521,7 @@ public class SmartBoletaEmbeddedControl : Grid
                 Margin = new Thickness(0, RowSpacing, 0, 0),
                 Padding = new Thickness(4, 1, 4, 1),
                 HorizontalAlignment = HorizontalAlignment.Center,
-                ToolTip = "Stop ($): obrigatório para ATR, DRV e RR."
+                ToolTip = "Stop ($): obrigatório para ATR e RR."
             };
 
             var financialStopRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 2.5) };
@@ -5946,27 +5543,20 @@ public class SmartBoletaEmbeddedControl : Grid
             financialStopRow.Children.Add(_tbStopEdit);
             main.Children.Add(financialStopRow);
 
-            // ===== Linha 1: Header ATR (esq) + DRV (dir, bullet à direita) =====
-            var atrDrvHeaderRow = new Grid { Margin = new Thickness(0, RowSpacing, 0, RowSpacing) };
-            atrDrvHeaderRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            atrDrvHeaderRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            // ===== Linha 1: Header ATR =====
+            var atrHeaderRow = new Grid { Margin = new Thickness(0, RowSpacing, 0, RowSpacing) };
+            atrHeaderRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
             var atrLabel = CreateLabelWithBulletLeft("ATR", out _bulletAtr);
             atrLabel.HorizontalAlignment = HorizontalAlignment.Left;
-            atrDrvHeaderRow.Children.Add(atrLabel);
+            atrHeaderRow.Children.Add(atrLabel);
             Grid.SetColumn(atrLabel, 0);
 
-            var drvLabel = CreateRightLabelWithBulletRight("DRV", out _bulletDrv);
-            drvLabel.HorizontalAlignment = HorizontalAlignment.Right;
-            atrDrvHeaderRow.Children.Add(drvLabel);
-            Grid.SetColumn(drvLabel, 1);
+            main.Children.Add(atrHeaderRow);
 
-            main.Children.Add(atrDrvHeaderRow);
-
-            // ===== Linha 2: Toggle ATR (esq) + Toggle DRV (dir) =====
-            var atrDrvToggleRow = new Grid { Margin = new Thickness(0, RowSpacing, 0, RowSpacing) };
-            atrDrvToggleRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            atrDrvToggleRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            // ===== Linha 2: Toggle ATR =====
+            var atrToggleRow = new Grid { Margin = new Thickness(0, RowSpacing, 0, RowSpacing) };
+            atrToggleRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
             _tbAtrToggle = new TextBlock
             {
@@ -5981,31 +5571,14 @@ public class SmartBoletaEmbeddedControl : Grid
             };
             _tbAtrToggle.MouseLeftButtonUp += (s, e) => { if (!IsMainEnabled()) return; ToggleAtr(); };
 
-            _tbDrvToggle = new TextBlock
-            {
-                Text = "Off",
-                FontSize = CompactFontSize,
-                Foreground = Brushes.Gray,
-                Cursor = Cursors.Hand,
-                Width = 36,
-                TextAlignment = TextAlignment.Center,
-                HorizontalAlignment = HorizontalAlignment.Right,
-                ToolTip = "DRV: clique para aplicar sizing por volatilidade (requer Stop $)."
-            };
-            _tbDrvToggle.MouseLeftButtonUp += (s, e) => { if (!IsMainEnabled()) return; ToggleDrvSizing(); };
-
-            atrDrvToggleRow.Children.Add(_tbAtrToggle);
+            atrToggleRow.Children.Add(_tbAtrToggle);
             Grid.SetColumn(_tbAtrToggle, 0);
 
-            atrDrvToggleRow.Children.Add(_tbDrvToggle);
-            Grid.SetColumn(_tbDrvToggle, 1);
+            main.Children.Add(atrToggleRow);
 
-            main.Children.Add(atrDrvToggleRow);
-
-            // ===== Linha 3: Display ATR (esq) + Display DRV (dir) =====
-            var atrDrvDisplayRow = new Grid { Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 2.5) };
-            atrDrvDisplayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            atrDrvDisplayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            // ===== Linha 3: Display ATR =====
+            var atrDisplayRow = new Grid { Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 2.5) };
+            atrDisplayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
             _atrValueText = new TextBlock
             {
@@ -6017,23 +5590,10 @@ public class SmartBoletaEmbeddedControl : Grid
                 ToolTip = "Ticks e $/contrato calculados pelo ATR."
             };
 
-            _drvDisplayText = new TextBlock
-            {
-                Text = "-",
-                Foreground = LightGrayBrush,
-                FontSize = CompactFontSize,
-                HorizontalAlignment = HorizontalAlignment.Right,
-                TextAlignment = TextAlignment.Right,
-                ToolTip = "DRV (ticks) + $/contrato (1C)."
-            };
-
-            atrDrvDisplayRow.Children.Add(_atrValueText);
+            atrDisplayRow.Children.Add(_atrValueText);
             Grid.SetColumn(_atrValueText, 0);
 
-            atrDrvDisplayRow.Children.Add(_drvDisplayText);
-            Grid.SetColumn(_drvDisplayText, 1);
-
-            main.Children.Add(atrDrvDisplayRow);
+            main.Children.Add(atrDisplayRow);
 
             // ===== PnL | Risk =====
             var pnlRiskRow = new Grid { Margin = new Thickness(0, RowSpacing, 0, RowSpacing * 2) };
@@ -6159,7 +5719,6 @@ public class SmartBoletaEmbeddedControl : Grid
 
             SetEndDayLabel(_parent.EndDayTime, _parent.EndDayScope);
             UpdateBulletsAfterStateChange();
-            ApplyDrvVisuals();
             ApplyRrVisuals();
         }
 
@@ -6184,9 +5743,8 @@ public class SmartBoletaEmbeddedControl : Grid
                     return;
                 }
 
-                // exclusividade: liga RR => desliga ATR e DRV
+                // exclusividade: liga RR => desliga ATR
                 _parent.DisableAtrSizingFromRr();
-                _parent.DisableDrvSizingFromRr();
 
                 bool ok = _parent.ApplyRrSizingWithValidationProxy(_parent.LastRrTicks(), _parent.LastRrDollarPerContract(), true);
                 if (!ok)
@@ -6206,52 +5764,6 @@ public class SmartBoletaEmbeddedControl : Grid
             _rrSizingEnabled = false;
             SetQtyButtonsEnabled(true);
             ApplyRrVisuals();
-            _parent.SavePrefs();
-        }
-
-        // ===== DRV sizing toggle =====
-        private void ToggleDrvSizing()
-        {
-            if (_parent.IsRiskBlocked())
-            {
-                _parent.ShowTransientPopup("Bloqueado por RISK até 00:00.");
-                return;
-            }
-
-            bool turningOn = !_drvSizingEnabled;
-
-            if (turningOn)
-            {
-                if (!_drvFeedAvailable || _parent.LastDrvTicks() <= 0 || _parent.LastDrvDollarPerContract() <= 0)
-                {
-                    _parent.ShowTransientPopup("DRV indisponível: plote o indicador DRV no gráfico.");
-                    _drvSizingEnabled = false;
-                    ApplyDrvVisuals();
-                    return;
-                }
-
-                // exclusividade: liga DRV => desliga ATR e RR
-                _parent.DisableAtrSizingFromDrv();
-                _parent.DisableRrSizingFromAtrOrDrv();
-
-                bool ok = _parent.ApplyDrvSizingWithValidationProxy(_parent.LastDrvTicks(), _parent.LastDrvDollarPerContract(), true);
-                if (!ok)
-                {
-                    _drvSizingEnabled = false;
-                    ApplyDrvVisuals();
-                    return;
-                }
-
-                _drvSizingEnabled = true;
-                SetQtyButtonsEnabled(false);
-                ApplyDrvVisuals();
-                _parent.SavePrefs();
-                return;
-            }
-
-            _drvSizingEnabled = false;
-            SetQtyButtonsEnabled(true);
-            ApplyDrvVisuals();
             _parent.SavePrefs();
         }
 
@@ -6375,42 +5887,6 @@ public class SmartBoletaEmbeddedControl : Grid
             catch { }
         }
 
-        // ===== DRV (display + feed flag) =====
-        public void SetDrv(double? ticks, bool hasFeed)
-        {
-            try
-            {
-                if (_drvDisplayText == null || _tbDrvToggle == null || _bulletDrv == null) return;
-
-                _drvFeedAvailable = hasFeed && ticks.HasValue && ticks.Value > 0;
-
-                if (!_drvFeedAvailable)
-                {
-                    _drvDisplayText.Text = "-";
-                    _drvDisplayText.Foreground = LightGrayBrush;
-
-                    if (_drvSizingEnabled)
-                    {
-                        _drvSizingEnabled = false;
-                        SetQtyButtonsEnabled(true);
-                    }
-
-                    ApplyDrvVisuals();
-                    return;
-                }
-
-                int drvTicksRounded = _parent.LastDrvTicks();
-                double drvDollarPerContract = _parent.LastDrvDollarPerContract();
-
-                var enUs = CultureInfo.GetCultureInfo("en-US");
-                string money = drvDollarPerContract > 0 ? drvDollarPerContract.ToString("C2", enUs) : "-";
-
-                _drvDisplayText.Text = $"{drvTicksRounded} ticks / {money} (1C)";
-
-                ApplyDrvVisuals();
-            }
-            catch { }
-        }
 
         // ===== RR (display + feed flag) =====
         public void SetRr(int? ticks, bool hasFeed)
@@ -6654,8 +6130,6 @@ public class SmartBoletaEmbeddedControl : Grid
                 _tbAtrToggle.Text = "Off"; _tbAtrToggle.Foreground = Brushes.Gray;
                 _atrValueText.Text = "-";
 
-                _drvSizingEnabled = false;
-                _drvFeedAvailable = false;
 
                 _rrSizingEnabled = false;
                 _rrFeedAvailable = false;
@@ -6670,12 +6144,10 @@ public class SmartBoletaEmbeddedControl : Grid
                 _tbRiskStatus.Text = "";
                 _bulletRisk.Fill = InactiveBulletBrush;
 
-                if (_drvDisplayText != null) _drvDisplayText.Text = "-";
 
                 UpdateTopInfoVisibility();
                 SetQtyButtonsEnabled(true);
 
-                ApplyDrvVisuals();
                 ApplyRrVisuals();
             }
             catch { }
@@ -6729,9 +6201,8 @@ private void ToggleAtr()
     bool turningOn = _tbAtrToggle.Text != "On";
     if (turningOn)
     {
-        // exclusividade: ligou ATR => desliga DRV e RR
-        _parent.DisableDrvSizingFromAtr();
-        _parent.DisableRrSizingFromAtrOrDrv();
+        // exclusividade: ligou ATR => desliga RR
+        _parent.DisableRrSizingFromAtr();
 
         bool ok = _parent.ApplyAtrSizingWithValidationProxy(_parent.LastAtrTicks(), _parent.LastAtrDollarPerContract(), true);
         if (!ok) return;
@@ -6793,7 +6264,6 @@ public void UpdateBulletsAfterStateChange()
         _tbAtrToggle.Foreground = (_tbAtrToggle.Text == "On") ? BronzeBrush : Brushes.Gray;
         _tbOnClickToggle.Foreground = (_onClickEnabled ? BronzeBrush : Brushes.Gray);
 
-        ApplyDrvVisuals();
         ApplyRrVisuals();
         UpdateTopInfoVisibility();
     }
