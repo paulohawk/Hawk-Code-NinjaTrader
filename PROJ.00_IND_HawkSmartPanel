@@ -3115,64 +3115,6 @@ private void UnsubscribeExecutions()
 // =========================
 // RISK: round-trip + max contracts/trade
 // =========================
-//
-// ⚠️ IMPORTANTE (Patch):
-// - A contagem de round-trip (incrementar _riskTrades) NÃO deve acontecer aqui, porque qty via ExecutionUpdate é timing-incerto.
-// - A contagem vai acontecer no OnPositionUpdateDecorator (Parte 3) ao detectar transição !=0 -> 0.
-// - Aqui fica somente um helper opcional para sincronizar/seed do tracking quando necessário.
-//
-private void RiskUpdateRoundTripCounters(Account accountForCheck)
-{
-    try
-    {
-        if (!AtivarRisk || !_riskOn) return;
-        if (Instrument == null) return;
-        if (accountForCheck == null) return;
-
-        // ✅ tracking é apenas para conta selecionada
-        var sel = GetSelectedAccount();
-        if (sel == null) return;
-
-        if (!string.Equals(accountForCheck.Name, sel.Name, StringComparison.OrdinalIgnoreCase))
-            return;
-
-        var pos = GetPositionForInstrument(accountForCheck, Instrument);
-        int qtyNow = pos?.Quantity ?? 0;
-
-        lock (_riskPosLock)
-        {
-            // se a conta trackeada mudou (ou ainda não definida), reseta
-            if (_riskTrackedAccountName == null ||
-                !string.Equals(_riskTrackedAccountName, sel.Name, StringComparison.OrdinalIgnoreCase))
-            {
-                _riskTrackedAccountName = sel.Name;
-                _riskLastPositionInitialized = false;
-                _riskLastPositionQty = 0;
-            }
-
-            if (!_riskLastPositionInitialized)
-            {
-                // ===== LOGS =====
-                try
-                {
-                    SmartLog($"[TRACE][RoundTrip] seed acc={accountForCheck.Name} inst={(Instrument?.FullName ?? "null")} qtyNow={qtyNow} trades={_riskTrades}");
-                }
-                catch { }
-
-                _riskLastPositionQty = qtyNow;
-                _riskLastPositionInitialized = true;
-                return;
-            }
-
-            // Aqui NÃO incrementa trades. Apenas mantém o lastQty mais próximo possível.
-            _riskLastPositionQty = qtyNow;
-        }
-    }
-    catch (Exception ex)
-    {
-        SmartLog("RiskUpdateRoundTripCounters ex: " + ex.Message);
-    }
-}
 
 private bool WouldExceedMaxContractsPerTrade(Account account, OrderAction action, int qtyToAdd, out int currentAbs, out int projectedAbs)
 {
@@ -3249,9 +3191,9 @@ private void OnExecutionUpdate(object sender, ExecutionEventArgs e)
         // ===== Mantém: contratos/dia (volume executado) =====
         _riskContracts += Math.Abs(exec.Quantity);
 
-        // ⚠️ NÃO conta round-trip aqui (vai no PositionUpdate - Parte 3)
-        // Mantém apenas um seed/sync do tracker (opcional)
-        RiskUpdateRoundTripCounters(exec.Account);
+        // ⚠️ Round-trip NÃO é atualizado por execução.
+        // A contagem de _riskTrades acontece exclusivamente em PositionUpdate
+        // ao detectar transição de posição != 0 para posição == 0.
 
         SmartLog($"Exec contabilizada para Risk: trades={_riskTrades} contratosDia={_riskContracts} qtyExec={exec.Quantity}");
 
