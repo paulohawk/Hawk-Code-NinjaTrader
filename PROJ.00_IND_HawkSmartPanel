@@ -42,7 +42,7 @@ using TextAlignment = System.Windows.TextAlignment;
 // Version note: módulo legado de volatilidade removido (Bloco 1).
 namespace NinjaTrader.NinjaScript.Indicators
 {
-    internal enum SmartLogLevel
+    public enum SmartLogLevel
     {
         None = 0,
         Error = 1,
