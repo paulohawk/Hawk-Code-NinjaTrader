@@ -565,7 +565,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private bool _beActive = false;
 
         [Display(Name = "Scan interval (seconds)", Order = 2, GroupName = "Debug")]
-        public int ScanIntervalSeconds { get; set; } = 3;
+        public int ScanIntervalSeconds { get; set; } = 30;
         private DateTime _lastScanUtc = DateTime.MinValue;
 
         // RISK
@@ -947,7 +947,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 EnableDiagnosticLogging = false;
                 BreakEvenTicks = 10;
                 MinFavorFactor = 2.0;
-                ScanIntervalSeconds = 3;
+                ScanIntervalSeconds = 30;
 
                 MaxContractsPerTrade = 0;
                 RiskOverlayUntilMidnight = false;
@@ -2306,6 +2306,7 @@ private void RunPeriodicRefresh()
         try { HardLock_RefreshCacheAndApplyUi("periodic_refresh"); } catch { }
 
         EvaluateRisk(false);
+        LogSystemSnapshot();
 
         // ✅ PATCH PARCIAL (VISUAL): garante que o botão do RISK reflita o estado real (_riskOn)
         // (o fix definitivo é no Bloco B, mas isso melhora o caso "fica OFF após OK")
@@ -2386,6 +2387,50 @@ private void RunPeriodicRefresh()
     }
 }
 
+private void LogSystemSnapshot()
+{
+    try
+    {
+        var acc = GetSelectedAccount();
+        var pos = GetPositionForInstrument(acc, Instrument);
+        int qty = pos?.Quantity ?? 0;
+
+        int ordersOpen = 0;
+        try
+        {
+            if (acc != null)
+            {
+                foreach (var ord in acc.Orders)
+                {
+                    if (ord == null) continue;
+                    if (ord.Instrument != Instrument) continue;
+
+                    if (ord.OrderState == OrderState.Accepted ||
+                        ord.OrderState == OrderState.Working ||
+                        ord.OrderState == OrderState.PartFilled ||
+                        ord.OrderState == OrderState.Submitted)
+                    {
+                        ordersOpen++;
+                    }
+                }
+            }
+        }
+        catch { }
+
+        SmartLog(
+            $"[SNAPSHOT] acc={(acc?.Name ?? "null")} " +
+            $"pnl={TryGetAccountValue(acc, AccountItem.RealizedProfitLoss)} " +
+            $"posQty={qty} " +
+            $"ordersOpen={ordersOpen} " +
+            $"risk={_riskOn} " +
+            $"overlay={_riskOverlayShown}");
+    }
+    catch (Exception ex)
+    {
+        SmartLog("Snapshot ex: " + ex.Message);
+    }
+}
+
 // =========================
 // (daqui para baixo: seu BLOCO A PARTE 2/2 estável, com alterações mínimas de Risk/Overlay)
 // =========================
@@ -2453,14 +2498,12 @@ private void ApplyAtrValues(int atrTicks, double atrDollarPerContract, double ti
     DrawAtrVisuals(atrTicks, tickSize);
 }
 
-private (bool hasPos, double avgPrice, string ticker) GetOpenPositionInfo(bool verbose = true)
+private (bool hasPos, double avgPrice, string ticker) GetOpenPositionInfo()
 {
     try
     {
         string chartInst = Instrument?.FullName ?? "(null)";
         string chartMI = Instrument?.MasterInstrument?.Name ?? "(null)";
-
-        if (verbose) SmartLog($"GetOpenPositionInfo: chartInst={chartInst} chartMI={chartMI}");
 
         foreach (var acc in Account.All)
         {
@@ -2490,7 +2533,6 @@ private (bool hasPos, double avgPrice, string ticker) GetOpenPositionInfo(bool v
                                     bool match = (pFull == chartInst) || (!string.IsNullOrEmpty(pMI) && pMI == chartMI);
                                     if (match)
                                     {
-                                        if (verbose) SmartLog($"Found position in acc={acc.Name} inst={pFull} qty={qty} avg={avg}");
                                         return (true, avg, pFull);
                                     }
                                 }
@@ -2503,18 +2545,16 @@ private (bool hasPos, double avgPrice, string ticker) GetOpenPositionInfo(bool v
             catch { }
         }
     }
-    catch (Exception ex) { if (verbose) SmartLog("GetOpenPositionInfo ex: " + ex.Message); }
-    if (verbose) SmartLog("GetOpenPositionInfo: no position found.");
+    catch { }
     return (false, 0.0, "");
 }
 
-private (double? chartStop, double? chartExit) GetChartStopAndExit(bool verbose = true)
+private (double? chartStop, double? chartExit) GetChartStopAndExit()
 {
     double? foundStop = null;
     double? foundExit = null;
     string chartInst = Instrument?.FullName ?? "(null)";
     string chartMI = Instrument?.MasterInstrument?.Name ?? "(null)";
-    int inspected = 0;
 
     try
     {
@@ -2543,7 +2583,6 @@ private (double? chartStop, double? chartExit) GetChartStopAndExit(bool verbose 
 
                 foreach (var ordObj in orders)
                 {
-                    inspected++;
                     var ord = ordObj as Order;
                     if (ord == null) continue;
                     try
@@ -2593,8 +2632,6 @@ private (double? chartStop, double? chartExit) GetChartStopAndExit(bool verbose 
                             }
                         }
 
-                        if (verbose) SmartLog($"Order inspected: acc={ord.Account?.Name} inst={oFull} type={orderTypeName} state={stateName} price={(price.HasValue ? price.Value.ToString("N2") : "null")}");
-
                         if (!string.IsNullOrEmpty(orderTypeName))
                         {
                             var lower = orderTypeName.ToLower();
@@ -2619,7 +2656,7 @@ private (double? chartStop, double? chartExit) GetChartStopAndExit(bool verbose 
                             if (!foundExit.HasValue && price.HasValue) foundExit = price.Value;
                         }
                     }
-                    catch (Exception exOrd) { if (verbose) SmartLog("Order inspect ex: " + exOrd.Message); }
+                    catch { }
                 }
             }
             catch { }
@@ -2627,7 +2664,6 @@ private (double? chartStop, double? chartExit) GetChartStopAndExit(bool verbose 
     }
     catch { }
 
-    if (verbose) SmartLog($"GetChartStopAndExit: inspected={inspected} stop={(foundStop.HasValue ? foundStop.Value.ToString("N2") : "null")} exit={(foundExit.HasValue ? foundExit.Value.ToString("N2") : "null")}");
     return (foundStop, foundExit);
 }
 
@@ -4630,19 +4666,14 @@ private void EnsureRiskResetDaily()
 
                 if (sel == null)
                 {
-                    SmartLog("ComputeOrderDecorations: nenhuma conta resolvida (fallback falhou).");
                     return;
                 }
 
-                int posCount = 0;
-                int ordCount = 0;
-                int renderCount = 0;
 
                 foreach (var pos in sel.Positions)
                 {
                     if (pos.Instrument != Instrument) continue;
                     if (pos.MarketPosition == MarketPosition.Flat) continue;
-                    posCount++;
 
                     double entryPrice = pos.AveragePrice;
 
@@ -4664,7 +4695,6 @@ private void EnsureRiskResetDaily()
                         var kind = GetDecorKind(order.OrderType);
                         if (kind == DecorKind.OTHER) continue;
 
-                        ordCount++;
 
                         string key = ordPrice.ToString("G17") + kind.ToString();
                         int aggQty = decoQtyByKey.AddOrUpdate(key, order.Quantity, (_, old) => old + order.Quantity);
@@ -4689,11 +4719,8 @@ private void EnsureRiskResetDaily()
 
                         var item = new DecorInfo { Kind = kind, Text = text };
                         decoToRender.AddOrUpdate(ordPrice, item, (_, __) => item);
-                        renderCount++;
                     }
                 }
-
-                SmartLog($"ComputeOrderDecorations: main={_mainEnabled} override={ForceDecorationsOverride} acc={sel.Name} posCount={posCount} ordCount={ordCount} render={renderCount}");
             }
             ForceRefreshDecorations();
         }
