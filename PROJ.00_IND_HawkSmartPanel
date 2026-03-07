@@ -605,6 +605,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         // account selector hook/cache
         private AccountSelector accountSelector;
         private Account selectedAccountCached;
+        private Account _pnlSubscribedAccount;
 
         // Flag de limpeza pós-flat
         private bool _flatCleanupDone = false;
@@ -1024,6 +1025,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                 SubscribeExecutions();
                 SubscribeDecoratorAccountEvents();
+                BindPnlAccountListener(true, "data_loaded");
                 _riskDay = DateTime.Now.Date;
 
                 try
@@ -1064,6 +1066,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 UnsubscribeExecutions();
                 UnsubscribeDecoratorAccountEvents();
                 UnwireAccountSelector();
+                UnbindPnlAccountListener();
 
                 SavePrefs();
 
@@ -1365,6 +1368,71 @@ namespace NinjaTrader.NinjaScript.Indicators
             catch (Exception ex) { SmartLog("UpdatePnlDisplay ex: " + ex.Message); }
         }
 
+        private void BindPnlAccountListener(bool forceRefresh, string reason)
+        {
+            try
+            {
+                var selected = GetSelectedAccount();
+
+                if (!ReferenceEquals(_pnlSubscribedAccount, selected))
+                {
+                    if (_pnlSubscribedAccount != null)
+                    {
+                        _pnlSubscribedAccount.AccountItemUpdate -= OnAccountItemUpdate;
+                        SmartLog($"PnL listener unwired: {_pnlSubscribedAccount.Name}");
+                    }
+
+                    _pnlSubscribedAccount = selected;
+
+                    if (_pnlSubscribedAccount != null)
+                    {
+                        _pnlSubscribedAccount.AccountItemUpdate -= OnAccountItemUpdate;
+                        _pnlSubscribedAccount.AccountItemUpdate += OnAccountItemUpdate;
+                        SmartLog($"PnL listener wired: {_pnlSubscribedAccount.Name} reason={reason}");
+                        forceRefresh = true;
+                    }
+                }
+
+                if (forceRefresh)
+                    UpdatePnlDisplay();
+            }
+            catch (Exception ex)
+            {
+                SmartLog("BindPnlAccountListener ex: " + ex.Message);
+            }
+        }
+
+        private void UnbindPnlAccountListener()
+        {
+            try
+            {
+                if (_pnlSubscribedAccount != null)
+                    _pnlSubscribedAccount.AccountItemUpdate -= OnAccountItemUpdate;
+            }
+            catch { }
+            finally
+            {
+                _pnlSubscribedAccount = null;
+            }
+        }
+
+        private void OnAccountItemUpdate(object sender, AccountItemEventArgs e)
+        {
+            try
+            {
+                if (e == null || e.AccountItem != AccountItem.RealizedProfitLoss) return;
+
+                double pnl = e.Value;
+                ChartControl?.Dispatcher?.BeginInvoke(new Action(() =>
+                {
+                    embeddedControl?.SetPnl(pnl);
+                }));
+            }
+            catch (Exception ex)
+            {
+                SmartLog("OnAccountItemUpdate PnL ex: " + ex.Message);
+            }
+        }
 
         private void RefreshRrDisplay()
         {
@@ -1807,6 +1875,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                 selectedAccountCached = accountSelector.SelectedAccount;
                 SmartLog("Account selector wired.");
 
+                // ✅ PnL: escuta updates da conta selecionada no ChartTrader
+                BindPnlAccountListener(true, "wire_account_selector");
+
                 // ✅ NOVO: sempre que wire, reseta tracking para a conta atual (evita misturar contas)
                 try { ResetRiskPositionTrackingForSelectedAccount("wire"); } catch { }
 
@@ -1859,6 +1930,9 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 selectedAccountCached = accountSelector?.SelectedAccount;
                 SmartLog($"Account changed -> {selectedAccountCached?.Name ?? "null"}");
+
+                // ✅ PnL: troca listener para a nova conta e força leitura imediata
+                BindPnlAccountListener(true, "account_changed");
 
                 // ✅ NOVO: não carregar tracking da conta anterior
                 ResetRiskPositionTrackingForSelectedAccount("account_changed");
@@ -2220,6 +2294,7 @@ private void RunPeriodicRefresh()
 
         if (embeddedControl == null) return;
 
+        BindPnlAccountListener(false, "periodic_refresh");
         UpdatePnlDisplay();
 
         RefreshRrDisplay();
