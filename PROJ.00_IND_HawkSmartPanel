@@ -1737,21 +1737,21 @@ namespace NinjaTrader.NinjaScript.Indicators
                 // Bloqueia envio via onclick (engine)
                 try { SetTradingFromChartEnabled(false); } catch { }
 
-                // Overlay: manter mensagem do seu RiskOverlayMessage (ou lucro se kind=profit)
+                // Overlay: mostrar apenas 1x e somente quando estiver FLAT no escopo.
+                // Se houver posição aberta, apenas arma para disparar no fechamento.
                 try
                 {
-                    string msg = RiskOverlayMessage;
-                    if (!string.IsNullOrWhiteSpace(_hardLockKind) && _hardLockKind == "profit")
-                        msg = RiskOverlayProfitMessage;
+                    if (!_riskOverlayShown)
+                    {
+                        string msg = RiskOverlayMessage;
+                        if (!string.IsNullOrWhiteSpace(_hardLockKind) && _hardLockKind == "profit")
+                            msg = RiskOverlayProfitMessage;
 
-                    // ✅ Ajuste: respeita RiskOverlayUntilMidnight / duração centralizada
-                    int dur = GetRiskOverlayDurationSeconds();
+                        _riskOverlayArmed = true;
+                        _riskOverlayPendingMessage = msg;
 
-                    overlayController?.EnsureOverlayShown(OverlayOpacity, dur, msg);
-
-                    _riskOverlayShown = true;
-                    _riskOverlayArmed = false;
-                    _riskOverlayPendingMessage = null;
+                        TryShowRiskOverlayIfArmedAndFlat(acc, "hardlock_refresh_" + reason);
+                    }
                 }
                 catch { }
 
@@ -3667,7 +3667,8 @@ private void EnsureRiskResetDaily()
                         // O lock visual do MAIN deve ser responsabilidade do EmbeddedControl via SetRiskState(Blocked...).
                         SetTradingFromChartEnabled(false);
 
-                        // overlay pode ter sido fechado pelo fallback; reaplica (curto)
+                        // Overlay só deve aparecer uma vez e apenas quando FLAT.
+                        // Em posição aberta, fica armado e dispara no fechamento.
                         if (!_riskOverlayShown)
                         {
                             string msg = RiskOverlayMessage;
@@ -3678,12 +3679,10 @@ private void EnsureRiskResetDaily()
                             }
                             catch { }
 
-                            overlayController?.EnsureOverlayShown(OverlayOpacity, GetRiskOverlayDurationSeconds(), msg);
-                            ForceMainToggleOffDueToOverlay();
+                            _riskOverlayArmed = true;
+                            _riskOverlayPendingMessage = msg;
 
-                            _riskOverlayShown = true;
-                            _riskOverlayArmed = false;
-                            _riskOverlayPendingMessage = null;
+                            TryShowRiskOverlayIfArmedAndFlat(GetSelectedAccount(), "hardlock_evaluate");
                         }
 
                         SmartLog("[HARDLOCK] EvaluateRisk: bloqueio soberano aplicado.");
