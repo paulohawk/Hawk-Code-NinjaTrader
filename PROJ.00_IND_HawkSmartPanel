@@ -2243,6 +2243,12 @@ private void ComputeAtrAutoAndApply()
 {
     try
     {
+        if (embeddedControl != null && !embeddedControl.IsAtrEnabled())
+        {
+            ClearAtrDraws();
+            return;
+        }
+
         if (CurrentBar < 1) return;
 
         double high = High[0];
@@ -2437,6 +2443,12 @@ private void LogSystemSnapshot()
 
 private void ComputeAtrFixedAndApply()
 {
+    if (embeddedControl != null && !embeddedControl.IsAtrEnabled())
+    {
+        ClearAtrDraws();
+        return;
+    }
+
     if (BarsArray.Length < 2) return;
     var series = BarsArray[1];
     if (CurrentBars[1] < 1) { return; }
@@ -2492,6 +2504,12 @@ private void ApplyAtrValues(int atrTicks, double atrDollarPerContract, double ti
             SmartLog("ATR auto-off: Stop($) inválido durante ATR ON.");
             SavePrefs();
         }
+    }
+
+    if (embeddedControl != null && !embeddedControl.IsAtrEnabled())
+    {
+        ClearAtrDraws();
+        return;
     }
 
     // Desenho da linha/legenda ATR no gráfico (só se houver posição)
@@ -4207,7 +4225,15 @@ private void EnsureRiskResetDaily()
             if (_mainEnabled || ForceDecorationsOverride)
                 ComputeOrderDecorations();
             else
+            {
+                ClearAtrDraws();
                 ClearDecorations();
+            }
+        }
+
+        internal void ClearAtrDrawsFromControl()
+        {
+            ClearAtrDraws();
         }
 
         protected override void OnRender(ChartControl chartControl, ChartScale chartScale)
@@ -4428,6 +4454,12 @@ private void EnsureRiskResetDaily()
         {
             try
             {
+                if (embeddedControl != null && !embeddedControl.IsAtrEnabled())
+                {
+                    ClearAtrDraws();
+                    return;
+                }
+
                 if (Instrument == null || atrTicks <= 0)
                 {
                     ClearAtrDraws();
@@ -6314,6 +6346,7 @@ private void ToggleAtr()
         _tbAtrToggle.Text = "Off";
         _tbAtrToggle.Foreground = Brushes.Gray;
         SetQtyButtonsEnabled(true);
+        _parent.ClearAtrDrawsFromControl();
         _parent.SmartLog("ATR toggled Off");
     }
 
@@ -6494,6 +6527,8 @@ public void SetAtrState(bool on)
         _tbAtrToggle.Text = on ? "On" : "Off";
         _tbAtrToggle.Foreground = on ? BronzeBrush : Brushes.Gray;
         SetQtyButtonsEnabled(!on);
+        if (!on)
+            _parent.ClearAtrDrawsFromControl();
         UpdateBulletsAfterStateChange();
     }
     catch { }
