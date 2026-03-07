@@ -1681,9 +1681,6 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             try
             {
-                // precisa de UI para aplicar visual
-                if (embeddedControl == null) return;
-
                 var acc = GetSelectedAccount();
                 string accName = acc != null ? acc.Name : null;
 
@@ -1704,7 +1701,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 // ✅ HARDLOCK DIAG: sempre registra tentativa de leitura
                 try
                 {
-                    HardLockDiag($"RefreshCache reason='{reason}' acc='{(accName ?? "null")}' scope='{(chartScope ? "chart" : "global")}' key='{key}' ok={ok} untilUtc='{(ok ? untilUtc.ToString("O") : "null")}' kind='{(kind ?? "null")}'");
+                    HardLockDiag($"RefreshCache reason='{reason}' acc='{(accName ?? "null")}' scope='{(chartScope ? "chart" : "global")}' key='{key}' ok={ok} untilUtc='{(ok ? untilUtc.ToString("O") : "null")}' kind='{(kind ?? "null")}' uiReady={(embeddedControl != null)}");
                 }
                 catch { }
 
@@ -1729,6 +1726,13 @@ namespace NinjaTrader.NinjaScript.Indicators
                 // Força bloqueio em memória do Risk (sem depender de AtivarRisk/_riskOn)
                 _riskBlocked = true;
                 _riskBlockedUntil = _hardLockUntilLocal;
+
+                // Sem UI ainda: mantém cache/estado, e aplica visual quando a UI existir.
+                if (embeddedControl == null)
+                {
+                    SmartLog($"[HARDLOCK] cache atualizado sem UI. reason={reason} acc={(accName ?? "null")} scope={(chartScope ? "chart" : "global")} until={_hardLockUntilLocal:HH:mm} key={(_hardLockKey ?? "null")} kind={_hardLockKind}");
+                    return;
+                }
 
                 // ✅ Ajuste: HardLock aplica estado de Risk + desarma OnClick,
                 // mas NÃO chama ForceMainToggleBlocked (isso gerava efeitos colaterais / regressões de UI).
@@ -1848,6 +1852,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                 if (!TabSelected()) { RegisterTabHandler(); SmartLog("Hook: tab not selected - waiting"); return; }
 
+                // ✅ Regra de inicialização: sempre tentar inserir a UI quando a aba está ativa.
+                // HardLock é aplicado após a UI existir (no próprio InsertEmbedded).
                 if (!panelActive) InsertEmbedded();
                 else
                 {
