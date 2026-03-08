@@ -53,6 +53,14 @@ namespace NinjaTrader.NinjaScript.Indicators
 
     public class SmartBoletaIndicator : Indicator
     {
+        internal enum RiskState
+        {
+            Off,
+            Ok,
+            Pre,
+            Blocked
+        }
+
         private const int AttachPollMs = 1000;
         private const double EmbedHeightPx = 320.0;
         private const int AtrLabelOffsetTicks = 80; // default fixado
@@ -6715,14 +6723,6 @@ public enum SRiskScope
 {
     EsteGrafico,
     TodaPlataforma
-}
-
-public enum RiskState
-{
-    Off,
-    Ok,
-    Pre,
-    Blocked
 }
 
 internal static class AccountValueProvider
