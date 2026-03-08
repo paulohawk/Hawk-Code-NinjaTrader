@@ -53,14 +53,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 
     public class SmartBoletaIndicator : Indicator
     {
-        internal enum RiskState
-        {
-            Off,
-            Ok,
-            Pre,
-            Blocked
-        }
-
         private const int AttachPollMs = 1000;
         private const double EmbedHeightPx = 320.0;
         private const int AtrLabelOffsetTicks = 80; // default fixado
@@ -1744,7 +1736,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                 // ✅ Ajuste: HardLock aplica estado de Risk + desarma OnClick,
                 // mas NÃO chama ForceMainToggleBlocked (isso gerava efeitos colaterais / regressões de UI).
-                try { embeddedControl.SetRiskState(RiskState.Blocked, true, "bloqueado"); } catch { }
+                try { embeddedControl.SetRiskState(SmartBoletaRiskState.Blocked, true, "bloqueado"); } catch { }
 
                 // Bloqueia envio via onclick (engine)
                 try { SetTradingFromChartEnabled(false); } catch { }
@@ -3402,7 +3394,7 @@ private void EnsureRiskResetDaily()
 
         try { HardLock_CleanupExpired(); } catch { }
 
-        embeddedControl?.SetRiskState(RiskState.Ok, _riskOn, "");
+        embeddedControl?.SetRiskState(SmartBoletaRiskState.Ok, _riskOn, "");
         SmartLog("Risk: reset diário.");
 
         // ✅ NOVO: prepara tracking para a conta selecionada (se existir)
@@ -3675,7 +3667,7 @@ private void EnsureRiskResetDaily()
                 {
                     try
                     {
-                        embeddedControl?.SetRiskState(RiskState.Blocked, true, "bloqueado");
+                        embeddedControl?.SetRiskState(SmartBoletaRiskState.Blocked, true, "bloqueado");
 
                         // ✅ NÃO chamar ForceMainToggleBlocked (efeitos colaterais / regressões).
                         // O lock visual do MAIN deve ser responsabilidade do EmbeddedControl via SetRiskState(Blocked...).
@@ -3707,7 +3699,7 @@ private void EnsureRiskResetDaily()
 
                 if (!AtivarRisk)
                 {
-                    embeddedControl?.SetRiskState(RiskState.Off, false, "");
+                    embeddedControl?.SetRiskState(SmartBoletaRiskState.Off, false, "");
 
                     // ✅ HARDLOCK: aqui só limpa se NÃO há hardlock (já garantido acima)
                     _riskBlocked = false;
@@ -3723,7 +3715,7 @@ private void EnsureRiskResetDaily()
 
                 if (!_riskOn)
                 {
-                    embeddedControl?.SetRiskState(RiskState.Off, false, "");
+                    embeddedControl?.SetRiskState(SmartBoletaRiskState.Off, false, "");
 
                     // ✅ HARDLOCK: aqui só limpa se NÃO há hardlock (já garantido acima)
                     _riskBlocked = false;
@@ -3776,7 +3768,7 @@ private void EnsureRiskResetDaily()
                 // O Risk está ON (enabled=true), mas o estado é Blocked.
                 if (IsRiskBlocked())
                 {
-                    embeddedControl?.SetRiskState(RiskState.Blocked, true, "bloqueado");
+                    embeddedControl?.SetRiskState(SmartBoletaRiskState.Blocked, true, "bloqueado");
 
                     // ✅ NÃO chamar ForceMainToggleBlocked (efeitos colaterais / regressões).
                     SetTradingFromChartEnabled(false);
@@ -3804,7 +3796,7 @@ private void EnsureRiskResetDaily()
                             ShowTransientPopup("Limite de lucro diário atingido.");
                             _warnedProfit = true;
                         }
-                        embeddedControl?.SetRiskState(RiskState.Pre, true, "pré-limite");
+                        embeddedControl?.SetRiskState(SmartBoletaRiskState.Pre, true, "pré-limite");
                     }
                     return;
                 }
@@ -3826,12 +3818,12 @@ private void EnsureRiskResetDaily()
                         ShowTransientPopup("Atenção: próximo do limite de contratos diário.");
                         _warnedContracts = true;
                     }
-                    embeddedControl?.SetRiskState(RiskState.Pre, true, "pré-limite");
+                    embeddedControl?.SetRiskState(SmartBoletaRiskState.Pre, true, "pré-limite");
                     return;
                 }
 
                 // OK
-                embeddedControl?.SetRiskState(RiskState.Ok, true, "");
+                embeddedControl?.SetRiskState(SmartBoletaRiskState.Ok, true, "");
                 _warnedLoss = _warnedTrades = _warnedContracts = _warnedProfit = false;
                 _riskBlocked = false;
                 _mainToggleLockedByRisk = false;
@@ -3923,7 +3915,7 @@ private void EnsureRiskResetDaily()
 
             // ✅ FIX: não forçar toggle OFF quando o Risk está bloqueando.
             // O Risk continua ON, apenas em estado BLOQ.
-            embeddedControl?.SetRiskState(RiskState.Blocked, true, "bloqueado");
+            embeddedControl?.SetRiskState(SmartBoletaRiskState.Blocked, true, "bloqueado");
 
             // ✅ NÃO chamar ForceMainToggleBlocked (efeitos colaterais / regressões).
 
@@ -6439,7 +6431,7 @@ public void SetEndDayLabel(TimeSpan? t, SBEndDayScope scope)
     catch { }
 }
 
-public void SetRiskState(RiskState state, bool enabled, string status)
+public void SetRiskState(SmartBoletaRiskState state, bool enabled, string status)
 {
     try
     {
@@ -6448,24 +6440,24 @@ public void SetRiskState(RiskState state, bool enabled, string status)
 
         switch (state)
         {
-            case RiskState.Ok:
+            case SmartBoletaRiskState.Ok:
                 bullet = MainOnBrush;
                 statusColor = MainOnBrush;
                 UnlockMainToggle();
                 break;
 
-            case RiskState.Pre:
+            case SmartBoletaRiskState.Pre:
                 bullet = PreLimitBrush;
                 statusColor = PreLimitBrush;
                 break;
 
-            case RiskState.Blocked:
+            case SmartBoletaRiskState.Blocked:
                 bullet = BlockBrush;
                 statusColor = BlockBrush;
                 ForceMainToggleBlocked();
                 break;
 
-            case RiskState.Off:
+            case SmartBoletaRiskState.Off:
             default:
                 bullet = InactiveBulletBrush;
                 statusColor = Brushes.Gray;
@@ -6480,10 +6472,10 @@ public void SetRiskState(RiskState state, bool enabled, string status)
 
         _tbRiskStatus.Text = state switch
         {
-            RiskState.Ok => "OK",
-            RiskState.Pre => "PRE",
-            RiskState.Blocked => "BLOQ",
-            RiskState.Off => "OFF",
+            SmartBoletaRiskState.Ok => "OK",
+            SmartBoletaRiskState.Pre => "PRE",
+            SmartBoletaRiskState.Blocked => "BLOQ",
+            SmartBoletaRiskState.Off => "OFF",
             _ => status ?? ""
         };
         _tbRiskStatus.ToolTip = "Estado atual do Risk.";
@@ -6712,6 +6704,14 @@ private void SmartBoletaEmbeddedControl_SizeChanged(object sender, SizeChangedEv
 // =========================================
 // Enums / helpers
 // =========================================
+
+public enum SmartBoletaRiskState
+{
+    Off,
+    Ok,
+    Pre,
+    Blocked
+}
 
 public enum SBEndDayScope
 {
