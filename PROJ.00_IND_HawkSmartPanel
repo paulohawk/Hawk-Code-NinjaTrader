@@ -781,7 +781,13 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private int GetChartKey()
         {
-            try { return ChartControl != null ? ChartControl.GetHashCode() : 0; }
+            try
+            {
+                if (ChartControl == null)
+                    return 0;
+
+                return ChartControl.GetHashCode();
+            }
             catch { return 0; }
         }
 
@@ -967,6 +973,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             if (State == State.SetDefaults)
             {
+                SmartLog($"[LIFECYCLE] State={State} ChartKey={GetChartKey()} BoletaId={BoletaId ?? "null"}");
                 Name = "SmartBoletaIndicator";
                 Description = "Hawk - Smart Panel";
                 Calculate = Calculate.OnPriceChange;
@@ -1012,6 +1019,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             else if (State == State.Configure)
             {
+                SmartLog($"[LIFECYCLE] State={State} ChartKey={GetChartKey()} BoletaId={BoletaId ?? "null"}");
                 try
                 {
                     int mins = Math.Max(1, AtrFixedMinutes);
@@ -1021,6 +1029,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             else if (State == State.DataLoaded)
             {
+                SmartLog($"[LIFECYCLE] State={State} ChartKey={GetChartKey()} BoletaId={BoletaId ?? "null"}");
                 // ✅ HARDLOCK (higiene): remove locks expirados do arquivo
                 // (não altera o comportamento do Risk ainda)
                 try { HardLock_CleanupExpired(); } catch { }
@@ -1031,12 +1040,15 @@ namespace NinjaTrader.NinjaScript.Indicators
                 int chartKey = GetChartKey();
                 if (chartKey != 0)
                 {
+                    SmartLog($"[INSTANCE] Checking ActivePerChart ChartKey={chartKey}");
                     if (ActivePerChart.TryGetValue(chartKey, out var wr) && wr.TryGetTarget(out var existing) && existing != null && existing != this)
                     {
+                        SmartLog($"[INSTANCE] Existing instance detected ChartKey={chartKey}");
                         SmartLog("Já existe boleta ativa neste chart; não criarei outra.");
                         return;
                     }
                     ActivePerChart[chartKey] = new WeakReference<SmartBoletaIndicator>(this);
+                    SmartLog($"[INSTANCE] Registered new instance ChartKey={chartKey}");
 
                     if (BoletaIdPerChart.TryGetValue(chartKey, out var existingId) && !string.IsNullOrEmpty(existingId))
                         BoletaId = existingId;
@@ -1091,13 +1103,19 @@ namespace NinjaTrader.NinjaScript.Indicators
                 ForceRefreshDecorations();
                 StartDecoTimer();
             }
+            else if (State == State.Historical)
+            {
+                SmartLog($"[LIFECYCLE] State={State} ChartKey={GetChartKey()} BoletaId={BoletaId ?? "null"}");
+            }
             else if (State == State.Realtime)
             {
+                SmartLog($"[LIFECYCLE] State={State} ChartKey={GetChartKey()} BoletaId={BoletaId ?? "null"}");
                 ComputeOrderDecorations();
                 ForceRefreshDecorations();
             }
             else if (State == State.Terminated)
             {
+                SmartLog($"[LIFECYCLE] Terminated ChartKey={GetChartKey()} BoletaId={BoletaId ?? "null"}");
                 SmartLog("Terminated: cleaning up.");
                 StopAttachTimer();
                 StopDecoTimer();
@@ -1878,12 +1896,13 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             try
             {
-                if (ChartControl == null) { SmartLog("Hook: ChartControl null"); return; }
+                SmartLog("[UI] HookChartTraderAndInsert invoked");
+                if (ChartControl == null) { SmartLog("Hook: ChartControl null"); SmartLog("[UI] ChartTrader hook failed"); return; }
 
                 TryRegisterChartActivationHooks();
 
                 chartWindow = Window.GetWindow(ChartControl.Parent) as Gui.Chart.Chart;
-                if (chartWindow == null) { SmartLog("Hook: chartWindow null"); return; }
+                if (chartWindow == null) { SmartLog("Hook: chartWindow null"); SmartLog("[UI] ChartTrader hook failed"); return; }
 
                 try { chartTrader = chartWindow.FindFirst("ChartWindowChartTraderControl") as Gui.Chart.ChartTrader; } catch { }
                 if (chartTrader == null) chartTrader = FindVisualChildren<Gui.Chart.ChartTrader>(chartWindow).FirstOrDefault();
@@ -1891,6 +1910,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                 var content = chartTrader?.Content as DependencyObject;
                 if (content != null)
                     chartTraderGrid = content as Grid ?? FindVisualChildren<Grid>(content).FirstOrDefault();
+
+                if (chartTrader != null)
+                    SmartLog("[UI] ChartTrader hook successful");
+                else
+                    SmartLog("[UI] ChartTrader hook failed");
 
                 WireAccountSelector(); // conecta ao selector de conta
 
@@ -2021,10 +2045,12 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 if (chartWindow?.MainTabControl != null && tabHandler == null)
                 {
+                    SmartLog("[TAB] Tab handler registered");
                     tabHandler = (s, e) =>
                     {
                         try
                         {
+                            SmartLog($"[TAB] SelectionChanged TabSelected={TabSelected()}");
                             if (TabSelected())
                             {
                                 WireAccountSelector();
@@ -2057,6 +2083,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             try
             {
+                SmartLog($"[UI] InsertEmbedded start ChartKey={GetChartKey()} BoletaId={BoletaId}");
                 embeddedControl = new SmartBoletaEmbeddedControl(this);
                 embeddedControl.SetBoletaId(BoletaId);
 
@@ -2099,6 +2126,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 }
 
                 panelActive = true;
+                SmartLog($"[UI] InsertEmbedded success BoletaId={BoletaId}");
                 SmartLog($"InsertEmbedded: UI inserida. BoletaId={BoletaId}");
                 RegisterTabHandler();
                 UpdateEmbeddedForSelectedTab();
@@ -2121,6 +2149,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             try
             {
+                SmartLog($"[UI] RemoveEmbedded invoked BoletaId={BoletaId}");
                 if (chartWindow?.MainTabControl != null && tabHandler != null)
                 {
                     try { chartWindow.MainTabControl.SelectionChanged -= tabHandler; } catch { }
@@ -2179,12 +2208,14 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             try
             {
+                SmartLog("[HOOK] RegisterChartActivationHooks invoked");
                 if (_chartActivationHooksRegistered || ChartControl == null)
                     return;
 
                 ChartControl.MouseEnter += ChartControl_MouseEnter;
                 ChartControl.IsVisibleChanged += ChartControl_IsVisibleChanged;
                 _chartActivationHooksRegistered = true;
+                SmartLog("[HOOK] Chart activation hooks registered");
                 SmartLog("Chart activation hooks registered.");
             }
             catch (Exception ex)
@@ -2229,7 +2260,9 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             try
             {
-                if (e.NewValue is bool isVisible && isVisible)
+                bool isVisibleNow = e.NewValue is bool visibleValue && visibleValue;
+                SmartLog($"[HOOK] IsVisibleChanged visible={isVisibleNow}");
+                if (isVisibleNow)
                 {
                     if (TabSelected() && !panelActive)
                     {
