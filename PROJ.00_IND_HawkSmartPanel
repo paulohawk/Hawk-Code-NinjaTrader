@@ -1991,13 +1991,17 @@ namespace NinjaTrader.NinjaScript.Indicators
                             if (TabSelected())
                             {
                                 WireAccountSelector();
-                                if (!panelActive) InsertEmbedded();
+                                if (!panelActive)
+                                {
+                                    InsertEmbedded();
+                                }
                                 else
                                 {
                                     UpdateEmbeddedForSelectedTab();
                                     try { RefreshPositionAndOrders(); } catch { }
-                                    ReapplyRiskVisualState("tab_activated_selection_changed");
                                 }
+
+                                ReapplyRiskVisualState("tab_activated_selection_changed");
                             }
                             else
                             {
@@ -2172,6 +2176,15 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private void ChartControl_MouseEnter(object sender, MouseEventArgs e)
         {
+            try
+            {
+                if (TabSelected() && !panelActive)
+                {
+                    InsertEmbedded();
+                }
+            }
+            catch { }
+
             ReapplyRiskVisualState("tab_activated_mouse_enter");
         }
 
@@ -2180,7 +2193,14 @@ namespace NinjaTrader.NinjaScript.Indicators
             try
             {
                 if (e.NewValue is bool isVisible && isVisible)
+                {
+                    if (TabSelected() && !panelActive)
+                    {
+                        try { InsertEmbedded(); } catch { }
+                    }
+
                     ReapplyRiskVisualState("tab_activated_visible");
+                }
             }
             catch { }
         }
