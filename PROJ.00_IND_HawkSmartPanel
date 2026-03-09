@@ -507,6 +507,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private SelectionChangedEventHandler tabHandler;
         private DispatcherTimer attachTimer;
         private DispatcherTimer decoTimer; // timer para recomputar decorações
+        private bool _chartActivationHooksRegistered = false;
         private bool panelActive = false;
         private bool _mainEnabled = false; // estado do botão ON/OFF da boleta
 
@@ -1018,7 +1019,10 @@ namespace NinjaTrader.NinjaScript.Indicators
                 overlayController = new EndDayOverlayController(this);
 
                 if (ChartControl != null)
+                {
+                    TryRegisterChartActivationHooks();
                     ChartControl.Dispatcher.InvokeAsync(HookChartTraderAndInsert, DispatcherPriority.Background);
+                }
 
                 StartAttachTimer();
                 SmartLog($"DataLoaded: attach timer iniciado. BoletaId={BoletaId}");
@@ -1066,6 +1070,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 UnsubscribeExecutions();
                 UnsubscribeDecoratorAccountEvents();
                 UnwireAccountSelector();
+                TryUnregisterChartActivationHooks();
                 UnbindPnlAccountListener();
 
                 SavePrefs();
@@ -1838,6 +1843,8 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 if (ChartControl == null) { SmartLog("Hook: ChartControl null"); return; }
 
+                TryRegisterChartActivationHooks();
+
                 chartWindow = Window.GetWindow(ChartControl.Parent) as Gui.Chart.Chart;
                 if (chartWindow == null) { SmartLog("Hook: chartWindow null"); return; }
 
@@ -1985,7 +1992,12 @@ namespace NinjaTrader.NinjaScript.Indicators
                             {
                                 WireAccountSelector();
                                 if (!panelActive) InsertEmbedded();
-                                else { UpdateEmbeddedForSelectedTab(); try { RefreshPositionAndOrders(); } catch { } }
+                                else
+                                {
+                                    UpdateEmbeddedForSelectedTab();
+                                    try { RefreshPositionAndOrders(); } catch { }
+                                    ReapplyRiskVisualState("tab_activated_selection_changed");
+                                }
                             }
                             else
                             {
@@ -2120,6 +2132,106 @@ namespace NinjaTrader.NinjaScript.Indicators
                 embeddedControl.UpdateBulletsAfterStateChange();
             }
             catch (Exception ex) { SmartLog("UpdateEmbeddedForSelectedTab ex: " + ex.Message); }
+        }
+
+        private void TryRegisterChartActivationHooks()
+        {
+            try
+            {
+                if (_chartActivationHooksRegistered || ChartControl == null)
+                    return;
+
+                ChartControl.MouseEnter += ChartControl_MouseEnter;
+                ChartControl.IsVisibleChanged += ChartControl_IsVisibleChanged;
+                _chartActivationHooksRegistered = true;
+                SmartLog("Chart activation hooks registered.");
+            }
+            catch (Exception ex)
+            {
+                SmartLog("TryRegisterChartActivationHooks ex: " + ex.Message);
+            }
+        }
+
+        private void TryUnregisterChartActivationHooks()
+        {
+            try
+            {
+                if (!_chartActivationHooksRegistered || ChartControl == null)
+                    return;
+
+                ChartControl.MouseEnter -= ChartControl_MouseEnter;
+                ChartControl.IsVisibleChanged -= ChartControl_IsVisibleChanged;
+                _chartActivationHooksRegistered = false;
+                SmartLog("Chart activation hooks unregistered.");
+            }
+            catch (Exception ex)
+            {
+                SmartLog("TryUnregisterChartActivationHooks ex: " + ex.Message);
+            }
+        }
+
+        private void ChartControl_MouseEnter(object sender, MouseEventArgs e)
+        {
+            ReapplyRiskVisualState("tab_activated_mouse_enter");
+        }
+
+        private void ChartControl_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+        {
+            try
+            {
+                if (e.NewValue is bool isVisible && isVisible)
+                    ReapplyRiskVisualState("tab_activated_visible");
+            }
+            catch { }
+        }
+
+        private void ReapplyRiskVisualState(string reason)
+        {
+            try
+            {
+                if (embeddedControl == null)
+                    return;
+
+                try { HardLock_RefreshCacheAndApplyUi("reapply_" + reason); } catch { }
+
+                if (IsHardLockActiveNow() || IsRiskBlocked())
+                {
+                    embeddedControl.SetRiskState(SmartBoletaRiskState.Blocked, true, "bloqueado");
+                    return;
+                }
+
+                if (!AtivarRisk || !_riskOn)
+                {
+                    embeddedControl.SetRiskState(SmartBoletaRiskState.Off, false, "");
+                    return;
+                }
+
+                double pnl = 0.0;
+                var acc = GetSelectedAccount();
+                var pVal = AccountValueProvider.TryGetRealizedPnlUsd(acc, SmartLog);
+                pnl = pVal ?? 0.0;
+
+                bool warn = false;
+
+                if (LimitePerdaUSD > 0 && (-pnl) >= PercentualAviso * LimitePerdaUSD)
+                    warn = true;
+
+                if (LimiteTradesDia > 0 && _riskTrades >= (int)Math.Floor(PercentualAviso * LimiteTradesDia))
+                    warn = true;
+
+                if (LimiteContratosDia > 0 && _riskContracts >= (int)Math.Floor(PercentualAviso * LimiteContratosDia))
+                    warn = true;
+
+                if (LimiteLucroUSD > 0 && pnl >= PercentualAviso * LimiteLucroUSD)
+                    warn = true;
+
+                embeddedControl.SetRiskState(warn ? SmartBoletaRiskState.Pre : SmartBoletaRiskState.Ok, true, warn ? "pré-limite" : "");
+                SmartLog($"ReapplyRiskVisualState: reason={reason} state={(warn ? "Pre" : "Ok")} hardlock={_hardLockActive} riskOn={_riskOn} trades={_riskTrades} contracts={_riskContracts}");
+            }
+            catch (Exception ex)
+            {
+                SmartLog("ReapplyRiskVisualState ex: " + ex.Message);
+            }
         }
 
         public void OpenEndDayDialog()
