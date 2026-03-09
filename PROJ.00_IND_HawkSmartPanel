@@ -565,6 +565,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private bool _beFireRequest = false;
         private bool _beActive = false;
 
+        [NinjaScriptProperty]
         [Display(Name = "Scan interval (seconds)", Order = 2, GroupName = "Debug")]
         public int ScanIntervalSeconds { get; set; } = 30;
         private DateTime _lastScanUtc = DateTime.MinValue;
@@ -762,15 +763,19 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 
+        [NinjaScriptProperty]
         [Display(Name = "ATR Auto (usa TF do gráfico)", Order = 8, GroupName = "ATR")]
         public bool AtrAuto { get; set; } = true;
 
+        [NinjaScriptProperty]
         [Display(Name = "ATR Fixed TF (minutos)", Order = 12, GroupName = "ATR")]
         public int AtrFixedMinutes { get; set; } = 60;
 
+        [NinjaScriptProperty]
         [Display(Name = "ATR Fixed Period", Order = 13, GroupName = "ATR")]
         public int AtrFixedPeriod { get; set; } = 14;
 
+        [NinjaScriptProperty]
         [Display(Name = "ATR Fixed Multiplier", Order = 14, GroupName = "ATR")]
         public double AtrFixedMultiplier { get; set; } = 1.0;
 
@@ -780,15 +785,19 @@ namespace NinjaTrader.NinjaScript.Indicators
             catch { return 0; }
         }
 
+        [NinjaScriptProperty]
         [Display(Name = "Enable diagnostic logging", Order = 1, GroupName = "Debug")]
         public bool EnableDiagnosticLogging { get; set; }
 
+        [NinjaScriptProperty]
         [Display(Name = "Buy hotkey", Order = 1, GroupName = "Hotkeys")]
         public DesiredKey BuyKey { get => buyKey; set { buyKey = value; MapDesiredKeys(); SavePrefs(); } }
 
+        [NinjaScriptProperty]
         [Display(Name = "Sell hotkey", Order = 2, GroupName = "Hotkeys")]
         public DesiredKey SellKey { get => sellKey; set { sellKey = value; MapDesiredKeys(); SavePrefs(); } }
 
+        [NinjaScriptProperty]
         [Display(Name = "Stop order type", Order = 1, GroupName = "Order management")]
         public StopOrderTypes StopOrderType
         {
@@ -796,89 +805,117 @@ namespace NinjaTrader.NinjaScript.Indicators
             set { stopOrderType = value; orderType = (stopOrderType == StopOrderTypes.StopLimit) ? OrderType.StopLimit : OrderType.StopMarket; }
         }
 
+        [NinjaScriptProperty]
         [Display(Name = "ATR Period (auto mode)", Order = 10, GroupName = "ATR")]
         public int AtrPeriod { get => atrPeriod; set => atrPeriod = Math.Max(1, value); }
 
+        [NinjaScriptProperty]
         [Display(Name = "ATR Multiplier (auto mode)", Order = 11, GroupName = "ATR")]
         public double AtrMultiplier { get => atrMultiplier; set => atrMultiplier = Math.Max(0.0, value); }
 
+        [NinjaScriptProperty]
         [Display(Name = "BreakEven ticks", Order = 20, GroupName = "BE", Description = "Ticks a favor para puxar o stop para o breakeven.")]
         public int BreakEvenTicks { get; set; } = 10;
 
+        [NinjaScriptProperty]
         [Display(Name = "Min favor factor (ex: 2 => 2x BE ticks)", Order = 21, GroupName = "BE")]
         public double MinFavorFactor { get; set; } = 2.0;
 
+        [NinjaScriptProperty]
         [Display(Name = "Overlay EndDay", Order = 100, GroupName = "EndDay Overlay")]
         public bool EnableOverlayOnEndDay { get; set; } = true;
 
+        [NinjaScriptProperty]
         [Display(Name = "Overlay Opacity", Order = 101, GroupName = "EndDay Overlay")]
         public double OverlayOpacity { get; set; } = 0.85;
 
+        [NinjaScriptProperty]
         [Display(Name = "Overlay Duration (s)", Order = 102, GroupName = "EndDay Overlay")]
         public int OverlayDurationSeconds { get; set; } = 90;
 
+        [NinjaScriptProperty]
         [Display(Name = "Overlay Message", Order = 103, GroupName = "EndDay Overlay")]
         public string OverlayMessage { get; set; } = "Atenção: horário limite atingido. Envio de ordens bloqueado.";
 
         // RISK params (português)
+        [NinjaScriptProperty]
         [Display(Name = "Ativar Risk", Order = 200, GroupName = "Risk")]
         public bool AtivarRisk { get; set; } = true;
 
+        [NinjaScriptProperty]
         [Display(Name = "Limite perda diária (USD)", Order = 201, GroupName = "Risk")]
         public double LimitePerdaUSD { get; set; } = 500.0;
 
+        [NinjaScriptProperty]
         [Display(Name = "Limite trades diário", Order = 202, GroupName = "Risk", Description = "Conta 1 trade quando a posição do instrumento volta a FLAT (round-trip).")]
         public int LimiteTradesDia { get; set; } = 10;
 
+        [NinjaScriptProperty]
         [Display(Name = "Limite contratos diário", Order = 203, GroupName = "Risk", Description = "Volume diário (soma de contratos executados).")]
         public int LimiteContratosDia { get; set; } = 50;
 
+        [NinjaScriptProperty]
         [Display(Name = "Limite lucro diária (USD)", Order = 204, GroupName = "Risk")]
         public double LimiteLucroUSD { get; set; } = 1000.0;
 
+        [NinjaScriptProperty]
         [Display(Name = "Bloquear ao atingir lucro", Order = 205, GroupName = "Risk")]
         public bool BloquearAoAtingirLucro { get; set; } = false;
 
+        [NinjaScriptProperty]
         [Display(Name = "Escopo Risk", Order = 206, GroupName = "Risk")]
         public SRiskScope EscopoRisk { get; set; } = SRiskScope.EsteGrafico;
 
+        [NinjaScriptProperty]
         [Display(Name = "Aviso em % do limite", Order = 207, GroupName = "Risk")]
         public double PercentualAviso { get; set; } = 0.8;
 
+        [NinjaScriptProperty]
         [Display(Name = "Duração overlay Risk (s)", Order = 208, GroupName = "Risk")]
         public int RiskOverlaySeconds { get; set; } = 90;
 
+        [NinjaScriptProperty]
         [Display(Name = "Msg overlay risco", Order = 209, GroupName = "Risk")]
         public string RiskOverlayMessage { get; set; } = "Atenção: limite diário atingido.";
 
+        [NinjaScriptProperty]
         [Display(Name = "Msg overlay lucro", Order = 210, GroupName = "Risk")]
         public string RiskOverlayProfitMessage { get; set; } = "Limite de lucro diário atingido.";
 
+        [NinjaScriptProperty]
         [Display(Name = "Máx contratos por trade", Order = 211, GroupName = "Risk", Description = "Bloqueia entradas/scale-in que fariam a posição exceder este total (0 = desativado).")]
         public int MaxContractsPerTrade { get; set; } = 0;
 
+        [NinjaScriptProperty]
         [Display(Name = "Manter overlay de RISK até 00:00", Order = 212, GroupName = "Risk", Description = "Se ligado, quando o RISK bloquear o envio, o overlay ficará ativo até o reset da meia-noite. Default: desligado.")]
         public bool RiskOverlayUntilMidnight { get; set; } = false;
 
         // Decorator display
+        [NinjaScriptProperty]
         [Display(Name = "Symbol (decorator)", GroupName = "Order Decorator", Order = 300)]
         public string DecorSymbol { get; set; } = "$";
 
+        [NinjaScriptProperty]
         [Display(Name = "Show ticks", GroupName = "Order Decorator", Order = 301)]
         public bool DecorDisplayTicks { get; set; } = true;
 
+        [NinjaScriptProperty]
         [Display(Name = "Show points", GroupName = "Order Decorator", Order = 302)]
         public bool DecorDisplayPoints { get; set; } = true;
 
+        [NinjaScriptProperty]
         [Display(Name = "Show currency", GroupName = "Order Decorator", Order = 303)]
         public bool DecorDisplayCurrency { get; set; } = true;
 
+        [NinjaScriptProperty]
         [Display(Name = "Show % account", GroupName = "Order Decorator", Order = 304)]
         public bool DecorDisplayPercent { get; set; } = true;
 
+        [NinjaScriptProperty]
         [Display(Name = "Decorator Gap (px)", GroupName = "Order Decorator", Order = 305)]
         public int DecorFlexGapWidth { get; set; } = 90;
 
+        [NinjaScriptProperty]
         [Display(Name = "Force decorations (ignore main toggle)", GroupName = "Order Decorator", Order = 306)]
         public bool ForceDecorationsOverride { get; set; } = false;
 
