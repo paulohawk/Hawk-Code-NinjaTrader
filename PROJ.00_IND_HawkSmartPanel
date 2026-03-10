@@ -611,6 +611,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private AccountSelector accountSelector;
         private Account selectedAccountCached;
         private Account _pnlSubscribedAccount;
+        private double? _lastRealizedPnlUsd;
 
         // Flag de limpeza pós-flat
         private bool _flatCleanupDone = false;
@@ -1599,20 +1600,43 @@ namespace NinjaTrader.NinjaScript.Indicators
             return AccountValueProvider.TryGetAccountValueUsd(acc, item, SmartLog);
         }
 
-        private void UpdatePnlDisplay()
+        private double? CaptureRealizedPnlFromSelectedAccount(string reason)
         {
             try
             {
                 Account acc = GetSelectedAccount();
                 double? realized = AccountValueProvider.TryGetRealizedPnlUsd(acc, SmartLog);
-                SmartLog($"PnL check: account={(acc?.Name ?? "null")} realized={(realized.HasValue ? realized.Value.ToString("N2") : "null")}");
+                _lastRealizedPnlUsd = realized;
+                SmartLog($"PnL check: account={(acc?.Name ?? "null")} realized={(realized.HasValue ? realized.Value.ToString("N2") : "null")} reason={reason}");
+                return realized;
+            }
+            catch (Exception ex)
+            {
+                SmartLog("CaptureRealizedPnlFromSelectedAccount ex: " + ex.Message);
+                return null;
+            }
+        }
 
+        private void ApplyPnlToEmbeddedControl(double? realized, string reason)
+        {
+            try
+            {
                 ChartControl?.Dispatcher?.BeginInvoke(new Action(() =>
                 {
                     embeddedControl?.SetPnl(realized);
+                    SmartLog($"PnL display update: value={(realized.HasValue ? realized.Value.ToString("N2") : "null")} reason={reason}");
                 }));
             }
-            catch (Exception ex) { SmartLog("UpdatePnlDisplay ex: " + ex.Message); }
+            catch (Exception ex)
+            {
+                SmartLog("ApplyPnlToEmbeddedControl ex: " + ex.Message);
+            }
+        }
+
+        private void UpdatePnlDisplay(string reason = "refresh")
+        {
+            var realized = CaptureRealizedPnlFromSelectedAccount(reason);
+            ApplyPnlToEmbeddedControl(realized, reason);
         }
 
         private void BindPnlAccountListener(bool forceRefresh, string reason)
@@ -1670,10 +1694,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (e == null || e.AccountItem != AccountItem.RealizedProfitLoss) return;
 
                 double pnl = e.Value;
-                ChartControl?.Dispatcher?.BeginInvoke(new Action(() =>
-                {
-                    embeddedControl?.SetPnl(pnl);
-                }));
+                _lastRealizedPnlUsd = pnl;
+                ApplyPnlToEmbeddedControl(pnl, "account_item_update");
             }
             catch (Exception ex)
             {
@@ -2319,6 +2341,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 UpdateEmbeddedForSelectedTab();
                 try { RefreshPositionAndOrders(); } catch { }
                 try { RefreshRrDisplay(); } catch { }
+                try { UpdatePnlDisplay("insert_embedded"); } catch { }
                 try { StartRrTimer(); } catch { }
 
                 // ✅ NOVO: reset do tracking ao criar UI (garante conta atual)
@@ -2693,10 +2716,10 @@ private void RunPeriodicRefresh()
 
         _lastScanUtc = now;
 
-        if (embeddedControl == null) return;
-
         BindPnlAccountListener(false, "periodic_refresh");
-        UpdatePnlDisplay();
+        UpdatePnlDisplay("periodic_refresh");
+
+        if (embeddedControl == null) return;
 
         RefreshRrDisplay();
         RefreshPositionAndOrders();
