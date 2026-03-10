@@ -557,7 +557,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         public TimeSpan? EndDayTime { get; set; } = null;
         public SBEndDayScope EndDayScope { get; set; } = SBEndDayScope.ThisChartOnly;
 
-        public string BoletaId { get; private set; }
+        private string BoletaId;
 
         private EndDayOverlayController overlayController;
 
