@@ -3384,7 +3384,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 var bodyText = new TextBlock
                 {
                     Text = "Você ativou esta automação fora do horário operacional recomendado.\n\n" +
-                           "Para máxima estabilidade, recomenda-se manter a estratégia ativa antes das 11:00 (Brasília) ou utilizar VPS dedicada.\n\n" +
+                           "Para máxima estabilidade, recomenda-se manter a estratégia ativa antes das 10:00 (Brasília) ou utilizar VPS dedicada.\n\n" +
                            "Ao prosseguir, você assume os riscos operacionais desta decisão.",
                     FontSize = 16,
                     Foreground = Brushes.White,
