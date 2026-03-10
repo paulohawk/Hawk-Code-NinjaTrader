@@ -797,27 +797,86 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         [NinjaScriptProperty]
         [Display(Name = "Buy hotkey", Order = 1, GroupName = "Hotkeys")]
-        public DesiredKey BuyKey { get => buyKey; set { buyKey = value; MapDesiredKeys(); SavePrefs(); } }
+        public DesiredKey BuyKey
+        {
+            get => buyKey;
+            set
+            {
+                try
+                {
+                    buyKey = value;
+                    MapDesiredKeys();
+                    SavePrefs();
+                }
+                catch (Exception ex)
+                {
+                    SmartLog("[RESTORE][PROP][SET] BuyKey ex: " + ex.Message);
+                }
+            }
+        }
 
         [NinjaScriptProperty]
         [Display(Name = "Sell hotkey", Order = 2, GroupName = "Hotkeys")]
-        public DesiredKey SellKey { get => sellKey; set { sellKey = value; MapDesiredKeys(); SavePrefs(); } }
+        public DesiredKey SellKey
+        {
+            get => sellKey;
+            set
+            {
+                try
+                {
+                    sellKey = value;
+                    MapDesiredKeys();
+                    SavePrefs();
+                }
+                catch (Exception ex)
+                {
+                    SmartLog("[RESTORE][PROP][SET] SellKey ex: " + ex.Message);
+                }
+            }
+        }
 
         [NinjaScriptProperty]
         [Display(Name = "Stop order type", Order = 1, GroupName = "Order management")]
         public StopOrderTypes StopOrderType
         {
             get => stopOrderType;
-            set { stopOrderType = value; orderType = (stopOrderType == StopOrderTypes.StopLimit) ? OrderType.StopLimit : OrderType.StopMarket; }
+            set
+            {
+                try
+                {
+                    stopOrderType = value;
+                    orderType = (stopOrderType == StopOrderTypes.StopLimit) ? OrderType.StopLimit : OrderType.StopMarket;
+                }
+                catch (Exception ex)
+                {
+                    SmartLog("[RESTORE][PROP][SET] StopOrderType ex: " + ex.Message);
+                }
+            }
         }
 
         [NinjaScriptProperty]
         [Display(Name = "ATR Period (auto mode)", Order = 10, GroupName = "ATR")]
-        public int AtrPeriod { get => atrPeriod; set => atrPeriod = Math.Max(1, value); }
+        public int AtrPeriod
+        {
+            get => atrPeriod;
+            set
+            {
+                try { atrPeriod = Math.Max(1, value); }
+                catch (Exception ex) { SmartLog("[RESTORE][PROP][SET] AtrPeriod ex: " + ex.Message); }
+            }
+        }
 
         [NinjaScriptProperty]
         [Display(Name = "ATR Multiplier (auto mode)", Order = 11, GroupName = "ATR")]
-        public double AtrMultiplier { get => atrMultiplier; set => atrMultiplier = Math.Max(0.0, value); }
+        public double AtrMultiplier
+        {
+            get => atrMultiplier;
+            set
+            {
+                try { atrMultiplier = Math.Max(0.0, value); }
+                catch (Exception ex) { SmartLog("[RESTORE][PROP][SET] AtrMultiplier ex: " + ex.Message); }
+            }
+        }
 
         [NinjaScriptProperty]
         [Display(Name = "BreakEven ticks", Order = 20, GroupName = "BE", Description = "Ticks a favor para puxar o stop para o breakeven.")]
@@ -932,8 +991,30 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Browsable(false)]
         public string DecorStopFillBrushSerializable
         {
-            get => Serialize.BrushToString(DecorStopFillBrush);
-            set => DecorStopFillBrush = Serialize.StringToBrush(value);
+            get
+            {
+                try
+                {
+                    return Serialize.BrushToString(DecorStopFillBrush);
+                }
+                catch (Exception ex)
+                {
+                    SmartLog("[RESTORE][BRUSH][GET] DecorStopFillBrushSerializable ex: " + ex.Message);
+                    return string.Empty;
+                }
+            }
+            set
+            {
+                try
+                {
+                    DecorStopFillBrush = Serialize.StringToBrush(value);
+                }
+                catch (Exception ex)
+                {
+                    SmartLog("[RESTORE][BRUSH][SET] DecorStopFillBrushSerializable ex: " + ex.Message + " value=" + (value ?? "null"));
+                    DecorStopFillBrush = CreateDefaultDecorStopFillBrush();
+                }
+            }
         }
 
         [XmlIgnore]
@@ -943,8 +1024,30 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Browsable(false)]
         public string DecorTargetFillBrushSerializable
         {
-            get => Serialize.BrushToString(DecorTargetFillBrush);
-            set => DecorTargetFillBrush = Serialize.StringToBrush(value);
+            get
+            {
+                try
+                {
+                    return Serialize.BrushToString(DecorTargetFillBrush);
+                }
+                catch (Exception ex)
+                {
+                    SmartLog("[RESTORE][BRUSH][GET] DecorTargetFillBrushSerializable ex: " + ex.Message);
+                    return string.Empty;
+                }
+            }
+            set
+            {
+                try
+                {
+                    DecorTargetFillBrush = Serialize.StringToBrush(value);
+                }
+                catch (Exception ex)
+                {
+                    SmartLog("[RESTORE][BRUSH][SET] DecorTargetFillBrushSerializable ex: " + ex.Message + " value=" + (value ?? "null"));
+                    DecorTargetFillBrush = Brushes.DarkGoldenrod;
+                }
+            }
         }
 
         [XmlIgnore]
@@ -954,8 +1057,30 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Browsable(false)]
         public string DecorOutlineBrushSerializable
         {
-            get => Serialize.BrushToString(DecorOutlineBrush);
-            set => DecorOutlineBrush = Serialize.StringToBrush(value);
+            get
+            {
+                try
+                {
+                    return Serialize.BrushToString(DecorOutlineBrush);
+                }
+                catch (Exception ex)
+                {
+                    SmartLog("[RESTORE][BRUSH][GET] DecorOutlineBrushSerializable ex: " + ex.Message);
+                    return string.Empty;
+                }
+            }
+            set
+            {
+                try
+                {
+                    DecorOutlineBrush = Serialize.StringToBrush(value);
+                }
+                catch (Exception ex)
+                {
+                    SmartLog("[RESTORE][BRUSH][SET] DecorOutlineBrushSerializable ex: " + ex.Message + " value=" + (value ?? "null"));
+                    DecorOutlineBrush = Brushes.DimGray;
+                }
+            }
         }
 
         [XmlIgnore]
@@ -965,15 +1090,74 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Browsable(false)]
         public string DecorTextBrushSerializable
         {
-            get => Serialize.BrushToString(DecorTextBrush);
-            set => DecorTextBrush = Serialize.StringToBrush(value);
+            get
+            {
+                try
+                {
+                    return Serialize.BrushToString(DecorTextBrush);
+                }
+                catch (Exception ex)
+                {
+                    SmartLog("[RESTORE][BRUSH][GET] DecorTextBrushSerializable ex: " + ex.Message);
+                    return string.Empty;
+                }
+            }
+            set
+            {
+                try
+                {
+                    DecorTextBrush = Serialize.StringToBrush(value);
+                }
+                catch (Exception ex)
+                {
+                    SmartLog("[RESTORE][BRUSH][SET] DecorTextBrushSerializable ex: " + ex.Message + " value=" + (value ?? "null"));
+                    DecorTextBrush = Brushes.White;
+                }
+            }
+        }
+
+        private Brush CreateDefaultDecorStopFillBrush()
+        {
+            var stopGradient = new LinearGradientBrush
+            {
+                StartPoint = new Point(0, 0),
+                EndPoint = new Point(0, 1)
+            };
+            stopGradient.GradientStops.Add(new GradientStop(Color.FromRgb(130, 130, 130), 0.0));
+            stopGradient.GradientStops.Add(new GradientStop(Color.FromRgb(90, 90, 90), 1.0));
+            return stopGradient;
+        }
+
+        private string SafeRestoreValue(Func<string> getter)
+        {
+            try { return getter(); }
+            catch (Exception ex) { return "<ex:" + ex.Message + ">"; }
+        }
+
+        private void LogRestoreSnapshot(string stage)
+        {
+            SmartLog(
+                $"[RESTORE][SNAPSHOT][{stage}] Name={SafeRestoreValue(() => Name ?? "null")} Description={SafeRestoreValue(() => Description ?? "null")} " +
+                $"Calculate={SafeRestoreValue(() => Calculate.ToString())} IsOverlay={SafeRestoreValue(() => IsOverlay.ToString())} AtrAuto={SafeRestoreValue(() => AtrAuto.ToString())} " +
+                $"AtrFixedMinutes={SafeRestoreValue(() => AtrFixedMinutes.ToString(CultureInfo.InvariantCulture))} AtrFixedPeriod={SafeRestoreValue(() => AtrFixedPeriod.ToString(CultureInfo.InvariantCulture))} " +
+                $"AtrFixedMultiplier={SafeRestoreValue(() => AtrFixedMultiplier.ToString(CultureInfo.InvariantCulture))} EnableDiagnosticLogging={SafeRestoreValue(() => EnableDiagnosticLogging.ToString())} " +
+                $"ScanIntervalSeconds={SafeRestoreValue(() => ScanIntervalSeconds.ToString(CultureInfo.InvariantCulture))} AtivarRisk={SafeRestoreValue(() => AtivarRisk.ToString())} " +
+                $"LimitePerdaUSD={SafeRestoreValue(() => LimitePerdaUSD.ToString(CultureInfo.InvariantCulture))} LimiteTradesDia={SafeRestoreValue(() => LimiteTradesDia.ToString(CultureInfo.InvariantCulture))} " +
+                $"LimiteContratosDia={SafeRestoreValue(() => LimiteContratosDia.ToString(CultureInfo.InvariantCulture))} LimiteLucroUSD={SafeRestoreValue(() => LimiteLucroUSD.ToString(CultureInfo.InvariantCulture))} " +
+                $"BloquearAoAtingirLucro={SafeRestoreValue(() => BloquearAoAtingirLucro.ToString())} EscopoRisk={SafeRestoreValue(() => EscopoRisk.ToString())} " +
+                $"PercentualAviso={SafeRestoreValue(() => PercentualAviso.ToString(CultureInfo.InvariantCulture))} RiskOverlaySeconds={SafeRestoreValue(() => RiskOverlaySeconds.ToString(CultureInfo.InvariantCulture))} " +
+                $"RiskOverlayUntilMidnight={SafeRestoreValue(() => RiskOverlayUntilMidnight.ToString())} StopOrderType={SafeRestoreValue(() => StopOrderType.ToString())} " +
+                $"DecorSymbol={SafeRestoreValue(() => DecorSymbol ?? "null")} DecorDisplayTicks={SafeRestoreValue(() => DecorDisplayTicks.ToString())} DecorDisplayPoints={SafeRestoreValue(() => DecorDisplayPoints.ToString())} " +
+                $"DecorDisplayCurrency={SafeRestoreValue(() => DecorDisplayCurrency.ToString())} DecorDisplayPercent={SafeRestoreValue(() => DecorDisplayPercent.ToString())} " +
+                $"DecorFlexGapWidth={SafeRestoreValue(() => DecorFlexGapWidth.ToString(CultureInfo.InvariantCulture))} ForceDecorationsOverride={SafeRestoreValue(() => ForceDecorationsOverride.ToString())} " +
+                $"EndDayTime={SafeRestoreValue(() => EndDayTime.HasValue ? EndDayTime.Value.ToString(@"hh\\:mm") : "null")} EndDayScope={SafeRestoreValue(() => EndDayScope.ToString())}");
         }
 
         protected override void OnStateChange()
         {
             if (State == State.SetDefaults)
             {
-                SmartLog($"[LIFECYCLE] State={State} ChartKey={GetChartKey()} BoletaId={BoletaId ?? "null"}");
+                SmartLog($"[RESTORE][LIFECYCLE] State={State} ChartKey={GetChartKey()} BoletaId={BoletaId ?? "null"}");
                 Name = "SmartBoletaIndicator";
                 Description = "Hawk - Smart Panel";
                 Calculate = Calculate.OnPriceChange;
@@ -1004,22 +1188,20 @@ namespace NinjaTrader.NinjaScript.Indicators
                 DecorDisplayPercent = true;
                 DecorFlexGapWidth = 90;
 
-                var stopGradient = new LinearGradientBrush
-                {
-                    StartPoint = new Point(0, 0),
-                    EndPoint = new Point(0, 1)
-                };
-                stopGradient.GradientStops.Add(new GradientStop(Color.FromRgb(130, 130, 130), 0.0));
-                stopGradient.GradientStops.Add(new GradientStop(Color.FromRgb(90, 90, 90), 1.0));
-                DecorStopFillBrush = stopGradient;
+                DecorStopFillBrush = CreateDefaultDecorStopFillBrush();
 
                 DecorTargetFillBrush = Brushes.DarkGoldenrod;
                 DecorOutlineBrush = Brushes.DimGray;
                 DecorTextBrush = Brushes.White;
+
+                LogRestoreSnapshot("SetDefaults");
+                SmartLog("[RESTORE] SetDefaults completed.");
             }
             else if (State == State.Configure)
             {
-                SmartLog($"[LIFECYCLE] State={State} ChartKey={GetChartKey()} BoletaId={BoletaId ?? "null"}");
+                SmartLog($"[RESTORE][LIFECYCLE] State={State} ChartKey={GetChartKey()} BoletaId={BoletaId ?? "null"}");
+                SmartLog("[RESTORE] Entering Configure.");
+                LogRestoreSnapshot("Configure");
                 try
                 {
                     int mins = Math.Max(1, AtrFixedMinutes);
@@ -1029,7 +1211,9 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             else if (State == State.DataLoaded)
             {
-                SmartLog($"[LIFECYCLE] State={State} ChartKey={GetChartKey()} BoletaId={BoletaId ?? "null"}");
+                SmartLog($"[RESTORE][LIFECYCLE] State={State} ChartKey={GetChartKey()} BoletaId={BoletaId ?? "null"}");
+                SmartLog("[RESTORE] Entering DataLoaded.");
+                LogRestoreSnapshot("DataLoaded");
                 // ✅ HARDLOCK (higiene): remove locks expirados do arquivo
                 // (não altera o comportamento do Risk ainda)
                 try { HardLock_CleanupExpired(); } catch { }
@@ -1105,17 +1289,17 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             else if (State == State.Historical)
             {
-                SmartLog($"[LIFECYCLE] State={State} ChartKey={GetChartKey()} BoletaId={BoletaId ?? "null"}");
+                SmartLog($"[RESTORE][LIFECYCLE] State={State} ChartKey={GetChartKey()} BoletaId={BoletaId ?? "null"}");
             }
             else if (State == State.Realtime)
             {
-                SmartLog($"[LIFECYCLE] State={State} ChartKey={GetChartKey()} BoletaId={BoletaId ?? "null"}");
+                SmartLog($"[RESTORE][LIFECYCLE] State={State} ChartKey={GetChartKey()} BoletaId={BoletaId ?? "null"}");
                 ComputeOrderDecorations();
                 ForceRefreshDecorations();
             }
             else if (State == State.Terminated)
             {
-                SmartLog($"[LIFECYCLE] Terminated ChartKey={GetChartKey()} BoletaId={BoletaId ?? "null"}");
+                SmartLog($"[RESTORE][LIFECYCLE] State={State} ChartKey={GetChartKey()} BoletaId={BoletaId ?? "null"}");
                 SmartLog("Terminated: cleaning up.");
                 StopAttachTimer();
                 StopDecoTimer();
