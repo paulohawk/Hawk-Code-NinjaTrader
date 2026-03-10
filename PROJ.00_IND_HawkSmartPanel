@@ -1730,7 +1730,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                     ChartControl?.Dispatcher?.BeginInvoke(new Action(() =>
                     {
-                        embeddedControl?.SetRr(stopTicks, true);
+                        if (embeddedControl != null && embeddedControl.IsRrSizingEnabled())
+                            embeddedControl.SetRr(stopTicks, true);
+                        else
+                            embeddedControl?.SetRr(null, true);
                     }));
                 }
                 else
@@ -2367,19 +2370,22 @@ namespace NinjaTrader.NinjaScript.Indicators
                 }
 
                 try { StopRrTimer(); } catch { }
+                try { StopAttachTimer(); } catch { }
 
                 if (chartTraderGrid != null && embeddedWrapper != null)
                 {
                     try { chartTraderGrid.Children.Remove(embeddedWrapper); } catch { }
                     try { if (addedRow != null) chartTraderGrid.RowDefinitions.Remove(addedRow); } catch { }
                 }
-                else if (embeddedWrapper != null)
+
+                if (embeddedWrapper != null)
                 {
                     var parent = embeddedWrapper.Parent as Panel;
                     if (parent != null) parent.Children.Remove(embeddedWrapper);
                     else if (embeddedWrapper.Parent is ContentControl cc) cc.Content = null;
                 }
 
+                embeddedControl = null;
                 embeddedWrapper = null;
                 addedRow = null;
                 panelActive = false;
@@ -2902,7 +2908,17 @@ private void ApplyAtrValues(int atrTicks, double atrDollarPerContract, double ti
     _lastAtrTicks = atrTicks;
     _lastAtrDollarPerContract = atrDollarPerContract;
 
-    try { ChartControl?.Dispatcher?.BeginInvoke(new Action(() => embeddedControl?.SetAtrValue(atrTicks, atrDollarPerContract))); } catch { }
+    try
+    {
+        ChartControl?.Dispatcher?.BeginInvoke(new Action(() =>
+        {
+            if (embeddedControl != null && embeddedControl.IsAtrEnabled())
+                embeddedControl.SetAtrValue(atrTicks, atrDollarPerContract);
+            else
+                embeddedControl?.SetAtrValue(0, 0.0);
+        }));
+    }
+    catch { }
 
     try
     {
@@ -5795,6 +5811,8 @@ public class SmartBoletaEmbeddedControl : Grid
     public void SetRrSizingState(bool on)
     {
         _rrSizingEnabled = on;
+        if (!on && _rrDisplayText != null)
+            _rrDisplayText.Text = "-";
         ApplyRrVisuals();
         UpdateBulletsAfterStateChange();
     }
@@ -6467,6 +6485,14 @@ public class SmartBoletaEmbeddedControl : Grid
 
                 _rrFeedAvailable = hasFeed && ticks.HasValue && ticks.Value > 0;
 
+                if (!_rrSizingEnabled)
+                {
+                    _rrDisplayText.Text = "-";
+                    _rrDisplayText.Foreground = LightGrayBrush;
+                    ApplyRrVisuals();
+                    return;
+                }
+
                 if (!_rrFeedAvailable)
                 {
                     _rrDisplayText.Text = "-";
@@ -6968,7 +6994,10 @@ public void SetAtrState(bool on)
         _tbAtrToggle.Foreground = on ? BronzeBrush : Brushes.Gray;
         SetQtyButtonsEnabled(!on);
         if (!on)
+        {
+            SetAtrValue(0, 0.0);
             _parent.ClearAtrDrawsFromControl();
+        }
         UpdateBulletsAfterStateChange();
     }
     catch { }
