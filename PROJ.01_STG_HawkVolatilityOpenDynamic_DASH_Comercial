@@ -2055,7 +2055,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         // OVERLAY TIME (fixed BRT window)
         // ============================
         private static readonly TimeSpan OverlayAnchorOffset = new TimeSpan(0, 29, 30);
-        private static readonly TimeSpan OverlayStartTime = new TimeSpan(11, 0, 0);
+        private static readonly TimeSpan OverlayStartTime = new TimeSpan(10, 0, 0);
         private static readonly TimeSpan OverlayEndTime = new TimeSpan(20, 0, 0);
         // Overlay enable latch (per trading day)
         private DateTime overlayEnableTimeLocal = Core.Globals.MinDate;
