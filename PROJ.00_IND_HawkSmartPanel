@@ -532,6 +532,9 @@ namespace NinjaTrader.NinjaScript.Indicators
         private bool _rrFeedAvailable = false;
         private double _rrLastEntryPrice = double.NaN;
         private double _rrLastStopPrice = double.NaN;
+        private int _lastRrQtyLogged = -1;
+        private int _lastRrTicksLogged = -1;
+        private double _lastRrRiskLogged = -1.0;
 
         // Tags do desenho ATR
         private string _atrLineTag;
@@ -1734,7 +1737,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         public bool ApplyRrSizingWithValidationProxy(int rrTicks, double rrDollarPerContract, bool fromToggle)
         {
-            return ApplyAtrSizingWithValidation(rrTicks, rrDollarPerContract, fromToggle);
+            return ApplyAtrSizingWithValidation(rrTicks, rrDollarPerContract, fromToggle, "RR");
         }
 
         internal void DisableAtrSizingFromRr()
@@ -3115,10 +3118,15 @@ private void RefreshPositionAndOrders()
 
 private void ApplyAtrSizing(int atrTicks, double atrDollarPerContract)
 {
-    ApplyAtrSizingWithValidation(atrTicks, atrDollarPerContract, fromToggle: false);
+    ApplyAtrSizingWithValidation(atrTicks, atrDollarPerContract, fromToggle: false, sizingModePrefix: "ATR");
 }
 
 private bool ApplyAtrSizingWithValidation(int atrTicks, double atrDollarPerContract, bool fromToggle)
+{
+    return ApplyAtrSizingWithValidation(atrTicks, atrDollarPerContract, fromToggle, "ATR");
+}
+
+private bool ApplyAtrSizingWithValidation(int atrTicks, double atrDollarPerContract, bool fromToggle, string sizingModePrefix)
 {
     try
     {
@@ -3157,13 +3165,31 @@ private bool ApplyAtrSizingWithValidation(int atrTicks, double atrDollarPerContr
 
         // ✅ NOVO: clamp de MaxContractsPerTrade também no sizing (ATR/RR)
         // Observação: este clamp é "só no número", independente da direção; a validação direcional (flip/scale) é no envio da ordem.
-        qty = ClampQtyToMaxContractsPerTradeForSizing(qty, reasonForUser: $"Máx contratos/trade = {MaxContractsPerTrade}. (ATR sizing)");
+        qty = ClampQtyToMaxContractsPerTradeForSizing(qty, reasonForUser: $"Máx contratos/trade = {MaxContractsPerTrade}. ({(string.IsNullOrWhiteSpace(sizingModePrefix) ? "Sizing" : sizingModePrefix.Trim())} sizing)");
+
+        string prefix = string.IsNullOrWhiteSpace(sizingModePrefix) ? "" : (sizingModePrefix.Trim() + " ");
 
         embeddedControl?.SetQty(qty);
         if (wasCappedToMin)
-            embeddedControl?.SetLastOrderInfo($"ATR {atrTicks} ticks -> Qty min 1 (stop <$ por 1C)");
+            embeddedControl?.SetLastOrderInfo($"{prefix}{atrTicks} ticks -> Qty min 1 (stop <$ por 1C)");
         else
-            embeddedControl?.SetLastOrderInfo($"ATR {atrTicks} ticks -> Qty {qty}");
+            embeddedControl?.SetLastOrderInfo($"{prefix}{atrTicks} ticks -> Qty {qty}");
+
+        if (string.Equals(sizingModePrefix, "RR", StringComparison.OrdinalIgnoreCase))
+        {
+            bool rrLogChanged = _lastRrQtyLogged != qty
+                || _lastRrTicksLogged != atrTicks
+                || Math.Abs(_lastRrRiskLogged - atrDollarPerContract) > 0.0001;
+
+            if (rrLogChanged)
+            {
+                var enUs = CultureInfo.GetCultureInfo("en-US");
+                SmartLog($"[SmartBoleta][RR] ticks={atrTicks} risk={atrDollarPerContract.ToString("C2", enUs)} qty={qty}");
+                _lastRrQtyLogged = qty;
+                _lastRrTicksLogged = atrTicks;
+                _lastRrRiskLogged = atrDollarPerContract;
+            }
+        }
 
         SavePrefs();
         return true;
