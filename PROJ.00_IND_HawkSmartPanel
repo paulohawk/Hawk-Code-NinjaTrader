@@ -530,6 +530,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         private int _lastRrTicks = 0;
         private double _lastRrDollarPerContract = 0.0;
         private bool _rrFeedAvailable = false;
+        private bool _rrFeedDetected = false;
+        private int _rrTicks = 0;
+        private double _rrDollarPerContract = 0.0;
+        private int _rrFeedKeepAliveCycles = 0;
+        private const int RrFeedGraceCycles = 4;
         private double _rrLastEntryPrice = double.NaN;
         private double _rrLastStopPrice = double.NaN;
         private int _lastRrQtyLogged = -1;
@@ -1724,38 +1729,52 @@ namespace NinjaTrader.NinjaScript.Indicators
                     }
                     catch { }
 
-                    _rrFeedAvailable = true;
-                    _lastRrTicks = stopTicks;
-                    _lastRrDollarPerContract = stopTicks * tickValue;
+                    _rrFeedDetected = true;
+                    _rrTicks = stopTicks;
+                    _rrDollarPerContract = stopTicks * tickValue;
+                    _rrFeedKeepAliveCycles = RrFeedGraceCycles;
+
+                    _lastRrTicks = _rrTicks;
+                    _lastRrDollarPerContract = _rrDollarPerContract;
 
                     try { SmartLog($"[SmartBoleta][RR] RR feed accepted ticks={stopTicks}"); } catch { }
 
                     _rrLastEntryPrice = entryPrice;
                     _rrLastStopPrice = stopPrice;
-
-                    ChartControl?.Dispatcher?.BeginInvoke(new Action(() =>
-                    {
-                        if (embeddedControl != null && embeddedControl.IsRrSizingEnabled())
-                            embeddedControl.SetRr(stopTicks, true);
-                        else
-                            embeddedControl?.SetRr(null, true);
-                    }));
                 }
                 else
                 {
                     try { SmartLog("[SmartBoleta][RR] No valid RR tool detected"); } catch { }
 
-                    _rrFeedAvailable = false;
-                    _lastRrTicks = 0;
-                    _lastRrDollarPerContract = 0.0;
-                    _rrLastEntryPrice = double.NaN;
-                    _rrLastStopPrice = double.NaN;
-
-                    ChartControl?.Dispatcher?.BeginInvoke(new Action(() =>
+                    if (_rrFeedKeepAliveCycles > 0 && _rrTicks > 0 && _rrDollarPerContract > 0)
                     {
-                        embeddedControl?.SetRr(null, false);
-                    }));
+                        _rrFeedKeepAliveCycles--;
+                        _rrFeedDetected = true;
+                        _lastRrTicks = _rrTicks;
+                        _lastRrDollarPerContract = _rrDollarPerContract;
+                        try { SmartLog($"[SmartBoleta][RR] Keeping last RR feed alive cyclesLeft={_rrFeedKeepAliveCycles} ticks={_rrTicks}"); } catch { }
+                    }
+                    else
+                    {
+                        _rrFeedDetected = false;
+                        _rrTicks = 0;
+                        _rrDollarPerContract = 0.0;
+                        _lastRrTicks = 0;
+                        _lastRrDollarPerContract = 0.0;
+                        _rrFeedKeepAliveCycles = 0;
+                        _rrLastEntryPrice = double.NaN;
+                        _rrLastStopPrice = double.NaN;
+                    }
                 }
+
+                bool hasFeed = _rrFeedDetected && _rrTicks > 0 && _rrDollarPerContract > 0;
+                _rrFeedAvailable = hasFeed;
+                int? displayTicks = hasFeed ? (int?)_rrTicks : null;
+
+                ChartControl?.Dispatcher?.BeginInvoke(new Action(() =>
+                {
+                    embeddedControl?.SetRr(displayTicks, hasFeed);
+                }));
             }
             catch (Exception ex)
             {
@@ -1868,6 +1887,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 NinjaTrader.NinjaScript.DrawingTools.RiskReward best = null;
                 DateTime bestTime = DateTime.MinValue;
                 int bestSlot = int.MinValue;
+                double bestDist = 0.0;
                 int totalObjects = 0;
                 int rrObjects = 0;
 
@@ -1902,8 +1922,22 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                     DateTime t = DateTime.MinValue;
                     int slot = int.MinValue;
+                    double ep = 0.0;
+                    double sp = 0.0;
 
                     try { t = rr.EntryAnchor?.Time ?? DateTime.MinValue; } catch { }
+                    try { ep = rr.EntryAnchor?.Price ?? 0.0; } catch { }
+                    try { sp = rr.RiskAnchor?.Price ?? 0.0; } catch { }
+
+                    if (t == DateTime.MinValue)
+                        continue;
+
+                    if (Math.Abs(ep) <= double.Epsilon || Math.Abs(sp) <= double.Epsilon)
+                        continue;
+
+                    double dist = Math.Abs(ep - sp);
+                    if (dist <= double.Epsilon)
+                        continue;
 
                     // SlotIndex varia por build (int?, int, etc). Converter de forma robusta.
                     try
@@ -1919,12 +1953,15 @@ namespace NinjaTrader.NinjaScript.Indicators
                     }
                     catch { slot = int.MinValue; }
 
-                    bool better = (t > bestTime) || (t == bestTime && slot > bestSlot);
+                    bool better = (t > bestTime)
+                                  || (t == bestTime && dist > bestDist)
+                                  || (t == bestTime && Math.Abs(dist - bestDist) <= double.Epsilon && slot > bestSlot);
                     if (best == null || better)
                     {
                         best = rr;
                         bestTime = t;
                         bestSlot = slot;
+                        bestDist = dist;
                     }
                 }
 
@@ -1933,24 +1970,21 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (best == null)
                     return false;
 
-                double ep = 0.0, sp = 0.0;
-                try { ep = best.EntryAnchor?.Price ?? 0.0; } catch { }
-                try { sp = best.RiskAnchor?.Price ?? 0.0; } catch { }
+                double bestEp = 0.0, bestSp = 0.0;
+                try { bestEp = best.EntryAnchor?.Price ?? 0.0; } catch { }
+                try { bestSp = best.RiskAnchor?.Price ?? 0.0; } catch { }
 
-                try { SmartLog($"[SmartBoleta][RR] entry={ep} stop={sp}"); } catch { }
+                try { SmartLog($"[SmartBoleta][RR] entry={bestEp} stop={bestSp}"); } catch { }
 
-                if (Math.Abs(ep) <= double.Epsilon || Math.Abs(sp) <= double.Epsilon)
-                    return false;
+                double bestDistance = Math.Abs(bestEp - bestSp);
+                if (bestDistance <= double.Epsilon) return false;
 
-                double dist = Math.Abs(ep - sp);
-                if (dist <= double.Epsilon) return false;
-
-                int ticks = (int)Math.Round(dist / tickSize);
+                int ticks = (int)Math.Round(bestDistance / tickSize);
                 try { SmartLog($"[SmartBoleta][RR] ticksCalculated={ticks}"); } catch { }
                 if (ticks <= 0) return false;
 
-                entryPrice = ep;
-                stopPrice = sp;
+                entryPrice = bestEp;
+                stopPrice = bestSp;
                 stopTicks = ticks;
                 return true;
             }
@@ -5773,6 +5807,7 @@ public class SmartBoletaEmbeddedControl : Grid
     private TextBlock _tbHotkeyInfo;
     private TextBlock _tbHotkeyPressed;
     private string _generalMessage = "";
+    private string _headerMessageOwner = "";
 
     // ✅ cache de hotkeys (pra popup e consistência)
     private string _buyHotkeyLabel = "LeftShift";
@@ -5831,11 +5866,49 @@ public class SmartBoletaEmbeddedControl : Grid
     public bool IsOnClickEnabled() => _onClickEnabled;
     public bool IsRrSizingEnabled() => _rrSizingEnabled;
 
+    private void SetHeaderMessage(string owner, string message)
+    {
+        try
+        {
+            _headerMessageOwner = owner ?? "";
+            _generalMessage = message ?? "";
+            if (_tbHotkeyPressed != null)
+            {
+                _tbHotkeyPressed.Text = _generalMessage;
+                _tbHotkeyPressed.Foreground = BronzeBrush;
+            }
+            UpdateTopInfoVisibility();
+        }
+        catch { }
+    }
+
+    private void ClearHeaderMessage(string owner)
+    {
+        try
+        {
+            if (!string.Equals(_headerMessageOwner ?? "", owner ?? "", StringComparison.Ordinal))
+                return;
+
+            _headerMessageOwner = "";
+            _generalMessage = "";
+            if (_tbHotkeyPressed != null)
+                _tbHotkeyPressed.Text = "";
+            UpdateTopInfoVisibility();
+        }
+        catch { }
+    }
+
     public void SetRrSizingState(bool on)
     {
         _rrSizingEnabled = on;
         if (!on && _rrDisplayText != null)
             _rrDisplayText.Text = "-";
+
+        if (on)
+            SetHeaderMessage("RR", "RR ON");
+        else
+            ClearHeaderMessage("RR");
+
         ApplyRrVisuals();
         UpdateBulletsAfterStateChange();
     }
@@ -6367,6 +6440,7 @@ public class SmartBoletaEmbeddedControl : Grid
 
                 _rrSizingEnabled = true;
                 SetQtyButtonsEnabled(false);
+                SetHeaderMessage("RR", "RR ON");
                 ApplyRrVisuals();
                 _parent.SavePrefs();
                 return;
@@ -6374,6 +6448,7 @@ public class SmartBoletaEmbeddedControl : Grid
 
             _rrSizingEnabled = false;
             SetQtyButtonsEnabled(true);
+            ClearHeaderMessage("RR");
             ApplyRrVisuals();
             _parent.SavePrefs();
         }
@@ -6523,22 +6598,25 @@ public class SmartBoletaEmbeddedControl : Grid
 
                     if (_rrSizingEnabled)
                     {
-                        // se o RR sumiu enquanto ON, desliga e libera qty (Indicator também mostra popup e salva)
+                        // se o RR sumiu enquanto ON, desliga e libera qty
                         _rrSizingEnabled = false;
                         SetQtyButtonsEnabled(true);
+                        ClearHeaderMessage("RR");
                     }
 
                     ApplyRrVisuals();
                     return;
                 }
 
-                int rrTicks = _parent.LastRrTicks();
+                int rrTicks = ticks ?? 0;
                 double rrDollarPerContract = _parent.LastRrDollarPerContract();
 
                 var enUs = CultureInfo.GetCultureInfo("en-US");
                 string money = rrDollarPerContract > 0 ? rrDollarPerContract.ToString("C2", enUs) : "-";
 
                 _rrDisplayText.Text = $"{rrTicks} ticks / {money} (1C)";
+                if (_rrSizingEnabled)
+                    SetHeaderMessage("RR", _rrDisplayText.Text);
                 ApplyRrVisuals();
             }
             catch { }
@@ -6596,13 +6674,7 @@ public class SmartBoletaEmbeddedControl : Grid
         {
             try
             {
-                _generalMessage = info ?? "";
-                if (_tbHotkeyPressed != null)
-                {
-                    _tbHotkeyPressed.Text = _generalMessage;
-                    _tbHotkeyPressed.Foreground = BronzeBrush;
-                }
-                UpdateTopInfoVisibility();
+                SetHeaderMessage("System", info ?? "");
             }
             catch { }
         }
@@ -6798,6 +6870,10 @@ private void ToggleOnClick()
     _bulletOnClick.Fill = _onClickEnabled ? BronzeBrush : InactiveBulletBrush;
     _parent.SetTradingFromChartEnabled(_onClickEnabled);
     _parent.SmartLog($"OnClick toggled {(_onClickEnabled ? "On" : "Off")}");
+    if (_onClickEnabled)
+        SetHeaderMessage("OnClick", "OnClick ON - clique no gráfico");
+    else
+        ClearHeaderMessage("OnClick");
     UpdateBulletsAfterStateChange();
     UpdateTopInfoVisibility();
 
@@ -6829,6 +6905,7 @@ private void ToggleAtr()
         _tbAtrToggle.Text = "On";
         _tbAtrToggle.Foreground = BronzeBrush;
         SetQtyButtonsEnabled(false);
+        SetHeaderMessage("ATR", "ATR ON");
     }
     else
     {
@@ -6836,6 +6913,7 @@ private void ToggleAtr()
         _tbAtrToggle.Foreground = Brushes.Gray;
         SetQtyButtonsEnabled(true);
         _parent.ClearAtrDrawsFromControl();
+        ClearHeaderMessage("ATR");
         _parent.SmartLog("ATR toggled Off");
     }
 
@@ -7020,6 +7098,11 @@ public void SetAtrState(bool on)
         {
             SetAtrValue(0, 0.0);
             _parent.ClearAtrDrawsFromControl();
+            ClearHeaderMessage("ATR");
+        }
+        else
+        {
+            SetHeaderMessage("ATR", "ATR ON");
         }
         UpdateBulletsAfterStateChange();
     }
@@ -7047,6 +7130,11 @@ public void SetOnClickState(bool on)
         _tbOnClickToggle.Text = on ? "On" : "Off";
         _tbOnClickToggle.Foreground = on ? BronzeBrush : Brushes.Gray;
         _bulletOnClick.Fill = on ? BronzeBrush : InactiveBulletBrush;
+
+        if (on)
+            SetHeaderMessage("OnClick", "OnClick ON - clique no gráfico");
+        else
+            ClearHeaderMessage("OnClick");
 
         UpdateTopInfoVisibility();
         UpdateBulletsAfterStateChange();
