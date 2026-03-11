@@ -4567,9 +4567,21 @@ private void EnsureRiskResetDaily()
                     return;
                 }
 
-                if (breachLoss || breachTrades || breachContracts)
+                if (breachLoss)
                 {
-                    TriggerRiskBlock("Limite diário atingido.", RiskOverlayMessage, true);
+                    TriggerRiskBlock("Limite diário de perda atingido.", "Limite diário de perda atingido", true);
+                    return;
+                }
+
+                if (breachTrades)
+                {
+                    TriggerRiskBlock("Limite diário de trades atingido.", "Limite diário de trades atingido", true);
+                    return;
+                }
+
+                if (breachContracts)
+                {
+                    TriggerRiskBlock("Limite diário de contratos atingido.", "Limite diário de contratos atingido", true);
                     return;
                 }
 
@@ -4577,7 +4589,7 @@ private void EnsureRiskResetDaily()
                 {
                     if (BloquearAoAtingirLucro)
                     {
-                        TriggerRiskBlock("Limite de lucro diário atingido.", RiskOverlayProfitMessage, true);
+                        TriggerRiskBlock("Limite diário de lucro atingido.", "Limite diário de lucro atingido", true);
                     }
                     else
                     {
