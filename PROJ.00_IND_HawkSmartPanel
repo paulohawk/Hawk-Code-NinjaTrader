@@ -4665,6 +4665,20 @@ private void EnsureRiskResetDaily()
             _mainToggleLockedByRisk = lockMain;
             SmartLog("RISK BLOQUEADO: " + logMsg + $" até {_riskBlockedUntil:HH:mm}");
 
+            if (!_riskOverlayShown)
+            {
+                overlayController?.EnsureOverlayShown(OverlayOpacity, GetRiskOverlayDurationSeconds(), overlayMsg);
+
+                // Ao aparecer overlay (qualquer situação), forçamos o botão MAIN como OFF (somente visual).
+                ForceMainToggleOffDueToOverlay();
+
+                _riskOverlayShown = true;
+                _riskOverlayArmed = false;
+                _riskOverlayPendingMessage = null;
+
+                try { SmartLog("[TRACE][RiskBlock] overlay shown at block trigger"); } catch { }
+            }
+
             // =========================================================
             // ✅ HARDLOCK: persistir no arquivo + atualizar cache em memória
             // =========================================================
@@ -4727,35 +4741,7 @@ private void EnsureRiskResetDaily()
             bool isFlatScope = true;
             try { isFlatScope = IsFlatForRiskScope(sel); } catch { isFlatScope = true; }
 
-            // Regra:
-            // - se AINDA tem posição aberta => NÃO mostra overlay agora, só arma para quando ficar FLAT
-            // - se já está FLAT => mostra overlay imediatamente
-            if (isFlatScope)
-            {
-                if (!_riskOverlayShown)
-                {
-                    overlayController?.EnsureOverlayShown(OverlayOpacity, GetRiskOverlayDurationSeconds(), overlayMsg);
-
-                    // Ao aparecer overlay (qualquer situação), forçamos o botão MAIN como OFF (somente visual).
-                    ForceMainToggleOffDueToOverlay();
-
-                    _riskOverlayShown = true;
-
-                    try { SmartLog("[TRACE][RiskBlock] overlay shown immediately (flat in scope)"); } catch { }
-                }
-            }
-            else
-            {
-                // ✅ Não rearma overlay se já foi mostrado
-                if (!_riskOverlayShown)
-                {
-                    _riskOverlayArmed = true;
-                    _riskOverlayPendingMessage = overlayMsg;
-                    SmartLog("Risk overlay ARMADO (posição aberta). Será exibido ao ficar FLAT.");
-
-                    try { SmartLog("[TRACE][RiskBlock] overlay ARMED (flat=false in scope)"); } catch { }
-                }
-            }
+            try { SmartLog($"[TRACE][RiskBlock] post-block flat={isFlatScope} overlayShown={_riskOverlayShown}"); } catch { }
 
             // =========================================================
             // ✅ NOVO: após bloquear, força uma reaplicação do hardlock via arquivo
