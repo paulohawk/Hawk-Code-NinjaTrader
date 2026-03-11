@@ -538,6 +538,12 @@ namespace NinjaTrader.NinjaScript.Indicators
         private const int RrFeedGraceCycles = 4;
         private double _rrLastEntryPrice = double.NaN;
         private double _rrLastStopPrice = double.NaN;
+        private enum RrDetectionState
+        {
+            RR_ABSENT = 0,
+            RR_PRESENT = 1
+        }
+        private RrDetectionState _rrLastDetectionState = RrDetectionState.RR_ABSENT;
         private int _lastRrQtyLogged = -1;
         private int _lastRrTicksLogged = -1;
         private double _lastRrRiskLogged = -1.0;
@@ -1776,12 +1782,31 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             try
             {
-                try { SmartLog("[SmartBoleta][RR] RefreshRrDisplay invoked"); } catch { }
+                bool traceEnabled = EnableDiagnosticLogging && _currentLogLevel >= SmartLogLevel.Trace;
+                if (traceEnabled)
+                {
+                    try { SmartLog(SmartLogLevel.Trace, "[SmartBoleta][RR] RefreshRrDisplay invoked"); } catch { }
+                }
 
                 if (embeddedControl == null || Instrument == null) return;
 
-                try { SmartLog("[SmartBoleta][RR] Attempting RR detection"); } catch { }
+                if (traceEnabled)
+                {
+                    try { SmartLog(SmartLogLevel.Trace, "[SmartBoleta][RR] Attempting RR detection"); } catch { }
+                }
+
                 bool ok = TryGetActiveRiskRewardStopTicks(out double entryPrice, out double stopPrice, out int stopTicks);
+                bool rrToolPresent = ok && stopTicks > 0;
+                var rrDetectionState = rrToolPresent ? RrDetectionState.RR_PRESENT : RrDetectionState.RR_ABSENT;
+
+                if (rrDetectionState != _rrLastDetectionState)
+                {
+                    _rrLastDetectionState = rrDetectionState;
+                    if (rrDetectionState == RrDetectionState.RR_PRESENT)
+                        SmartLog(SmartLogLevel.Info, "[SmartBoleta][RR] RR tool detected");
+                    else
+                        SmartLog(SmartLogLevel.Info, "[SmartBoleta][RR] RR tool removed");
+                }
 
                 if (ok && stopTicks > 0)
                 {
@@ -1801,22 +1826,26 @@ namespace NinjaTrader.NinjaScript.Indicators
                     _lastRrTicks = _rrTicks;
                     _lastRrDollarPerContract = _rrDollarPerContract;
 
-                    try { SmartLog($"[SmartBoleta][RR] RR feed accepted ticks={stopTicks}"); } catch { }
+                    if (traceEnabled)
+                    {
+                        try { SmartLog(SmartLogLevel.Trace, $"[SmartBoleta][RR] RR feed accepted ticks={stopTicks}"); } catch { }
+                    }
 
                     _rrLastEntryPrice = entryPrice;
                     _rrLastStopPrice = stopPrice;
                 }
                 else
                 {
-                    try { SmartLog("[SmartBoleta][RR] No valid RR tool detected"); } catch { }
-
                     if (_rrFeedKeepAliveCycles > 0 && _rrTicks > 0 && _rrDollarPerContract > 0)
                     {
                         _rrFeedKeepAliveCycles--;
                         _rrFeedDetected = true;
                         _lastRrTicks = _rrTicks;
                         _lastRrDollarPerContract = _rrDollarPerContract;
-                        try { SmartLog($"[SmartBoleta][RR] Keeping last RR feed alive cyclesLeft={_rrFeedKeepAliveCycles} ticks={_rrTicks}"); } catch { }
+                        if (traceEnabled)
+                        {
+                            try { SmartLog(SmartLogLevel.Trace, $"[SmartBoleta][RR] Keeping last RR feed alive cyclesLeft={_rrFeedKeepAliveCycles} ticks={_rrTicks}"); } catch { }
+                        }
                     }
                     else
                     {
@@ -1970,14 +1999,20 @@ namespace NinjaTrader.NinjaScript.Indicators
                     try
                     {
                         var inst = rr.AttachedTo?.Instrument;
-                        try { SmartLog($"[SmartBoleta][RR] Found RR object attachedInstrument={inst?.FullName ?? "null"}"); } catch { }
+                        if (EnableDiagnosticLogging && _currentLogLevel >= SmartLogLevel.Trace)
+                        {
+                            try { SmartLog(SmartLogLevel.Trace, $"[SmartBoleta][RR] Found RR object attachedInstrument={inst?.FullName ?? "null"}"); } catch { }
+                        }
                         if (inst != null)
                         {
                             bool match = inst.FullName == Instrument.FullName ||
                                          inst.MasterInstrument?.Name == Instrument.MasterInstrument?.Name;
                             if (!match)
                             {
-                                try { SmartLog("[SmartBoleta][RR] RR rejected by instrument filter"); } catch { }
+                                if (EnableDiagnosticLogging && _currentLogLevel >= SmartLogLevel.Trace)
+                                {
+                                    try { SmartLog(SmartLogLevel.Trace, "[SmartBoleta][RR] RR rejected by instrument filter"); } catch { }
+                                }
                                 continue;
                             }
                         }
@@ -2029,7 +2064,10 @@ namespace NinjaTrader.NinjaScript.Indicators
                     }
                 }
 
-                try { SmartLog($"[SmartBoleta][RR] Chart objects enumerated={totalObjects} riskRewardObjects={rrObjects}"); } catch { }
+                if (EnableDiagnosticLogging && _currentLogLevel >= SmartLogLevel.Trace)
+                {
+                    try { SmartLog(SmartLogLevel.Trace, $"[SmartBoleta][RR] Chart objects enumerated={totalObjects} riskRewardObjects={rrObjects}"); } catch { }
+                }
 
                 if (best == null)
                     return false;
@@ -2038,13 +2076,19 @@ namespace NinjaTrader.NinjaScript.Indicators
                 try { bestEp = best.EntryAnchor?.Price ?? 0.0; } catch { }
                 try { bestSp = best.RiskAnchor?.Price ?? 0.0; } catch { }
 
-                try { SmartLog($"[SmartBoleta][RR] entry={bestEp} stop={bestSp}"); } catch { }
+                if (EnableDiagnosticLogging && _currentLogLevel >= SmartLogLevel.Trace)
+                {
+                    try { SmartLog(SmartLogLevel.Trace, $"[SmartBoleta][RR] entry={bestEp} stop={bestSp}"); } catch { }
+                }
 
                 double bestDistance = Math.Abs(bestEp - bestSp);
                 if (bestDistance <= double.Epsilon) return false;
 
                 int ticks = (int)Math.Round(bestDistance / tickSize);
-                try { SmartLog($"[SmartBoleta][RR] ticksCalculated={ticks}"); } catch { }
+                if (EnableDiagnosticLogging && _currentLogLevel >= SmartLogLevel.Trace)
+                {
+                    try { SmartLog(SmartLogLevel.Trace, $"[SmartBoleta][RR] ticksCalculated={ticks}"); } catch { }
+                }
                 if (ticks <= 0) return false;
 
                 entryPrice = bestEp;
@@ -2105,6 +2149,13 @@ namespace NinjaTrader.NinjaScript.Indicators
                     _hardLockUntilLocal = DateTime.MinValue;
                     _hardLockKey = key;
                     _hardLockKind = "generic";
+                    _riskBlocked = false;
+                    _riskBlockedUntil = DateTime.MinValue;
+
+                    if (embeddedControl != null && (string.Equals(reason, "account_changed", StringComparison.Ordinal) || string.Equals(reason, "wire_account_selector", StringComparison.Ordinal)))
+                    {
+                        try { embeddedControl.ApplyUnlockedAccountVisualReset(); } catch { }
+                    }
                     return;
                 }
 
@@ -3387,6 +3438,9 @@ private void RefreshPositionAndOrders()
                     embeddedControl.SetExitFromOrder(chartOrders.chartExit.Value);
                 else
                     embeddedControl.ClearExit();
+
+                if (!posInfo.hasPos && !chartOrders.chartStop.HasValue && !chartOrders.chartExit.HasValue)
+                    embeddedControl.SetLastOrderInfo("");
 
                 embeddedControl.UpdateBulletsAfterStateChange();
             }
@@ -6876,7 +6930,63 @@ public class SmartBoletaEmbeddedControl : Grid
         {
             try
             {
+                if (string.IsNullOrWhiteSpace(info))
+                {
+                    ClearHeaderMessage("System");
+                    return;
+                }
+
                 SetHeaderMessage("System", info ?? "");
+            }
+            catch { }
+        }
+
+        public void ApplyUnlockedAccountVisualReset()
+        {
+            try
+            {
+                _mainEnabled = false;
+                if (_tbMainToggle != null) _tbMainToggle.Text = "Off";
+                if (_tbMainToggle != null) _tbMainToggle.Foreground = Brushes.Gray;
+                if (_mainStateBullet != null) _mainStateBullet.Fill = InactiveBulletBrush;
+
+                _beEnabled = false;
+                if (_beStateText != null) _beStateText.Text = "Off";
+                if (_beStateText != null) _beStateText.Foreground = Brushes.Gray;
+                if (_bulletBe != null) _bulletBe.Fill = InactiveBulletBrush;
+
+                _onClickEnabled = false;
+                if (_tbOnClickToggle != null) _tbOnClickToggle.Text = "Off";
+                if (_tbOnClickToggle != null) _tbOnClickToggle.Foreground = Brushes.Gray;
+                if (_bulletOnClick != null) _bulletOnClick.Fill = InactiveBulletBrush;
+
+                _rrSizingEnabled = false;
+                if (_tbRrToggle != null) _tbRrToggle.Text = "Off";
+                if (_tbRrToggle != null) _tbRrToggle.Foreground = Brushes.Gray;
+                if (_bulletRr != null) _bulletRr.Fill = InactiveBulletBrush;
+
+                if (_rrDisplayText != null)
+                {
+                    _rrDisplayText.Text = "-";
+                    _rrDisplayText.Foreground = LightGrayBrush;
+                }
+
+                if (_tbAtrToggle != null) _tbAtrToggle.Text = "Off";
+                if (_tbAtrToggle != null) _tbAtrToggle.Foreground = Brushes.Gray;
+                if (_bulletAtr != null) _bulletAtr.Fill = InactiveBulletBrush;
+                if (_atrValueText != null) _atrValueText.Text = "-";
+
+                SetRiskState(SmartBoletaRiskState.Off, false, "");
+
+                SetQtyButtonsEnabled(true);
+                ClearHeaderMessage("OnClick");
+                ClearHeaderMessage("ATR");
+                ClearHeaderMessage("RR");
+                ClearHeaderMessage("System");
+                UpdateTopInfoVisibility();
+                _parent.SetTradingFromChartEnabled(false);
+                _parent.NotifyMainToggle(false);
+                UpdateBulletsAfterStateChange();
             }
             catch { }
         }
