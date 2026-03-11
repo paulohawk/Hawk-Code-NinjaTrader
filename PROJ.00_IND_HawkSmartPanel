@@ -51,6 +51,13 @@ namespace NinjaTrader.NinjaScript.Indicators
         Trace = 4
     }
 
+    internal enum SmartBoletaLogLevel
+    {
+        Info,
+        Debug,
+        Trace
+    }
+
     public class SmartBoletaIndicator : Indicator
     {
         private const int AttachPollMs = 1000;
@@ -62,7 +69,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private static readonly Dictionary<int, WeakReference<SmartBoletaIndicator>> ActivePerChart = new Dictionary<int, WeakReference<SmartBoletaIndicator>>();
         private static readonly Dictionary<int, string> BoletaIdPerChart = new Dictionary<int, string>();
-        private SmartLogLevel _currentLogLevel = SmartLogLevel.Info;
         private DateTime _lastFallbackLog = DateTime.MinValue;
         private int _lastQtyLogged = -1;
         private DateTime _lastQtySelectorMissingLog = DateTime.MinValue;
@@ -544,9 +550,8 @@ namespace NinjaTrader.NinjaScript.Indicators
             RR_PRESENT = 1
         }
         private RrDetectionState _rrLastDetectionState = RrDetectionState.RR_ABSENT;
-        private int _lastRrQtyLogged = -1;
-        private int _lastRrTicksLogged = -1;
-        private double _lastRrRiskLogged = -1.0;
+        private int _lastRrContracts = -1;
+        private double _lastRrRisk = -1.0;
 
         // Tags do desenho ATR
         private string _atrLineTag;
@@ -1556,6 +1561,18 @@ namespace NinjaTrader.NinjaScript.Indicators
             return SmartLogLevel.Info;
         }
 
+        private void Log(SmartBoletaLogLevel level, string message)
+        {
+            try
+            {
+                if (level == SmartBoletaLogLevel.Trace && !EnableDiagnosticLogging)
+                    return;
+
+                Print($"[SmartBoleta][{level}] {message}");
+            }
+            catch { }
+        }
+
         public void SmartLog(string message)
         {
             SmartLog(InferLogLevel(message), message);
@@ -1565,13 +1582,17 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             try
             {
-                if (level > _currentLogLevel)
-                    return;
+                SmartBoletaLogLevel mappedLevel = SmartBoletaLogLevel.Info;
+                if (level >= SmartLogLevel.Trace)
+                    mappedLevel = SmartBoletaLogLevel.Trace;
+                else if (level >= SmartLogLevel.Debug)
+                    mappedLevel = SmartBoletaLogLevel.Debug;
 
-                string levelTag = level.ToString().ToUpperInvariant();
-                Print($"[SmartBoleta][{levelTag}] {DateTime.Now:HH:mm:ss.fff} - {message}");
+                Log(mappedLevel, message);
+
                 if (!EnableDiagnosticLogging) return;
 
+                string levelTag = level.ToString().ToUpperInvariant();
                 string line = $"[SmartBoleta][{levelTag}] {DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} - {message}";
                 Directory.CreateDirectory(IOPath.GetDirectoryName(LogPath));
                 File.AppendAllText(LogPath, line + Environment.NewLine);
@@ -1682,7 +1703,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Account acc = GetSelectedAccount();
                 double? realized = AccountValueProvider.TryGetRealizedPnlUsd(acc, SmartLog);
                 _lastRealizedPnlUsd = realized;
-                SmartLog($"PnL check: account={(acc?.Name ?? "null")} realized={(realized.HasValue ? realized.Value.ToString("N2") : "null")} reason={reason}");
+                SmartLog(SmartLogLevel.Trace, $"PnL check: account={(acc?.Name ?? "null")} realized={(realized.HasValue ? realized.Value.ToString("N2") : "null")} reason={reason}");
                 return realized;
             }
             catch (Exception ex)
@@ -1699,7 +1720,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 ChartControl?.Dispatcher?.BeginInvoke(new Action(() =>
                 {
                     embeddedControl?.SetPnl(realized);
-                    SmartLog($"PnL display update: value={(realized.HasValue ? realized.Value.ToString("N2") : "null")} reason={reason}");
+                    SmartLog(SmartLogLevel.Trace, $"PnL display update: value={(realized.HasValue ? realized.Value.ToString("N2") : "null")} reason={reason}");
                 }));
             }
             catch (Exception ex)
@@ -1782,7 +1803,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             try
             {
-                bool traceEnabled = EnableDiagnosticLogging && _currentLogLevel >= SmartLogLevel.Trace;
+                bool traceEnabled = EnableDiagnosticLogging;
                 if (traceEnabled)
                 {
                     try { SmartLog(SmartLogLevel.Trace, "[SmartBoleta][RR] RefreshRrDisplay invoked"); } catch { }
@@ -1803,9 +1824,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                 {
                     _rrLastDetectionState = rrDetectionState;
                     if (rrDetectionState == RrDetectionState.RR_PRESENT)
-                        SmartLog(SmartLogLevel.Info, "[SmartBoleta][RR] RR tool detected");
+                        SmartLog(SmartLogLevel.Info, "[RR] tool detected");
                     else
-                        SmartLog(SmartLogLevel.Info, "[SmartBoleta][RR] RR tool removed");
+                        SmartLog(SmartLogLevel.Info, "[RR] tool removed");
                 }
 
                 if (ok && stopTicks > 0)
@@ -1999,7 +2020,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     try
                     {
                         var inst = rr.AttachedTo?.Instrument;
-                        if (EnableDiagnosticLogging && _currentLogLevel >= SmartLogLevel.Trace)
+                        if (EnableDiagnosticLogging)
                         {
                             try { SmartLog(SmartLogLevel.Trace, $"[SmartBoleta][RR] Found RR object attachedInstrument={inst?.FullName ?? "null"}"); } catch { }
                         }
@@ -2009,7 +2030,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                                          inst.MasterInstrument?.Name == Instrument.MasterInstrument?.Name;
                             if (!match)
                             {
-                                if (EnableDiagnosticLogging && _currentLogLevel >= SmartLogLevel.Trace)
+                                if (EnableDiagnosticLogging)
                                 {
                                     try { SmartLog(SmartLogLevel.Trace, "[SmartBoleta][RR] RR rejected by instrument filter"); } catch { }
                                 }
@@ -2064,7 +2085,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     }
                 }
 
-                if (EnableDiagnosticLogging && _currentLogLevel >= SmartLogLevel.Trace)
+                if (EnableDiagnosticLogging)
                 {
                     try { SmartLog(SmartLogLevel.Trace, $"[SmartBoleta][RR] Chart objects enumerated={totalObjects} riskRewardObjects={rrObjects}"); } catch { }
                 }
@@ -2076,7 +2097,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 try { bestEp = best.EntryAnchor?.Price ?? 0.0; } catch { }
                 try { bestSp = best.RiskAnchor?.Price ?? 0.0; } catch { }
 
-                if (EnableDiagnosticLogging && _currentLogLevel >= SmartLogLevel.Trace)
+                if (EnableDiagnosticLogging)
                 {
                     try { SmartLog(SmartLogLevel.Trace, $"[SmartBoleta][RR] entry={bestEp} stop={bestSp}"); } catch { }
                 }
@@ -2085,7 +2106,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (bestDistance <= double.Epsilon) return false;
 
                 int ticks = (int)Math.Round(bestDistance / tickSize);
-                if (EnableDiagnosticLogging && _currentLogLevel >= SmartLogLevel.Trace)
+                if (EnableDiagnosticLogging)
                 {
                     try { SmartLog(SmartLogLevel.Trace, $"[SmartBoleta][RR] ticksCalculated={ticks}"); } catch { }
                 }
@@ -2387,7 +2408,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             try
             {
                 selectedAccountCached = accountSelector?.SelectedAccount;
-                SmartLog($"Account changed -> {selectedAccountCached?.Name ?? "null"}");
+                SmartLog(SmartLogLevel.Info, $"[ACCOUNT] changed -> {selectedAccountCached?.Name ?? "null"}");
 
                 // ✅ PnL: troca listener para a nova conta e força leitura imediata
                 BindPnlAccountListener(true, "account_changed");
@@ -2530,7 +2551,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                 panelActive = true;
                 SmartLog($"[UI] InsertEmbedded success BoletaId={BoletaId}");
-                SmartLog($"InsertEmbedded: UI inserida. BoletaId={BoletaId}");
+                SmartLog(SmartLogLevel.Info, $"[BOLETA] created id={BoletaId}");
                 RegisterTabHandler();
                 UpdateEmbeddedForSelectedTab();
                 try { RefreshPositionAndOrders(); } catch { }
@@ -2579,7 +2600,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 // O estado real de bloqueio vem do arquivo (HardLock) + EvaluateRisk.
                 // _riskOverlayShown deve ser resetado apenas no reset diário (EnsureRiskResetDaily) ou quando o lock expirar.
 
-                SmartLog("RemoveEmbedded: UI removida (defensivo).");
+                SmartLog(SmartLogLevel.Info, $"[BOLETA] removed id={BoletaId}");
             }
             catch (Exception ex) { SmartLog("RemoveEmbedded ex: " + ex.Message); }
         }
@@ -2836,6 +2857,8 @@ namespace NinjaTrader.NinjaScript.Indicators
             try
             {
                 SmartLog("OpenEndDayDialog: start");
+                TimeSpan? previousEndDayTime = this.EndDayTime;
+                SBEndDayScope previousEndDayScope = this.EndDayScope;
                 var ownerWin = chartWindow ?? FindAncestorWindow(ChartControl) as Gui.Chart.Chart;
 
                 var dlg = new Window()
@@ -2900,6 +2923,13 @@ namespace NinjaTrader.NinjaScript.Indicators
                         embeddedControl?.SetEndDayLabel(this.EndDayTime, this.EndDayScope);
                         embeddedControl?.UpdateBulletsAfterStateChange();
                         SavePrefs();
+
+                        if (this.EndDayTime != previousEndDayTime || this.EndDayScope != previousEndDayScope)
+                        {
+                            string selectedTime = this.EndDayTime.HasValue ? this.EndDayTime.Value.ToString(@"hh\:mm") : "off";
+                            string scope = this.EndDayScope == SBEndDayScope.AllNinjaTrader ? "all" : "chart";
+                            SmartLog(SmartLogLevel.Info, $"[ENDDAY] time={selectedTime} scope={scope}");
+                        }
                     }
                     catch (Exception ex) { SmartLog("EndDay OK parse error: " + ex.Message); }
 
@@ -3138,7 +3168,7 @@ private void LogSystemSnapshot()
         }
         catch { }
 
-        SmartLog(
+        SmartLog(SmartLogLevel.Trace,
             $"[SNAPSHOT] acc={(acc?.Name ?? "null")} " +
             $"pnl={TryGetAccountValue(acc, AccountItem.RealizedProfitLoss)} " +
             $"posQty={qty} " +
@@ -3509,7 +3539,7 @@ private bool ApplyAtrSizingWithValidation(int atrTicks, double atrDollarPerContr
             if (upperRisk <= maxRiskAllowed)
                 finalContracts = upperContracts;
 
-            SmartLog($"[SmartBoleta][RR] sizingBase={baseContracts} sizingUpper={upperContracts} upperRisk={upperRisk:F2} maxAllowed={maxRiskAllowed:F2} final={finalContracts}");
+            SmartLog(SmartLogLevel.Trace, $"[RR] sizingBase={baseContracts} sizingUpper={upperContracts} upperRisk={upperRisk:F2} maxAllowed={maxRiskAllowed:F2} final={finalContracts}");
         }
 
         int qty = Math.Max(1, finalContracts); // mínimo 1
@@ -3529,17 +3559,13 @@ private bool ApplyAtrSizingWithValidation(int atrTicks, double atrDollarPerContr
 
         if (isRrMode)
         {
-            bool rrLogChanged = _lastRrQtyLogged != qty
-                || _lastRrTicksLogged != atrTicks
-                || Math.Abs(_lastRrRiskLogged - atrDollarPerContract) > 0.0001;
-
-            if (rrLogChanged)
+            double riskValue = atrDollarPerContract;
+            if (finalContracts != _lastRrContracts || Math.Abs(riskValue - _lastRrRisk) > 0.0001)
             {
                 var enUs = CultureInfo.GetCultureInfo("en-US");
-                SmartLog($"[SmartBoleta][RR] ticks={atrTicks} risk={atrDollarPerContract.ToString("C2", enUs)} qty={qty}");
-                _lastRrQtyLogged = qty;
-                _lastRrTicksLogged = atrTicks;
-                _lastRrRiskLogged = atrDollarPerContract;
+                SmartLog(SmartLogLevel.Info, $"[RR] risk={riskValue.ToString("C2", enUs)} qty={finalContracts}");
+                _lastRrContracts = finalContracts;
+                _lastRrRisk = riskValue;
             }
         }
 
@@ -4967,7 +4993,7 @@ private void EnsureRiskResetDaily()
                         myAccount?.Submit(new[] { myOrder });
 
                         embeddedControl?.SetLastOrderInfo(myOrder?.ToString() ?? "Order submitted");
-                        SmartLog($"OnClick: order qty={myQuantity} price={priceClicked}");
+                        SmartLog(SmartLogLevel.Info, $"[ORDER] qty={myQuantity} price={priceClicked}");
                     }
                     catch (Exception ex2)
                     {
@@ -4990,7 +5016,7 @@ private void EnsureRiskResetDaily()
         internal void NotifyMainToggle(bool enabled)
         {
             _mainEnabled = enabled;
-            SmartLog($"Main toggle notify: {_mainEnabled}");
+            SmartLog(SmartLogLevel.Info, _mainEnabled ? "[MAIN] enabled" : "[MAIN] disabled");
             if (_mainEnabled || ForceDecorationsOverride)
                 ComputeOrderDecorations();
             else
@@ -7181,7 +7207,7 @@ private void ToggleOnClick()
     _tbOnClickToggle.Foreground = _onClickEnabled ? BronzeBrush : Brushes.Gray;
     _bulletOnClick.Fill = _onClickEnabled ? BronzeBrush : InactiveBulletBrush;
     _parent.SetTradingFromChartEnabled(_onClickEnabled);
-    _parent.SmartLog($"OnClick toggled {(_onClickEnabled ? "On" : "Off")}");
+    _parent.SmartLog(SmartLogLevel.Info, _onClickEnabled ? "[ONCLICK] enabled" : "[ONCLICK] disabled");
     if (_onClickEnabled)
         SetHeaderMessage("OnClick", "OnClick ON - clique no gráfico");
     else
@@ -7470,6 +7496,7 @@ private void OpenStopInputDialog()
     try
     {
         _parent.SmartLog("OpenStopInputDialog: start");
+        double previousStopFinancial = GetStopFinancial();
 
         var ownerWin = Window.GetWindow(this);
 
@@ -7556,6 +7583,10 @@ private void OpenStopInputDialog()
 
             UpdateBulletsAfterStateChange();
             _parent.SavePrefs();
+
+            double currentStopFinancial = GetStopFinancial();
+            if (Math.Abs(currentStopFinancial - previousStopFinancial) > 0.0001)
+                _parent.SmartLog(SmartLogLevel.Info, $"[RISK] financial_stop=${currentStopFinancial.ToString("N2", CultureInfo.InvariantCulture)}");
         };
 
         cancel.Click += (s, e) => { try { dlg.DialogResult = false; dlg.Close(); } catch { } };
