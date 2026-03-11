@@ -929,6 +929,10 @@ namespace NinjaTrader.NinjaScript.Indicators
         public int LimiteContratosDia { get; set; } = 50;
 
         [NinjaScriptProperty]
+        [Display(Name = "RR tolerância de risco (%)", Order = 204, GroupName = "Risk", Description = "Permite arredondar o sizing RR para cima dentro do limite de tolerância. Ex: 0.20 = 20%.")]
+        public double RrRiskTolerancePercent { get; set; } = 0.20;
+
+        [NinjaScriptProperty]
         [Display(Name = "Limite lucro diária (USD)", Order = 204, GroupName = "Risk")]
         public double LimiteLucroUSD { get; set; } = 1000.0;
 
@@ -1152,7 +1156,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 $"AtrFixedMultiplier={SafeRestoreValue(() => AtrFixedMultiplier.ToString(CultureInfo.InvariantCulture))} EnableDiagnosticLogging={SafeRestoreValue(() => EnableDiagnosticLogging.ToString())} " +
                 $"ScanIntervalSeconds={SafeRestoreValue(() => ScanIntervalSeconds.ToString(CultureInfo.InvariantCulture))} AtivarRisk={SafeRestoreValue(() => AtivarRisk.ToString())} " +
                 $"LimitePerdaUSD={SafeRestoreValue(() => LimitePerdaUSD.ToString(CultureInfo.InvariantCulture))} LimiteTradesDia={SafeRestoreValue(() => LimiteTradesDia.ToString(CultureInfo.InvariantCulture))} " +
-                $"LimiteContratosDia={SafeRestoreValue(() => LimiteContratosDia.ToString(CultureInfo.InvariantCulture))} LimiteLucroUSD={SafeRestoreValue(() => LimiteLucroUSD.ToString(CultureInfo.InvariantCulture))} " +
+                $"LimiteContratosDia={SafeRestoreValue(() => LimiteContratosDia.ToString(CultureInfo.InvariantCulture))} RrRiskTolerancePercent={SafeRestoreValue(() => RrRiskTolerancePercent.ToString(CultureInfo.InvariantCulture))} LimiteLucroUSD={SafeRestoreValue(() => LimiteLucroUSD.ToString(CultureInfo.InvariantCulture))} " +
                 $"BloquearAoAtingirLucro={SafeRestoreValue(() => BloquearAoAtingirLucro.ToString())} EscopoRisk={SafeRestoreValue(() => EscopoRisk.ToString())} " +
                 $"PercentualAviso={SafeRestoreValue(() => PercentualAviso.ToString(CultureInfo.InvariantCulture))} RiskOverlaySeconds={SafeRestoreValue(() => RiskOverlaySeconds.ToString(CultureInfo.InvariantCulture))} " +
                 $"RiskOverlayUntilMidnight={SafeRestoreValue(() => RiskOverlayUntilMidnight.ToString())} StopOrderType={SafeRestoreValue(() => StopOrderType.ToString())} " +
@@ -1189,6 +1193,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                 MaxContractsPerTrade = 0;
                 RiskOverlayUntilMidnight = false;
+                RrRiskTolerancePercent = 0.20;
 
                 DecorSymbol = "$";
                 DecorDisplayTicks = true;
@@ -3255,15 +3260,34 @@ private bool ApplyAtrSizingWithValidation(int atrTicks, double atrDollarPerContr
             return false;
         }
 
+        string normalizedPrefix = string.IsNullOrWhiteSpace(sizingModePrefix) ? string.Empty : sizingModePrefix.Trim();
+        bool isRrMode = string.Equals(normalizedPrefix, "RR", StringComparison.OrdinalIgnoreCase);
+
         double allowedContracts = Math.Floor(stopFinancial / atrDollarPerContract);
-        int qty = (int)Math.Max(1, allowedContracts); // mínimo 1
-        bool wasCappedToMin = allowedContracts < 1;
+        int baseContracts = (int)Math.Max(0, allowedContracts);
+        int finalContracts = baseContracts;
+
+        if (isRrMode)
+        {
+            double tolerancePercent = Math.Max(0.0, RrRiskTolerancePercent);
+            int upperContracts = baseContracts + 1;
+            double maxRiskAllowed = stopFinancial * (1.0 + tolerancePercent);
+            double upperRisk = upperContracts * atrDollarPerContract;
+
+            if (upperRisk <= maxRiskAllowed)
+                finalContracts = upperContracts;
+
+            SmartLog($"[SmartBoleta][RR] sizingBase={baseContracts} sizingUpper={upperContracts} upperRisk={upperRisk:F2} maxAllowed={maxRiskAllowed:F2} final={finalContracts}");
+        }
+
+        int qty = Math.Max(1, finalContracts); // mínimo 1
+        bool wasCappedToMin = finalContracts < 1;
 
         // ✅ NOVO: clamp de MaxContractsPerTrade também no sizing (ATR/RR)
         // Observação: este clamp é "só no número", independente da direção; a validação direcional (flip/scale) é no envio da ordem.
         qty = ClampQtyToMaxContractsPerTradeForSizing(qty, reasonForUser: $"Máx contratos/trade = {MaxContractsPerTrade}. ({(string.IsNullOrWhiteSpace(sizingModePrefix) ? "Sizing" : sizingModePrefix.Trim())} sizing)");
 
-        string prefix = string.IsNullOrWhiteSpace(sizingModePrefix) ? "" : (sizingModePrefix.Trim() + " ");
+        string prefix = string.IsNullOrWhiteSpace(sizingModePrefix) ? "" : (normalizedPrefix + " ");
 
         embeddedControl?.SetQty(qty);
         if (wasCappedToMin)
@@ -3271,7 +3295,7 @@ private bool ApplyAtrSizingWithValidation(int atrTicks, double atrDollarPerContr
         else
             embeddedControl?.SetLastOrderInfo($"{prefix}{atrTicks} ticks -> Qty {qty}");
 
-        if (string.Equals(sizingModePrefix, "RR", StringComparison.OrdinalIgnoreCase))
+        if (isRrMode)
         {
             bool rrLogChanged = _lastRrQtyLogged != qty
                 || _lastRrTicksLogged != atrTicks
