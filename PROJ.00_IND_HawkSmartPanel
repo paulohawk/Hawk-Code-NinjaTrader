@@ -1707,8 +1707,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             try
             {
+                try { SmartLog("[SmartBoleta][RR] RefreshRrDisplay invoked"); } catch { }
+
                 if (embeddedControl == null || Instrument == null) return;
 
+                try { SmartLog("[SmartBoleta][RR] Attempting RR detection"); } catch { }
                 bool ok = TryGetActiveRiskRewardStopTicks(out double entryPrice, out double stopPrice, out int stopTicks);
 
                 if (ok && stopTicks > 0)
@@ -1725,6 +1728,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                     _lastRrTicks = stopTicks;
                     _lastRrDollarPerContract = stopTicks * tickValue;
 
+                    try { SmartLog($"[SmartBoleta][RR] RR feed accepted ticks={stopTicks}"); } catch { }
+
                     _rrLastEntryPrice = entryPrice;
                     _rrLastStopPrice = stopPrice;
 
@@ -1738,6 +1743,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 }
                 else
                 {
+                    try { SmartLog("[SmartBoleta][RR] No valid RR tool detected"); } catch { }
+
                     _rrFeedAvailable = false;
                     _lastRrTicks = 0;
                     _lastRrDollarPerContract = 0.0;
@@ -1861,23 +1868,34 @@ namespace NinjaTrader.NinjaScript.Indicators
                 NinjaTrader.NinjaScript.DrawingTools.RiskReward best = null;
                 DateTime bestTime = DateTime.MinValue;
                 int bestSlot = int.MinValue;
+                int totalObjects = 0;
+                int rrObjects = 0;
 
                 foreach (var obj in EnumerateChartObjectsReflection())
                 {
+                    totalObjects++;
+
                     // ✅ compatível (evita "is not" que pode quebrar em alguns ambientes)
                     var rr = obj as NinjaTrader.NinjaScript.DrawingTools.RiskReward;
                     if (rr == null)
                         continue;
 
+                    rrObjects++;
+
                     // filtro por instrumento (se possível)
                     try
                     {
                         var inst = rr.AttachedTo?.Instrument;
+                        try { SmartLog($"[SmartBoleta][RR] Found RR object attachedInstrument={inst?.FullName ?? "null"}"); } catch { }
                         if (inst != null)
                         {
                             bool match = inst.FullName == Instrument.FullName ||
                                          inst.MasterInstrument?.Name == Instrument.MasterInstrument?.Name;
-                            if (!match) continue;
+                            if (!match)
+                            {
+                                try { SmartLog("[SmartBoleta][RR] RR rejected by instrument filter"); } catch { }
+                                continue;
+                            }
                         }
                     }
                     catch { }
@@ -1910,12 +1928,16 @@ namespace NinjaTrader.NinjaScript.Indicators
                     }
                 }
 
+                try { SmartLog($"[SmartBoleta][RR] Chart objects enumerated={totalObjects} riskRewardObjects={rrObjects}"); } catch { }
+
                 if (best == null)
                     return false;
 
                 double ep = 0.0, sp = 0.0;
                 try { ep = best.EntryAnchor?.Price ?? 0.0; } catch { }
                 try { sp = best.RiskAnchor?.Price ?? 0.0; } catch { }
+
+                try { SmartLog($"[SmartBoleta][RR] entry={ep} stop={sp}"); } catch { }
 
                 if (Math.Abs(ep) <= double.Epsilon || Math.Abs(sp) <= double.Epsilon)
                     return false;
@@ -1924,6 +1946,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (dist <= double.Epsilon) return false;
 
                 int ticks = (int)Math.Round(dist / tickSize);
+                try { SmartLog($"[SmartBoleta][RR] ticksCalculated={ticks}"); } catch { }
                 if (ticks <= 0) return false;
 
                 entryPrice = ep;
