@@ -56,6 +56,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private const int AttachPollMs = 1000;
         private const double EmbedHeightPx = 320.0;
         private const int AtrLabelOffsetTicks = 80; // default fixado
+        private const string SmartBoletaWrapperTagPrefix = "HawkSmartBoletaWrapper::";
         private readonly string LogPath = IOPath.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "NinjaTrader 8", "logs", "smartboleta_indicator.log");
         private static int BoletaCounter = 0;
 
@@ -792,12 +793,70 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             try
             {
-                if (ChartControl == null)
-                    return 0;
+                string descriptor = GetChartIdentityDescriptor();
+                if (!string.IsNullOrWhiteSpace(descriptor))
+                    return descriptor.GetHashCode();
 
-                return ChartControl.GetHashCode();
+                if (ChartControl != null)
+                    return ChartControl.GetHashCode();
             }
             catch { return 0; }
+
+            return 0;
+        }
+
+        private string GetChartIdentityDescriptor()
+        {
+            try
+            {
+                string inst = "inst:null";
+                try
+                {
+                    if (Instrument != null && !string.IsNullOrWhiteSpace(Instrument.FullName))
+                        inst = "inst:" + Instrument.FullName;
+                }
+                catch { }
+
+                string bars = "bars:null";
+                try
+                {
+                    if (BarsPeriod != null)
+                        bars = "bars:" + BarsPeriod.BarsPeriodType + ":" + BarsPeriod.Value.ToString(CultureInfo.InvariantCulture);
+                }
+                catch { }
+
+                string parentName = "parent:null";
+                try
+                {
+                    if (ChartControl?.Parent is FrameworkElement feParent)
+                        parentName = "parent:" + (string.IsNullOrWhiteSpace(feParent.Name) ? "(unnamed)" : feParent.Name);
+                }
+                catch { }
+
+                string tabIdentity = "tab:null";
+                try
+                {
+                    var mtc = chartWindow?.MainTabControl;
+                    if (mtc != null)
+                    {
+                        foreach (TabItem tab in mtc.Items)
+                        {
+                            if ((tab.Content as Gui.Chart.ChartTab)?.ChartControl == ChartControl)
+                            {
+                                tabIdentity = "tab:" + tab.GetHashCode().ToString(CultureInfo.InvariantCulture);
+                                break;
+                            }
+                        }
+                    }
+                }
+                catch { }
+
+                return inst + "|" + bars + "|" + parentName + "|" + tabIdentity;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         [NinjaScriptProperty]
@@ -2358,6 +2417,24 @@ namespace NinjaTrader.NinjaScript.Indicators
             try
             {
                 SmartLog($"[UI] InsertEmbedded start ChartKey={GetChartKey()} BoletaId={BoletaId}");
+
+                if (embeddedWrapper != null && embeddedWrapper.Parent != null)
+                {
+                    panelActive = true;
+                    SmartLog("[UI] InsertEmbedded abortado: wrapper atual já está ativo/parentado.");
+                    try { StopAttachTimer(); } catch { }
+                    return;
+                }
+
+                RemoveOrphanedEmbeddedControls("insert_preclean");
+
+                if (HasSmartBoletaWrapperInVisualHost())
+                {
+                    panelActive = true;
+                    SmartLog("[UI] InsertEmbedded abortado: SmartBoleta já existente no host visual.");
+                    return;
+                }
+
                 embeddedControl = new SmartBoletaEmbeddedControl(this);
                 embeddedControl.SetBoletaId(BoletaId);
 
@@ -2383,6 +2460,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                 inner.Child = embeddedControl;
                 outer.Child = inner;
+                outer.Tag = BuildSmartBoletaWrapperTag();
                 embeddedWrapper = outer;
 
                 if (chartTraderGrid != null)
@@ -2434,18 +2512,10 @@ namespace NinjaTrader.NinjaScript.Indicators
                 try { StopRrTimer(); } catch { }
                 try { StopAttachTimer(); } catch { }
 
-                if (chartTraderGrid != null && embeddedWrapper != null)
-                {
-                    try { chartTraderGrid.Children.Remove(embeddedWrapper); } catch { }
-                    try { if (addedRow != null) chartTraderGrid.RowDefinitions.Remove(addedRow); } catch { }
-                }
-
                 if (embeddedWrapper != null)
-                {
-                    var parent = embeddedWrapper.Parent as Panel;
-                    if (parent != null) parent.Children.Remove(embeddedWrapper);
-                    else if (embeddedWrapper.Parent is ContentControl cc) cc.Content = null;
-                }
+                    RemoveWrapperFromVisualParent(embeddedWrapper, "remove_embedded_current");
+
+                RemoveOrphanedEmbeddedControls("remove_embedded_scrub");
 
                 embeddedControl = null;
                 embeddedWrapper = null;
@@ -2461,6 +2531,114 @@ namespace NinjaTrader.NinjaScript.Indicators
                 SmartLog("RemoveEmbedded: UI removida (defensivo).");
             }
             catch (Exception ex) { SmartLog("RemoveEmbedded ex: " + ex.Message); }
+        }
+
+        private string BuildSmartBoletaWrapperTag()
+        {
+            return SmartBoletaWrapperTagPrefix + (GetChartKey().ToString(CultureInfo.InvariantCulture)) + "::" + (BoletaId ?? "null");
+        }
+
+        private bool IsSmartBoletaWrapper(DependencyObject obj)
+        {
+            try
+            {
+                if (obj == null) return false;
+                if (ReferenceEquals(obj, embeddedWrapper)) return true;
+                if (obj is FrameworkElement fe && fe.Tag is string tag)
+                    return tag.StartsWith(SmartBoletaWrapperTagPrefix, StringComparison.Ordinal);
+            }
+            catch { }
+            return false;
+        }
+
+        private void RemoveWrapperFromVisualParent(Border wrapper, string reason)
+        {
+            try
+            {
+                if (wrapper == null) return;
+
+                if (wrapper.Parent is Grid g)
+                {
+                    int rowIdx = Grid.GetRow(wrapper);
+                    try { g.Children.Remove(wrapper); } catch { }
+
+                    if (rowIdx >= 0 && rowIdx < g.RowDefinitions.Count)
+                    {
+                        bool rowStillInUse = false;
+                        foreach (UIElement child in g.Children)
+                        {
+                            if (Grid.GetRow(child) == rowIdx) { rowStillInUse = true; break; }
+                        }
+                        if (!rowStillInUse)
+                        {
+                            try { g.RowDefinitions.RemoveAt(rowIdx); } catch { }
+                        }
+                    }
+                }
+                else if (wrapper.Parent is Panel p)
+                {
+                    try { p.Children.Remove(wrapper); } catch { }
+                }
+                else if (wrapper.Parent is ContentControl cc)
+                {
+                    try { cc.Content = null; } catch { }
+                }
+            }
+            catch (Exception ex)
+            {
+                SmartLog("RemoveWrapperFromVisualParent ex (" + reason + "): " + ex.Message);
+            }
+        }
+
+        private void RemoveOrphanedEmbeddedControls(string reason)
+        {
+            try
+            {
+                int wrappersRemoved = 0;
+
+                if (chartTraderGrid != null)
+                {
+                    var wrappers = chartTraderGrid.Children.OfType<Border>().Where(b => IsSmartBoletaWrapper(b) && !ReferenceEquals(b, embeddedWrapper)).ToList();
+                    foreach (var w in wrappers)
+                    {
+                        RemoveWrapperFromVisualParent(w, reason + "_charttrader");
+                        wrappersRemoved++;
+                    }
+                }
+
+                var altParent = ChartControl?.Parent as Panel;
+                if (altParent != null)
+                {
+                    var wrappers = altParent.Children.OfType<Border>().Where(b => IsSmartBoletaWrapper(b) && !ReferenceEquals(b, embeddedWrapper)).ToList();
+                    foreach (var w in wrappers)
+                    {
+                        RemoveWrapperFromVisualParent(w, reason + "_altparent");
+                        wrappersRemoved++;
+                    }
+                }
+
+                if (wrappersRemoved > 0)
+                    SmartLog($"[UI] Scrub removeu {wrappersRemoved} wrapper(s) órfão(s). reason={reason}");
+            }
+            catch (Exception ex)
+            {
+                SmartLog("RemoveOrphanedEmbeddedControls ex: " + ex.Message);
+            }
+        }
+
+        private bool HasSmartBoletaWrapperInVisualHost()
+        {
+            try
+            {
+                if (chartTraderGrid != null && chartTraderGrid.Children.OfType<Border>().Any(IsSmartBoletaWrapper))
+                    return true;
+
+                var altParent = ChartControl?.Parent as Panel;
+                if (altParent != null && altParent.Children.OfType<Border>().Any(IsSmartBoletaWrapper))
+                    return true;
+            }
+            catch { }
+            return false;
         }
 
         private void UpdateEmbeddedForSelectedTab()
