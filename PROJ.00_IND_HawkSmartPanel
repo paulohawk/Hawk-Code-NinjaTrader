@@ -4992,7 +4992,8 @@ private void EnsureRiskResetDaily()
 
                         myAccount?.Submit(new[] { myOrder });
 
-                        embeddedControl?.SetLastOrderInfo(myOrder?.ToString() ?? "Order submitted");
+                        string onClickSide = (buyButton == true) ? "BUY" : "SELL";
+                        embeddedControl?.SetOnClickOrderInfo(onClickSide, myQuantity, Instrument?.MasterInstrument?.Name);
                         SmartLog(SmartLogLevel.Info, $"[ORDER] qty={myQuantity} price={priceClicked}");
                     }
                     catch (Exception ex2)
@@ -7209,7 +7210,7 @@ private void ToggleOnClick()
     _parent.SetTradingFromChartEnabled(_onClickEnabled);
     _parent.SmartLog(SmartLogLevel.Info, _onClickEnabled ? "[ONCLICK] enabled" : "[ONCLICK] disabled");
     if (_onClickEnabled)
-        SetHeaderMessage("OnClick", "OnClick ON - clique no gráfico");
+        SetHeaderMessage("OnClick", "[ONCLICK]");
     else
         ClearHeaderMessage("OnClick");
     UpdateBulletsAfterStateChange();
@@ -7470,7 +7471,7 @@ public void SetOnClickState(bool on)
         _bulletOnClick.Fill = on ? BronzeBrush : InactiveBulletBrush;
 
         if (on)
-            SetHeaderMessage("OnClick", "OnClick ON - clique no gráfico");
+            SetHeaderMessage("OnClick", "[ONCLICK]");
         else
             ClearHeaderMessage("OnClick");
 
@@ -7486,6 +7487,17 @@ public void SetRiskToggleVisual(bool on)
     {
         _tbRiskToggle.Text = on ? "On" : "Off";
         _tbRiskToggle.Foreground = on ? BronzeBrush : Brushes.Gray;
+    }
+    catch { }
+}
+
+public void SetOnClickOrderInfo(string side, int quantity, string instrumentName)
+{
+    try
+    {
+        string safeSide = string.Equals(side, "SELL", StringComparison.OrdinalIgnoreCase) ? "SELL" : "BUY";
+        string safeInstrument = string.IsNullOrWhiteSpace(instrumentName) ? "" : $" {instrumentName.Trim()}";
+        SetHeaderMessage("OnClick", $"[ONCLICK] {safeSide} {Math.Max(1, quantity)}{safeInstrument}");
     }
     catch { }
 }
