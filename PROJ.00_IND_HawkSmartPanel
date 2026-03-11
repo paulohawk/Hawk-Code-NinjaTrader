@@ -1568,7 +1568,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (level == SmartBoletaLogLevel.Trace && !EnableDiagnosticLogging)
                     return;
 
-                Print($"[SmartBoleta][{level}] {message}");
+                Print($"[SmartBoleta][{level}] {DateTime.Now:HH:mm:ss} {message}");
             }
             catch { }
         }
