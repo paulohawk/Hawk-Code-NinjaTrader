@@ -1385,25 +1385,31 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 SmartLog($"[RESTORE][LIFECYCLE] State={State} ChartKey={GetChartKey()} BoletaId={BoletaId ?? "null"}");
                 SmartLog("Terminated: cleaning up.");
-                StopAttachTimer();
-                StopDecoTimer();
-                RemoveEmbedded();
-                UnregisterChartHandlers();
-                overlayController?.DisposeOverlay();
-                UnsubscribeExecutions();
-                UnsubscribeDecoratorAccountEvents();
-                UnwireAccountSelector();
-                TryUnregisterChartActivationHooks();
-                UnbindPnlAccountListener();
+                try
+                {
+                    StopAttachTimer();
+                    StopDecoTimer();
+                    overlayController?.DisposeOverlay();
+                    UnsubscribeExecutions();
+                    UnsubscribeDecoratorAccountEvents();
+                    UnwireAccountSelector();
+                    TryUnregisterChartActivationHooks();
+                    UnbindPnlAccountListener();
 
-                SavePrefs();
+                    SavePrefs();
 
-                int chartKey = GetChartKey();
-                if (chartKey != 0 && ActivePerChart.ContainsKey(chartKey))
-                    ActivePerChart.Remove(chartKey);
+                    int chartKey = GetChartKey();
+                    if (chartKey != 0 && ActivePerChart.ContainsKey(chartKey))
+                        ActivePerChart.Remove(chartKey);
 
-                ClearAtrDraws();
-                ClearDecorations();
+                    ClearAtrDraws();
+                    ClearDecorations();
+                }
+                finally
+                {
+                    RemoveEmbedded();
+                    UnregisterChartHandlers();
+                }
             }
         }
 
@@ -2584,10 +2590,26 @@ namespace NinjaTrader.NinjaScript.Indicators
                 try { StopRrTimer(); } catch { }
                 try { StopAttachTimer(); } catch { }
 
-                if (embeddedWrapper != null)
-                    RemoveWrapperFromVisualParent(embeddedWrapper, "remove_embedded_current");
+                Action removeUi = () =>
+                {
+                    if (embeddedControl != null)
+                    {
+                        if (embeddedControl.Parent is Panel parentPanel)
+                            parentPanel.Children.Remove(embeddedControl);
+                        else if (embeddedControl.Parent is ContentControl parentContent)
+                            parentContent.Content = null;
+                    }
 
-                RemoveOrphanedEmbeddedControls("remove_embedded_scrub");
+                    if (embeddedWrapper != null)
+                        RemoveWrapperFromVisualParent(embeddedWrapper, "remove_embedded_current");
+
+                    RemoveOrphanedEmbeddedControls("remove_embedded_scrub");
+                };
+
+                if (ChartControl?.Dispatcher != null && !ChartControl.Dispatcher.CheckAccess())
+                    ChartControl.Dispatcher.Invoke(removeUi);
+                else
+                    removeUi();
 
                 embeddedControl = null;
                 embeddedWrapper = null;
