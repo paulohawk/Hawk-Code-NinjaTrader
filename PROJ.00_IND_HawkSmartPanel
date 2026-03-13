@@ -573,6 +573,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         private StopOrderTypes stopOrderType = StopOrderTypes.StopMarket;
         private OrderType orderType;
         private bool tradingFromChart = false;
+        private bool _chartHandlersRegistered = false;
+        private bool _runtimeReady = false;
 
         public TimeSpan? EndDayTime { get; set; } = null;
         public SBEndDayScope EndDayScope { get; set; } = SBEndDayScope.ThisChartOnly;
@@ -1297,6 +1299,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 SmartLog($"[RESTORE][LIFECYCLE] State={State} ChartKey={GetChartKey()} BoletaId={BoletaId ?? "null"}");
                 SmartLog("[RESTORE] Entering DataLoaded.");
+                SmartLog("[REHYDRATE] start DataLoaded lifecycle.");
                 LogRestoreSnapshot("DataLoaded");
                 // ✅ HARDLOCK (higiene): remove locks expirados do arquivo
                 // (não altera o comportamento do Risk ainda)
@@ -1370,6 +1373,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 ComputeOrderDecorations();
                 ForceRefreshDecorations();
                 StartDecoTimer();
+                _runtimeReady = false;
             }
             else if (State == State.Historical)
             {
@@ -1380,6 +1384,13 @@ namespace NinjaTrader.NinjaScript.Indicators
                 SmartLog($"[RESTORE][LIFECYCLE] State={State} ChartKey={GetChartKey()} BoletaId={BoletaId ?? "null"}");
                 ComputeOrderDecorations();
                 ForceRefreshDecorations();
+
+                try
+                {
+                    if (ChartControl?.Dispatcher != null)
+                        ChartControl.Dispatcher.BeginInvoke(new Action(() => EnsureSmartBoletaRuntimeReady("state_realtime")), DispatcherPriority.Background);
+                }
+                catch { }
             }
             else if (State == State.Terminated)
             {
@@ -1409,6 +1420,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 {
                     RemoveEmbedded();
                     UnregisterChartHandlers();
+                    _runtimeReady = false;
                 }
             }
         }
@@ -2298,6 +2310,91 @@ namespace NinjaTrader.NinjaScript.Indicators
             attachTimer.Start();
         }
 
+        private bool EnsureSmartBoletaRuntimeReady(string reason)
+        {
+            try
+            {
+                if (ChartControl == null)
+                {
+                    SmartLog($"[REHYDRATE] pending (ChartControl indisponível). reason={reason}");
+                    return false;
+                }
+
+                TryRegisterChartActivationHooks();
+
+                if (chartWindow == null)
+                    chartWindow = Window.GetWindow(ChartControl.Parent) as Gui.Chart.Chart;
+
+                if (chartWindow == null)
+                {
+                    SmartLog($"[REHYDRATE] pending (chartWindow indisponível). reason={reason}");
+                    return false;
+                }
+
+                if (chartTrader == null)
+                {
+                    try { chartTrader = chartWindow.FindFirst("ChartWindowChartTraderControl") as Gui.Chart.ChartTrader; } catch { }
+                    if (chartTrader == null)
+                        chartTrader = FindVisualChildren<Gui.Chart.ChartTrader>(chartWindow).FirstOrDefault();
+                }
+
+                var content = chartTrader?.Content as DependencyObject;
+                if (content != null)
+                    chartTraderGrid = content as Grid ?? FindVisualChildren<Grid>(content).FirstOrDefault();
+
+                WireAccountSelector();
+
+                if (!TabSelected())
+                {
+                    RegisterTabHandler();
+                    SmartLog($"[REHYDRATE] pending (aba inativa). reason={reason}");
+                    _runtimeReady = false;
+                    return false;
+                }
+
+                bool uiMissing = embeddedControl == null || embeddedWrapper == null || embeddedWrapper.Parent == null;
+                if (uiMissing)
+                {
+                    panelActive = false;
+
+                    if (HasSmartBoletaWrapperInVisualHost())
+                    {
+                        SmartLog($"[REHYDRATE] wrapper órfão detectado; scrub + reinserção. reason={reason}");
+                        RemoveOrphanedEmbeddedControls("rehydrate_scrub");
+                    }
+
+                    InsertEmbedded();
+                }
+
+                if (embeddedControl == null)
+                {
+                    SmartLog($"[REHYDRATE] pending (UI ainda indisponível). reason={reason}");
+                    _runtimeReady = false;
+                    return false;
+                }
+
+                BindPnlAccountListener(false, "rehydrate_" + reason);
+                StartRrTimer();
+                StartDecoTimer();
+                RefreshRrDisplay();
+                UpdatePnlDisplay("rehydrate_" + reason);
+                RefreshPositionAndOrders();
+                HardLock_RefreshCacheAndApplyUi("rehydrate_" + reason);
+                EvaluateRisk(false);
+
+                if (!_runtimeReady)
+                    SmartLog($"[REHYDRATE] runtime ready. reason={reason}");
+                _runtimeReady = true;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _runtimeReady = false;
+                SmartLog("EnsureSmartBoletaRuntimeReady ex: " + ex.Message);
+                return false;
+            }
+        }
+
         private void StopAttachTimer()
         {
             try { if (attachTimer == null) return; attachTimer.Stop(); attachTimer = null; } catch { }
@@ -2308,37 +2405,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             try
             {
                 SmartLog("[UI] HookChartTraderAndInsert invoked");
-                if (ChartControl == null) { SmartLog("Hook: ChartControl null"); SmartLog("[UI] ChartTrader hook failed"); return; }
-
-                TryRegisterChartActivationHooks();
-
-                chartWindow = Window.GetWindow(ChartControl.Parent) as Gui.Chart.Chart;
-                if (chartWindow == null) { SmartLog("Hook: chartWindow null"); SmartLog("[UI] ChartTrader hook failed"); return; }
-
-                try { chartTrader = chartWindow.FindFirst("ChartWindowChartTraderControl") as Gui.Chart.ChartTrader; } catch { }
-                if (chartTrader == null) chartTrader = FindVisualChildren<Gui.Chart.ChartTrader>(chartWindow).FirstOrDefault();
-
-                var content = chartTrader?.Content as DependencyObject;
-                if (content != null)
-                    chartTraderGrid = content as Grid ?? FindVisualChildren<Grid>(content).FirstOrDefault();
-
-                if (chartTrader != null)
-                    SmartLog("[UI] ChartTrader hook successful");
-                else
-                    SmartLog("[UI] ChartTrader hook failed");
-
-                WireAccountSelector(); // conecta ao selector de conta
-
-                if (!TabSelected()) { RegisterTabHandler(); SmartLog("Hook: tab not selected - waiting"); return; }
-
-                // ✅ Regra de inicialização: sempre tentar inserir a UI quando a aba está ativa.
-                // HardLock é aplicado após a UI existir (no próprio InsertEmbedded).
-                if (!panelActive) InsertEmbedded();
-                else
-                {
-                    UpdateEmbeddedForSelectedTab();
-                    try { RefreshPositionAndOrders(); } catch { }
-                }
+                EnsureSmartBoletaRuntimeReady("hook_chart_trader");
             }
             catch (Exception ex) { SmartLog("HookChartTraderAndInsert ex: " + ex.Message); }
         }
@@ -2358,7 +2425,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 accountSelector = sel;
                 accountSelector.SelectionChanged += AccountSelector_SelectionChanged;
                 selectedAccountCached = accountSelector.SelectedAccount;
-                SmartLog("Account selector wired.");
+                SmartLog("[REHYDRATE] account selector reattached.");
 
                 // ✅ PnL: escuta updates da conta selecionada no ChartTrader
                 BindPnlAccountListener(true, "wire_account_selector");
@@ -2464,16 +2531,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                             SmartLog($"[TAB] SelectionChanged TabSelected={TabSelected()}");
                             if (TabSelected())
                             {
-                                WireAccountSelector();
-                                if (!panelActive)
-                                {
-                                    InsertEmbedded();
-                                }
-                                else
-                                {
-                                    UpdateEmbeddedForSelectedTab();
-                                    try { RefreshPositionAndOrders(); } catch { }
-                                }
+                                EnsureSmartBoletaRuntimeReady("tab_selection_changed");
 
                                 ReapplyRiskVisualState("tab_activated_selection_changed");
                             }
@@ -2572,6 +2630,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 try { HardLock_RefreshCacheAndApplyUi("insert_embedded"); } catch { }
 
                 try { if (attachTimer != null) { attachTimer.Stop(); attachTimer = null; SmartLog("attach timer parado após attach."); } } catch { }
+                _runtimeReady = false;
             }
             catch (Exception ex) { SmartLog("InsertEmbedded ex: " + ex.Message); }
         }
@@ -2615,6 +2674,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 embeddedWrapper = null;
                 addedRow = null;
                 panelActive = false;
+                _runtimeReady = false;
 
                 // ✅ FIX: NÃO resetar _riskOverlayShown aqui.
                 // Motivo: se o Risk bloqueou e o usuário remove/reinsere a boleta,
@@ -2798,7 +2858,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 if (TabSelected() && !panelActive)
                 {
-                    InsertEmbedded();
+                    EnsureSmartBoletaRuntimeReady("chart_mouse_enter");
                 }
             }
             catch { }
@@ -2814,10 +2874,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 SmartLog($"[HOOK] IsVisibleChanged visible={isVisibleNow}");
                 if (isVisibleNow)
                 {
-                    if (TabSelected() && !panelActive)
-                    {
-                        try { InsertEmbedded(); } catch { }
-                    }
+                    if (TabSelected())
+                        EnsureSmartBoletaRuntimeReady("chart_visible");
 
                     ReapplyRiskVisualState("tab_activated_visible");
                 }
@@ -4800,12 +4858,15 @@ private void EnsureRiskResetDaily()
         {
             try
             {
+                if (_chartHandlersRegistered) return;
                 if (ChartControl != null) ChartControl.MouseLeftButtonDown += LeftMouseDown;
                 if (ChartPanel != null)
                 {
                     ChartPanel.PreviewKeyDown += ChartPanel_PreviewKeyDown;
                     ChartPanel.PreviewKeyUp += ChartPanel_PreviewKeyUp;
                 }
+                _chartHandlersRegistered = true;
+                SmartLog("[REHYDRATE] chart handlers reattached.");
             }
             catch (Exception ex) { SmartLog("RegisterChartHandlers ex: " + ex.Message); }
         }
@@ -4814,12 +4875,14 @@ private void EnsureRiskResetDaily()
         {
             try
             {
+                if (!_chartHandlersRegistered) return;
                 if (ChartControl != null) ChartControl.MouseLeftButtonDown -= LeftMouseDown;
                 if (ChartPanel != null)
                 {
                     ChartPanel.PreviewKeyDown -= ChartPanel_PreviewKeyDown;
                     ChartPanel.PreviewKeyUp -= ChartPanel_PreviewKeyUp;
                 }
+                _chartHandlersRegistered = false;
             }
             catch (Exception ex) { SmartLog("UnregisterChartHandlers ex: " + ex.Message); }
         }
