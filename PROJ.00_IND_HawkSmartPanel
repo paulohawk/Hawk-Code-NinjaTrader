@@ -578,6 +578,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         public TimeSpan? EndDayTime { get; set; } = null;
         public SBEndDayScope EndDayScope { get; set; } = SBEndDayScope.ThisChartOnly;
+        private bool _endDayTriggered = false;
+        private DateTime _endDayLastResetDate = DateTime.MinValue;
 
         private string BoletaId;
 
@@ -3055,12 +3057,75 @@ protected override void OnBarUpdate()
         if (AtrAuto && IsFirstTickOfBar)
             ComputeAtrAutoAndApply();
 
+        CheckEndDayRuntime();
+
         // Refresh periódico de feeds e estado
         RunPeriodicRefresh();
     }
     catch (Exception ex)
     {
         SmartLog("OnBarUpdate ex: " + ex.Message);
+    }
+}
+
+private void CheckEndDayRuntime()
+{
+    try
+    {
+        DateTime now = DateTime.Now;
+
+        if (now.Date != _endDayLastResetDate)
+        {
+            _endDayTriggered = false;
+            _endDayLastResetDate = now.Date;
+        }
+
+        if (!EndDayTime.HasValue)
+            return;
+
+        if (_endDayTriggered)
+            return;
+
+        if (now.TimeOfDay >= EndDayTime.Value)
+            TriggerEndDay();
+    }
+    catch (Exception ex)
+    {
+        SmartLog("CheckEndDayRuntime ex: " + ex.Message);
+    }
+}
+
+private void TriggerEndDay()
+{
+    try
+    {
+        if (_endDayTriggered)
+            return;
+
+        if (!EndDayTime.HasValue)
+            return;
+
+        _endDayTriggered = true;
+        SmartLog("[ENDDAY] runtime triggered");
+
+        buyButton = false;
+        sellButton = false;
+        embeddedControl?.SetOnClickState(false);
+        SetTradingFromChartEnabled(false);
+        embeddedControl?.SetLastOrderInfo("Bloqueado: horário limite atingido");
+
+        if (EnableOverlayOnEndDay)
+        {
+            overlayController?.ShowOverlay(
+                EndDayTime.Value,
+                OverlayOpacity,
+                OverlayDurationSeconds,
+                "Horário limite operacional atingido.");
+        }
+    }
+    catch (Exception ex)
+    {
+        SmartLog("TriggerEndDay ex: " + ex.Message);
     }
 }
 
