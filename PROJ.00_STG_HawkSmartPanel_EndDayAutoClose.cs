@@ -1,5 +1,6 @@
 #region Using declarations
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
@@ -177,11 +178,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             try
             {
-                CancelAllOrders();
+                CancelWorkingOrdersForInstrument();
             }
             catch (Exception ex)
             {
-                LogInfo($"CancelAllOrders exception: {ex.Message}");
+                LogInfo($"CancelWorkingOrdersForInstrument exception: {ex.Message}");
             }
 
             try
@@ -217,7 +218,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     return;
                 }
 
-                TryAccountFlattenWithFallback();
+                TryAccountFlattenForCurrentInstrument();
                 LogInfo($"Account.Flatten fallback executed for instrument={Instrument?.FullName ?? "?"}. attempt={flattenAttempts}.");
             }
             catch (Exception ex)
@@ -226,22 +227,56 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
         }
 
-        private void TryAccountFlattenWithFallback()
+        private void CancelWorkingOrdersForInstrument()
         {
             try
             {
-                Account.Flatten(new[] { Instrument });
+                if (Account == null || Instrument == null || Account.Orders == null)
+                    return;
+
+                var ordersToCancel = Account.Orders
+                    .Where(o =>
+                        o != null
+                        && o.Instrument != null
+                        && o.Instrument == Instrument
+                        && (o.OrderState == OrderState.Working
+                            || o.OrderState == OrderState.Accepted
+                            || o.OrderState == OrderState.Submitted
+                            || o.OrderState == OrderState.PartFilled))
+                    .ToList();
+
+                foreach (var ord in ordersToCancel)
+                {
+                    try
+                    {
+                        Account.Cancel(new[] { ord });
+                        LogInfo($"Order cancel requested: {ord.Name} state={ord.OrderState}");
+                    }
+                    catch (Exception ex)
+                    {
+                        LogInfo($"Order cancel exception: {ex.Message}");
+                    }
+                }
             }
-            catch
+            catch (Exception ex)
             {
-                try
-                {
-                    Account.Flatten(Instrument);
-                }
-                catch
-                {
-                    Account.Flatten();
-                }
+                LogInfo($"CancelWorkingOrdersForInstrument failed: {ex.Message}");
+            }
+        }
+
+        private void TryAccountFlattenForCurrentInstrument()
+        {
+            try
+            {
+                if (Account == null || Instrument == null)
+                    return;
+
+                Account.Flatten(new List<Instrument> { Instrument });
+            }
+            catch (Exception ex)
+            {
+                LogInfo($"Account.Flatten exception: {ex.Message}");
+                throw;
             }
         }
 
