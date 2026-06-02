@@ -62,6 +62,9 @@ namespace NinjaTrader.NinjaScript.Indicators
             public double AnchorPrice;
             public double AvwapEntryReference;
             public double EntryLevel;
+            public double OffsetPoints;
+            public double EffectiveOffset;
+            public double VisualEntryLevelAtSignalBar;
         }
 
         private Series<double> trueRangeSeries;
@@ -98,6 +101,10 @@ namespace NinjaTrader.NinjaScript.Indicators
         private double avwapPrevious = double.NaN;
         private double entryLevel = double.NaN;
         private double avwapEntryReference = double.NaN;
+        private double currentVisualEntryLevel = double.NaN;
+        private double currentSignalAvwapReference = double.NaN;
+        private double currentSignalEntryLevel = double.NaN;
+        private double currentSignalEffectiveOffset = double.NaN;
 
         private bool inTrade;
         private TradeDirection tradeDirection = TradeDirection.None;
@@ -111,6 +118,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         private double currentTradeAnchorPrice = double.NaN;
         private double currentTradeAvwapReference = double.NaN;
         private double currentTradeEntryLevel = double.NaN;
+        private double currentTradeEffectiveOffset = double.NaN;
+        private double currentTradeVisualEntryLevelAtSignalBar = double.NaN;
 
         private double totalNetPnl;
         private double grossProfit;
@@ -501,18 +510,47 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private void TryBridgeTradeBeforeContextInvalidation(DateTime timeBrt)
         {
-            double signalEntryLevel = CurrentBar > 0 ? entryLevelSeries[1] : double.NaN;
-            double signalAvwapReference = CurrentBar > 0 ? avwapSeries[1] : double.NaN;
+            double signalAvwapReference;
+            double signalEntryLevel;
+            double effectiveOffset;
+
+            if (!TryGetOperationalSignalLevel(out signalAvwapReference, out signalEntryLevel, out effectiveOffset))
+                return;
 
             if (!contextActive || !CanEnter(timeBrt) || double.IsNaN(signalEntryLevel))
                 return;
+
+            DebugLog(timeBrt, "OPERATIONAL_SIGNAL_LEVEL_CALCULATED",
+                string.Format(CultureInfo.InvariantCulture,
+                    "side={0} signal_avwap_reference={1:F4} signal_entry_level={2:F4} configured_offset={3:F4} effective_offset={4:F4}",
+                    SideName(contextSide),
+                    signalAvwapReference,
+                    signalEntryLevel,
+                    AvwapOffsetPoints,
+                    effectiveOffset));
 
             bool touched = Low[0] <= signalEntryLevel && High[0] >= signalEntryLevel;
             if (!touched)
                 return;
 
-            DebugLog(timeBrt, "BRIDGE_TRADE_DETECTED", string.Format(CultureInfo.InvariantCulture, "side={0} signal_entry_level={1:F2} signal_avwap_reference={2:F2}", SideName(contextSide), signalEntryLevel, signalAvwapReference));
-            EnterVirtualTrade(timeBrt, contextSide == TrendBull ? TradeDirection.Long : TradeDirection.Short, signalEntryLevel, signalAvwapReference, signalEntryLevel, true);
+            DebugLog(timeBrt, "BRIDGE_TRADE_DETECTED",
+                string.Format(CultureInfo.InvariantCulture,
+                    "side={0} signal_avwap_reference={1:F4} signal_entry_level={2:F4} configured_offset={3:F4} effective_offset={4:F4}",
+                    SideName(contextSide),
+                    signalAvwapReference,
+                    signalEntryLevel,
+                    AvwapOffsetPoints,
+                    effectiveOffset));
+
+            EnterVirtualTrade(
+                timeBrt,
+                contextSide == TrendBull ? TradeDirection.Long : TradeDirection.Short,
+                signalEntryLevel,
+                signalAvwapReference,
+                signalEntryLevel,
+                effectiveOffset,
+                true);
+
             CheckOpenTradeExit(timeBrt, true);
         }
 
@@ -537,6 +575,10 @@ namespace NinjaTrader.NinjaScript.Indicators
             avwapPrevious = double.NaN;
             entryLevel = double.NaN;
             avwapEntryReference = double.NaN;
+            currentVisualEntryLevel = double.NaN;
+            currentSignalAvwapReference = double.NaN;
+            currentSignalEntryLevel = double.NaN;
+            currentSignalEffectiveOffset = double.NaN;
             DebugLog(timeBrt, "AVWAP_ANCHOR_CREATED", string.Format(CultureInfo.InvariantCulture, "side={0} anchor_bar={1} anchor_time_brt={2:yyyy-MM-dd HH:mm} anchor_price={3:F2} anchor_type={4}", SideName(contextSide), anchorBarIndex, anchorTimeBrt, anchorPrice, anchorType));
         }
 
@@ -556,6 +598,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             avwapCurrent = double.NaN;
             entryLevel = double.NaN;
             avwapEntryReference = double.NaN;
+            currentVisualEntryLevel = double.NaN;
 
             if (!contextActive || anchorBarIndex < 0 || anchorBarIndex > CurrentBar)
             {
@@ -585,14 +628,21 @@ namespace NinjaTrader.NinjaScript.Indicators
             avwapSeries[0] = avwapCurrent;
 
             avwapPrevious = CurrentBar > 0 ? avwapSeries[1] : double.NaN;
-            entryLevel = contextSide == TrendBull ? avwapCurrent + AvwapOffsetPoints : avwapCurrent - AvwapOffsetPoints;
-            entryLevelSeries[0] = entryLevel;
+            currentVisualEntryLevel = contextSide == TrendBull ? avwapCurrent + AvwapOffsetPoints : avwapCurrent - AvwapOffsetPoints;
+            entryLevel = currentVisualEntryLevel;
+            entryLevelSeries[0] = currentVisualEntryLevel;
             avwapEntryReference = avwapCurrent;
 
             if (CurrentBar <= contextStartBar)
-                DebugLog(timeBrt, "CONTEXT_NOT_READY", string.Format(CultureInfo.InvariantCulture, "context_start_bar={0} current_bar={1} avwap_current={2:F4} entry_level_current={3:F4}", contextStartBar, CurrentBar, avwapCurrent, entryLevel));
+                DebugLog(timeBrt, "CONTEXT_NOT_READY", string.Format(CultureInfo.InvariantCulture, "context_start_bar={0} current_bar={1} avwap_current={2:F4} visual_entry_level={3:F4}", contextStartBar, CurrentBar, avwapCurrent, currentVisualEntryLevel));
 
-            DebugLog(timeBrt, "ENTRY_LEVEL_CALCULATED", string.Format(CultureInfo.InvariantCulture, "side={0} avwap_current={1:F2} entry_level_current={2:F2} entry_level_for_next_bar={2:F2} context_side={0}", SideName(contextSide), avwapCurrent, entryLevel));
+            DebugLog(timeBrt, "VISUAL_ENTRY_LEVEL_CALCULATED",
+                string.Format(CultureInfo.InvariantCulture,
+                    "side={0} avwap_current={1:F4} visual_entry_level={2:F4} offset={3:F4}",
+                    SideName(contextSide),
+                    avwapCurrent,
+                    currentVisualEntryLevel,
+                    AvwapOffsetPoints));
         }
 
         private bool CanBuildContext(DateTime timeBrt)
@@ -608,22 +658,95 @@ namespace NinjaTrader.NinjaScript.Indicators
                 && contextStartBar >= 0
                 && CurrentBar > contextStartBar
                 && CurrentBar > 0
-                && !double.IsNaN(entryLevelSeries[1]);
+                && !double.IsNaN(avwapSeries[1]);
+        }
+
+        private bool TryGetOperationalSignalLevel(out double signalAvwapReference, out double signalEntryLevel, out double effectiveOffset)
+        {
+            signalAvwapReference = double.NaN;
+            signalEntryLevel = double.NaN;
+            effectiveOffset = double.NaN;
+            currentSignalAvwapReference = double.NaN;
+            currentSignalEntryLevel = double.NaN;
+            currentSignalEffectiveOffset = double.NaN;
+
+            if (!contextActive || CurrentBar <= 0)
+                return false;
+
+            signalAvwapReference = avwapSeries[1];
+
+            if (double.IsNaN(signalAvwapReference))
+                return false;
+
+            signalEntryLevel = contextSide == TrendBull
+                ? signalAvwapReference + AvwapOffsetPoints
+                : signalAvwapReference - AvwapOffsetPoints;
+
+            effectiveOffset = signalEntryLevel - signalAvwapReference;
+
+            double expected = contextSide == TrendBull ? AvwapOffsetPoints : -AvwapOffsetPoints;
+            if (Math.Abs(effectiveOffset - expected) > 0.0001)
+            {
+                Print(string.Format(CultureInfo.InvariantCulture,
+                    "{0} OFFSET WARNING | bar={1} side={2} expected={3:F4} effective={4:F4} avwap_ref={5:F4} entry={6:F4}",
+                    VersionName,
+                    CurrentBar,
+                    SideName(contextSide),
+                    expected,
+                    effectiveOffset,
+                    signalAvwapReference,
+                    signalEntryLevel));
+            }
+
+            currentSignalAvwapReference = signalAvwapReference;
+            currentSignalEntryLevel = signalEntryLevel;
+            currentSignalEffectiveOffset = effectiveOffset;
+            return true;
         }
 
         private void TryRegularEntry(DateTime timeBrt)
         {
-            double signalEntryLevel = CurrentBar > 0 ? entryLevelSeries[1] : double.NaN;
-            double signalAvwapReference = CurrentBar > 0 ? avwapSeries[1] : double.NaN;
+            double signalAvwapReference;
+            double signalEntryLevel;
+            double effectiveOffset;
+
+            if (!TryGetOperationalSignalLevel(out signalAvwapReference, out signalEntryLevel, out effectiveOffset))
+                return;
 
             if (!contextActive || !IsContextReady() || !CanEnter(timeBrt) || double.IsNaN(signalEntryLevel))
                 return;
 
+            DebugLog(timeBrt, "OPERATIONAL_SIGNAL_LEVEL_CALCULATED",
+                string.Format(CultureInfo.InvariantCulture,
+                    "side={0} signal_avwap_reference={1:F4} signal_entry_level={2:F4} configured_offset={3:F4} effective_offset={4:F4}",
+                    SideName(contextSide),
+                    signalAvwapReference,
+                    signalEntryLevel,
+                    AvwapOffsetPoints,
+                    effectiveOffset));
+
             if (Low[0] <= signalEntryLevel && High[0] >= signalEntryLevel)
             {
                 TradeDirection direction = contextSide == TrendBull ? TradeDirection.Long : TradeDirection.Short;
-                DebugLog(timeBrt, "ENTRY_DETECTED", string.Format(CultureInfo.InvariantCulture, "direction={0} signal_entry_level={1:F2} signal_avwap_reference={2:F2}", direction, signalEntryLevel, signalAvwapReference));
-                EnterVirtualTrade(timeBrt, direction, signalEntryLevel, signalAvwapReference, signalEntryLevel, false);
+
+                DebugLog(timeBrt, "ENTRY_DETECTED",
+                    string.Format(CultureInfo.InvariantCulture,
+                        "direction={0} signal_avwap_reference={1:F4} signal_entry_level={2:F4} configured_offset={3:F4} effective_offset={4:F4}",
+                        direction,
+                        signalAvwapReference,
+                        signalEntryLevel,
+                        AvwapOffsetPoints,
+                        effectiveOffset));
+
+                EnterVirtualTrade(
+                    timeBrt,
+                    direction,
+                    signalEntryLevel,
+                    signalAvwapReference,
+                    signalEntryLevel,
+                    effectiveOffset,
+                    false);
+
                 CheckOpenTradeExit(timeBrt, true);
             }
         }
@@ -653,7 +776,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             dailyLocked = lockedNow;
         }
 
-        private void EnterVirtualTrade(DateTime timeBrt, TradeDirection direction, double virtualEntryPrice, double signalAvwapReference, double signalEntryLevel, bool bridge)
+        private void EnterVirtualTrade(DateTime timeBrt, TradeDirection direction, double virtualEntryPrice, double signalAvwapReference, double signalEntryLevel, double effectiveOffset, bool bridge)
         {
             inTrade = true;
             tradeDirection = direction;
@@ -667,13 +790,15 @@ namespace NinjaTrader.NinjaScript.Indicators
             currentTradeAnchorPrice = anchorPrice;
             currentTradeAvwapReference = signalAvwapReference;
             currentTradeEntryLevel = signalEntryLevel;
+            currentTradeEffectiveOffset = effectiveOffset;
+            currentTradeVisualEntryLevelAtSignalBar = entryLevel;
 
             if (direction == TradeDirection.Long)
                 Draw.ArrowUp(this, "HM13_ENTRY_LONG_" + CurrentBar + "_" + tradeSequence, false, 0, entryPrice - TickSizePoints * 8.0, Brushes.LimeGreen);
             else
                 Draw.ArrowDown(this, "HM13_ENTRY_SHORT_" + CurrentBar + "_" + tradeSequence, false, 0, entryPrice + TickSizePoints * 8.0, Brushes.Red);
 
-            DebugLog(timeBrt, "VIRTUAL_TRADE_OPENED", string.Format(CultureInfo.InvariantCulture, "direction={0} entry={1:F2} stop={2:F2} target={3:F2} bridge={4}", direction, entryPrice, stopPrice, targetPrice, bridge));
+            DebugLog(timeBrt, "VIRTUAL_TRADE_OPENED", string.Format(CultureInfo.InvariantCulture, "direction={0} entry={1:F2} stop={2:F2} target={3:F2} bridge={4} signal_avwap_reference={5:F4} signal_entry_level={6:F4} effective_offset={7:F4}", direction, entryPrice, stopPrice, targetPrice, bridge, signalAvwapReference, signalEntryLevel, effectiveOffset));
         }
 
         private void CheckOpenTradeExit(DateTime timeBrt, bool entryCandleCheck)
@@ -784,7 +909,10 @@ namespace NinjaTrader.NinjaScript.Indicators
                 AnchorTimeBrt = currentTradeAnchorTimeBrt,
                 AnchorPrice = currentTradeAnchorPrice,
                 AvwapEntryReference = currentTradeAvwapReference,
-                EntryLevel = currentTradeEntryLevel
+                EntryLevel = currentTradeEntryLevel,
+                OffsetPoints = AvwapOffsetPoints,
+                EffectiveOffset = currentTradeEffectiveOffset,
+                VisualEntryLevelAtSignalBar = currentTradeVisualEntryLevelAtSignalBar
             };
             closedTrades.Add(record);
             ExportTrade(record);
@@ -804,6 +932,12 @@ namespace NinjaTrader.NinjaScript.Indicators
             stopPrice = double.NaN;
             targetPrice = double.NaN;
             currentTradeIsBridge = false;
+            currentTradeAnchorTimeBrt = DateTime.MinValue;
+            currentTradeAnchorPrice = double.NaN;
+            currentTradeAvwapReference = double.NaN;
+            currentTradeEntryLevel = double.NaN;
+            currentTradeEffectiveOffset = double.NaN;
+            currentTradeVisualEntryLevelAtSignalBar = double.NaN;
             UpdateDailyLock(timeBrt);
         }
 
@@ -820,6 +954,10 @@ namespace NinjaTrader.NinjaScript.Indicators
             avwapPrevious = double.NaN;
             entryLevel = double.NaN;
             avwapEntryReference = double.NaN;
+            currentVisualEntryLevel = double.NaN;
+            currentSignalAvwapReference = double.NaN;
+            currentSignalEntryLevel = double.NaN;
+            currentSignalEffectiveOffset = double.NaN;
             if (timeBrt != DateTime.MinValue)
                 DebugLog(timeBrt, "CONTEXT_INVALIDATED", "reason=" + reason);
         }
@@ -895,7 +1033,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 using (StreamWriter writer = new StreamWriter(resolvedCsvPath, true, Encoding.UTF8))
                 {
                     if (writeHeader)
-                        writer.WriteLine("trade_id,version,instrument,entry_time_brt,exit_time_brt,direction,entry_price,exit_price,stop_price,target_price,exit_type,gross_pnl,cost,net_pnl,day_pnl_after_trade,trades_today_after_trade,is_bridge_trade,anchor_time_brt,anchor_price,avwap_entry_reference,entry_level");
+                        writer.WriteLine("trade_id,version,instrument,entry_time_brt,exit_time_brt,direction,entry_price,exit_price,stop_price,target_price,exit_type,gross_pnl,cost,net_pnl,day_pnl_after_trade,trades_today_after_trade,is_bridge_trade,anchor_time_brt,anchor_price,avwap_entry_reference,entry_level,offset_points,effective_offset,visual_entry_level_at_entry_bar");
 
                     writer.WriteLine(BuildTradeCsvLine(trade));
                 }
@@ -935,7 +1073,10 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Csv(trade.AnchorTimeBrt == DateTime.MinValue ? string.Empty : trade.AnchorTimeBrt.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)),
                 double.IsNaN(trade.AnchorPrice) ? string.Empty : trade.AnchorPrice.ToString("F2", CultureInfo.InvariantCulture),
                 double.IsNaN(trade.AvwapEntryReference) ? string.Empty : trade.AvwapEntryReference.ToString("F4", CultureInfo.InvariantCulture),
-                double.IsNaN(trade.EntryLevel) ? string.Empty : trade.EntryLevel.ToString("F2", CultureInfo.InvariantCulture)
+                double.IsNaN(trade.EntryLevel) ? string.Empty : trade.EntryLevel.ToString("F4", CultureInfo.InvariantCulture),
+                trade.OffsetPoints.ToString("F4", CultureInfo.InvariantCulture),
+                trade.EffectiveOffset.ToString("F4", CultureInfo.InvariantCulture),
+                double.IsNaN(trade.VisualEntryLevelAtSignalBar) ? string.Empty : trade.VisualEntryLevelAtSignalBar.ToString("F4", CultureInfo.InvariantCulture)
             });
         }
 
