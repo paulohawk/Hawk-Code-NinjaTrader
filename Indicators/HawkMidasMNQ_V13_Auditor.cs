@@ -65,6 +65,10 @@ namespace NinjaTrader.NinjaScript.Indicators
             public double OffsetPoints;
             public double EffectiveOffset;
             public double VisualEntryLevelAtSignalBar;
+            public int ContextId;
+            public bool OneTradePerDirectionContextEnabled;
+            public bool ContextTradeTakenBeforeEntry;
+            public int ContextTradeSide;
         }
 
         private Series<double> trueRangeSeries;
@@ -93,6 +97,9 @@ namespace NinjaTrader.NinjaScript.Indicators
         private bool contextActive;
         private int contextSide = TrendUnknown;
         private int contextStartBar = -1;
+        private int contextId = 0;
+        private bool contextTradeTaken = false;
+        private int contextTradeSide = TrendUnknown;
         private int anchorBarIndex = -1;
         private DateTime anchorTimeBrt = DateTime.MinValue;
         private double anchorPrice = double.NaN;
@@ -120,6 +127,10 @@ namespace NinjaTrader.NinjaScript.Indicators
         private double currentTradeEntryLevel = double.NaN;
         private double currentTradeEffectiveOffset = double.NaN;
         private double currentTradeVisualEntryLevelAtSignalBar = double.NaN;
+        private int currentTradeContextId = 0;
+        private bool currentTradeOneTradePerDirectionContextEnabled = false;
+        private bool currentTradeContextTradeTakenBeforeEntry = false;
+        private int currentTradeContextTradeSide = TrendUnknown;
 
         private double totalNetPnl;
         private double grossProfit;
@@ -166,6 +177,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 RoundTripCostUsd = 2.0;
                 InitialCapital = 1500.0;
                 MaxTradesPerDay = 2;
+                OneTradePerDirectionContext = true;
                 DailyProfitTargetUsd = 198.0;
                 DailyStopUsd = -104.0;
                 OperationalTimeZoneId = "E. South America Standard Time";
@@ -281,6 +293,9 @@ namespace NinjaTrader.NinjaScript.Indicators
             trendSide = TrendUnknown;
             previousTrendSide = TrendUnknown;
             InvalidateContext(DateTime.MinValue, "reset");
+            contextId = 0;
+            contextTradeTaken = false;
+            contextTradeSide = TrendUnknown;
             inTrade = false;
             totalNetPnl = 0;
             grossProfit = 0;
@@ -321,6 +336,9 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             pivots.Clear();
             InvalidateContext(timeBrt, "new BRT day");
+            contextId = 0;
+            contextTradeTaken = false;
+            contextTradeSide = TrendUnknown;
             avwapCurrent = double.NaN;
             avwapPrevious = double.NaN;
             entryLevel = double.NaN;
@@ -520,6 +538,9 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (!contextActive || !CanEnter(timeBrt) || double.IsNaN(signalEntryLevel))
                 return;
 
+            if (!CanTradeCurrentContext(timeBrt))
+                return;
+
             DebugLog(timeBrt, "OPERATIONAL_SIGNAL_LEVEL_CALCULATED",
                 string.Format(CultureInfo.InvariantCulture,
                     "side={0} signal_avwap_reference={1:F4} signal_entry_level={2:F4} configured_offset={3:F4} effective_offset={4:F4}",
@@ -571,6 +592,9 @@ namespace NinjaTrader.NinjaScript.Indicators
             anchorTimeBrt = pivot.TimeBrt;
             anchorPrice = pivot.Price;
             anchorType = pivot.Type;
+            contextId++;
+            contextTradeTaken = false;
+            contextTradeSide = TrendUnknown;
             avwapCurrent = double.NaN;
             avwapPrevious = double.NaN;
             entryLevel = double.NaN;
@@ -579,6 +603,14 @@ namespace NinjaTrader.NinjaScript.Indicators
             currentSignalAvwapReference = double.NaN;
             currentSignalEntryLevel = double.NaN;
             currentSignalEffectiveOffset = double.NaN;
+            DebugLog(timeBrt, "CONTEXT_CREATED",
+                string.Format(CultureInfo.InvariantCulture,
+                    "context_id={0} side={1} anchor_bar={2} anchor_time_brt={3:yyyy-MM-dd HH:mm} anchor_price={4:F2}",
+                    contextId,
+                    SideName(contextSide),
+                    anchorBarIndex,
+                    anchorTimeBrt,
+                    anchorPrice));
             DebugLog(timeBrt, "AVWAP_ANCHOR_CREATED", string.Format(CultureInfo.InvariantCulture, "side={0} anchor_bar={1} anchor_time_brt={2:yyyy-MM-dd HH:mm} anchor_price={3:F2} anchor_type={4}", SideName(contextSide), anchorBarIndex, anchorTimeBrt, anchorPrice, anchorType));
         }
 
@@ -716,6 +748,9 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (!contextActive || !IsContextReady() || !CanEnter(timeBrt) || double.IsNaN(signalEntryLevel))
                 return;
 
+            if (!CanTradeCurrentContext(timeBrt))
+                return;
+
             DebugLog(timeBrt, "OPERATIONAL_SIGNAL_LEVEL_CALCULATED",
                 string.Format(CultureInfo.InvariantCulture,
                     "side={0} signal_avwap_reference={1:F4} signal_entry_level={2:F4} configured_offset={3:F4} effective_offset={4:F4}",
@@ -751,6 +786,23 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 
+        private bool CanTradeCurrentContext(DateTime timeBrt)
+        {
+            if (!OneTradePerDirectionContext)
+                return true;
+
+            if (!contextTradeTaken)
+                return true;
+
+            DebugLog(timeBrt, "CONTEXT_TRADE_BLOCKED",
+                string.Format(CultureInfo.InvariantCulture,
+                    "context_id={0} side={1} reason=one_trade_per_direction_context",
+                    contextId,
+                    SideName(contextSide)));
+
+            return false;
+        }
+
         private bool CanEnter(DateTime timeBrt)
         {
             TimeSpan tod = timeBrt.TimeOfDay;
@@ -778,6 +830,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private void EnterVirtualTrade(DateTime timeBrt, TradeDirection direction, double virtualEntryPrice, double signalAvwapReference, double signalEntryLevel, double effectiveOffset, bool bridge)
         {
+            bool contextTradeTakenBeforeEntry = contextTradeTaken;
+
             inTrade = true;
             tradeDirection = direction;
             entryBarIndex = CurrentBar;
@@ -792,6 +846,25 @@ namespace NinjaTrader.NinjaScript.Indicators
             currentTradeEntryLevel = signalEntryLevel;
             currentTradeEffectiveOffset = effectiveOffset;
             currentTradeVisualEntryLevelAtSignalBar = entryLevel;
+
+            if (OneTradePerDirectionContext)
+            {
+                contextTradeTaken = true;
+                contextTradeSide = direction == TradeDirection.Long ? TrendBull : TrendBear;
+
+                DebugLog(timeBrt, "CONTEXT_TRADE_MARKED",
+                    string.Format(CultureInfo.InvariantCulture,
+                        "context_id={0} side={1} direction={2} bridge={3}",
+                        contextId,
+                        SideName(contextTradeSide),
+                        direction,
+                        bridge));
+            }
+
+            currentTradeContextId = contextId;
+            currentTradeOneTradePerDirectionContextEnabled = OneTradePerDirectionContext;
+            currentTradeContextTradeTakenBeforeEntry = contextTradeTakenBeforeEntry;
+            currentTradeContextTradeSide = contextTradeSide;
 
             if (direction == TradeDirection.Long)
                 Draw.ArrowUp(this, "HM13_ENTRY_LONG_" + CurrentBar + "_" + tradeSequence, false, 0, entryPrice - TickSizePoints * 8.0, Brushes.LimeGreen);
@@ -912,7 +985,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                 EntryLevel = currentTradeEntryLevel,
                 OffsetPoints = AvwapOffsetPoints,
                 EffectiveOffset = currentTradeEffectiveOffset,
-                VisualEntryLevelAtSignalBar = currentTradeVisualEntryLevelAtSignalBar
+                VisualEntryLevelAtSignalBar = currentTradeVisualEntryLevelAtSignalBar,
+                ContextId = currentTradeContextId,
+                OneTradePerDirectionContextEnabled = currentTradeOneTradePerDirectionContextEnabled,
+                ContextTradeTakenBeforeEntry = currentTradeContextTradeTakenBeforeEntry,
+                ContextTradeSide = currentTradeContextTradeSide
             };
             closedTrades.Add(record);
             ExportTrade(record);
@@ -938,6 +1015,10 @@ namespace NinjaTrader.NinjaScript.Indicators
             currentTradeEntryLevel = double.NaN;
             currentTradeEffectiveOffset = double.NaN;
             currentTradeVisualEntryLevelAtSignalBar = double.NaN;
+            currentTradeContextId = 0;
+            currentTradeOneTradePerDirectionContextEnabled = false;
+            currentTradeContextTradeTakenBeforeEntry = false;
+            currentTradeContextTradeSide = TrendUnknown;
             UpdateDailyLock(timeBrt);
         }
 
@@ -986,8 +1067,9 @@ namespace NinjaTrader.NinjaScript.Indicators
             double avgLoss = losses == 0 ? 0 : grossLossAbs / losses;
             double payoff = Math.Abs(avgLoss) <= 0.0000001 ? 0 : avgWin / avgLoss;
 
+            string contextStatus = contextTradeTaken ? "Sim" : "Nao";
             string panel = string.Format(CultureInfo.InvariantCulture,
-                "{0}\nInstrumento: {1} | TF: {2}\nCapital: {3:C2} -> {4:C2}\nPnL liquido: {5:C2}\nTrades: {6} W/L: {7}/{8} Win%: {9:F1}\nPF: {10:F2} Payoff: {11:F2} MaxDD: {12:C2}\nMax perdas seq.: {13}\nTargets/Stops/EOD: {14}/{15}/{16}\nLong: {17:C2} Short: {18:C2}\nDia BRT: {19:yyyy-MM-dd} PnL: {20:C2} Trades: {21} Status: {22}\nCSV: {23}",
+                "{0}\nInstrumento: {1} | TF: {2}\nCapital: {3:C2} -> {4:C2}\nPnL liquido: {5:C2}\nTrades: {6} W/L: {7}/{8} Win%: {9:F1}\nPF: {10:F2} Payoff: {11:F2} MaxDD: {12:C2}\nMax perdas seq.: {13}\nTargets/Stops/EOD: {14}/{15}/{16}\nLong: {17:C2} Short: {18:C2}\nDia BRT: {19:yyyy-MM-dd} PnL: {20:C2} Trades: {21} Status: {22}\nContexto: ID {23} | {24} | Operado: {25}\nCSV: {26}",
                 VersionName,
                 Instrument != null ? Instrument.FullName : string.Empty,
                 BarsPeriod != null ? BarsPeriod.ToString() : string.Empty,
@@ -1011,6 +1093,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                 dayPnl,
                 tradesToday,
                 status,
+                contextId,
+                SideName(contextSide),
+                contextStatus,
                 lastCsvExportStatus);
             Draw.TextFixed(this, "HM13_PANEL", panel, TextPosition.TopLeft, Brushes.White, new SimpleFont("Consolas", 12), Brushes.Black, Brushes.DimGray, 70);
         }
@@ -1033,7 +1118,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 using (StreamWriter writer = new StreamWriter(resolvedCsvPath, true, Encoding.UTF8))
                 {
                     if (writeHeader)
-                        writer.WriteLine("trade_id,version,instrument,entry_time_brt,exit_time_brt,direction,entry_price,exit_price,stop_price,target_price,exit_type,gross_pnl,cost,net_pnl,day_pnl_after_trade,trades_today_after_trade,is_bridge_trade,anchor_time_brt,anchor_price,avwap_entry_reference,entry_level,offset_points,effective_offset,visual_entry_level_at_entry_bar");
+                        writer.WriteLine("trade_id,version,instrument,entry_time_brt,exit_time_brt,direction,entry_price,exit_price,stop_price,target_price,exit_type,gross_pnl,cost,net_pnl,day_pnl_after_trade,trades_today_after_trade,is_bridge_trade,anchor_time_brt,anchor_price,avwap_entry_reference,entry_level,offset_points,effective_offset,visual_entry_level_at_entry_bar,context_id,one_trade_per_direction_context,context_trade_taken_before_entry,context_trade_side");
 
                     writer.WriteLine(BuildTradeCsvLine(trade));
                 }
@@ -1076,7 +1161,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                 double.IsNaN(trade.EntryLevel) ? string.Empty : trade.EntryLevel.ToString("F4", CultureInfo.InvariantCulture),
                 trade.OffsetPoints.ToString("F4", CultureInfo.InvariantCulture),
                 trade.EffectiveOffset.ToString("F4", CultureInfo.InvariantCulture),
-                double.IsNaN(trade.VisualEntryLevelAtSignalBar) ? string.Empty : trade.VisualEntryLevelAtSignalBar.ToString("F4", CultureInfo.InvariantCulture)
+                double.IsNaN(trade.VisualEntryLevelAtSignalBar) ? string.Empty : trade.VisualEntryLevelAtSignalBar.ToString("F4", CultureInfo.InvariantCulture),
+                trade.ContextId.ToString(CultureInfo.InvariantCulture),
+                trade.OneTradePerDirectionContextEnabled ? "true" : "false",
+                trade.ContextTradeTakenBeforeEntry ? "true" : "false",
+                SideName(trade.ContextTradeSide)
             });
         }
 
@@ -1311,6 +1400,10 @@ namespace NinjaTrader.NinjaScript.Indicators
         [NinjaScriptProperty]
         [Display(Name = "Stop diario liquido USD", GroupName = "03 Gestao", Order = 7)]
         public double DailyStopUsd { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Um trade por sentido/contexto", GroupName = "03 Gestao", Order = 8)]
+        public bool OneTradePerDirectionContext { get; set; }
 
         [NinjaScriptProperty]
         [Display(Name = "Timezone operacional", GroupName = "04 Horario", Order = 1)]
