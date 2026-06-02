@@ -129,6 +129,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private int tradeSequence;
         private string resolvedCsvPath;
         private bool csvHeaderWritten;
+        private string lastCsvExportStatus = "aguardando trade fechado";
 
         protected override void OnStateChange()
         {
@@ -287,8 +288,9 @@ namespace NinjaTrader.NinjaScript.Indicators
             equityPeak = InitialCapital;
             maxDrawdown = 0;
             tradeSequence = 0;
-            resolvedCsvPath = ResolveCsvPath();
+            resolvedCsvPath = string.Empty;
             csvHeaderWritten = false;
+            lastCsvExportStatus = EnableCsvExport ? "aguardando trade fechado" : "desativado";
         }
 
         private void HandleDailyReset(DateTime dateBrt, DateTime timeBrt)
@@ -846,7 +848,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             double payoff = Math.Abs(avgLoss) <= 0.0000001 ? 0 : avgWin / avgLoss;
 
             string panel = string.Format(CultureInfo.InvariantCulture,
-                "{0}\nInstrumento: {1} | TF: {2}\nCapital: {3:C2} -> {4:C2}\nPnL liquido: {5:C2}\nTrades: {6} W/L: {7}/{8} Win%: {9:F1}\nPF: {10:F2} Payoff: {11:F2} MaxDD: {12:C2}\nMax perdas seq.: {13}\nTargets/Stops/EOD: {14}/{15}/{16}\nLong: {17:C2} Short: {18:C2}\nDia BRT: {19:yyyy-MM-dd} PnL: {20:C2} Trades: {21} Status: {22}",
+                "{0}\nInstrumento: {1} | TF: {2}\nCapital: {3:C2} -> {4:C2}\nPnL liquido: {5:C2}\nTrades: {6} W/L: {7}/{8} Win%: {9:F1}\nPF: {10:F2} Payoff: {11:F2} MaxDD: {12:C2}\nMax perdas seq.: {13}\nTargets/Stops/EOD: {14}/{15}/{16}\nLong: {17:C2} Short: {18:C2}\nDia BRT: {19:yyyy-MM-dd} PnL: {20:C2} Trades: {21} Status: {22}\nCSV: {23}",
                 VersionName,
                 Instrument != null ? Instrument.FullName : string.Empty,
                 BarsPeriod != null ? BarsPeriod.ToString() : string.Empty,
@@ -869,7 +871,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 currentBrtDate,
                 dayPnl,
                 tradesToday,
-                status);
+                status,
+                lastCsvExportStatus);
             Draw.TextFixed(this, "HM13_PANEL", panel, TextPosition.TopLeft, Brushes.White, new SimpleFont("Consolas", 12), Brushes.Black, Brushes.DimGray, 70);
         }
 
@@ -880,50 +883,59 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             try
             {
-                string path = string.IsNullOrWhiteSpace(resolvedCsvPath) ? ResolveCsvPath() : resolvedCsvPath;
-                string directory = Path.GetDirectoryName(path);
-                if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+                if (string.IsNullOrWhiteSpace(resolvedCsvPath))
+                    resolvedCsvPath = ResolveCsvPath();
+
+                string directory = Path.GetDirectoryName(resolvedCsvPath);
+                if (!string.IsNullOrWhiteSpace(directory))
                     Directory.CreateDirectory(directory);
 
-                bool writeHeader = !csvHeaderWritten && !File.Exists(path);
-                using (StreamWriter writer = new StreamWriter(path, true, Encoding.UTF8))
+                bool writeHeader = !File.Exists(resolvedCsvPath) || new FileInfo(resolvedCsvPath).Length == 0;
+                using (StreamWriter writer = new StreamWriter(resolvedCsvPath, true, Encoding.UTF8))
                 {
                     if (writeHeader)
-                    {
                         writer.WriteLine("trade_id,version,instrument,entry_time_brt,exit_time_brt,direction,entry_price,exit_price,stop_price,target_price,exit_type,gross_pnl,cost,net_pnl,day_pnl_after_trade,trades_today_after_trade,is_bridge_trade,anchor_time_brt,anchor_price,avwap_entry_reference,entry_level");
-                        csvHeaderWritten = true;
-                    }
-                    writer.WriteLine(string.Join(",", new string[]
-                    {
-                        trade.TradeId.ToString(CultureInfo.InvariantCulture),
-                        Csv(trade.Version),
-                        Csv(trade.Instrument),
-                        Csv(trade.EntryTimeBrt.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)),
-                        Csv(trade.ExitTimeBrt.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)),
-                        trade.Direction.ToString(),
-                        trade.EntryPrice.ToString("F2", CultureInfo.InvariantCulture),
-                        trade.ExitPrice.ToString("F2", CultureInfo.InvariantCulture),
-                        trade.StopPrice.ToString("F2", CultureInfo.InvariantCulture),
-                        trade.TargetPrice.ToString("F2", CultureInfo.InvariantCulture),
-                        trade.ExitType.ToString(),
-                        trade.GrossPnl.ToString("F2", CultureInfo.InvariantCulture),
-                        trade.Cost.ToString("F2", CultureInfo.InvariantCulture),
-                        trade.NetPnl.ToString("F2", CultureInfo.InvariantCulture),
-                        trade.DayPnlAfterTrade.ToString("F2", CultureInfo.InvariantCulture),
-                        trade.TradesTodayAfterTrade.ToString(CultureInfo.InvariantCulture),
-                        trade.IsBridgeTrade ? "true" : "false",
-                        Csv(trade.AnchorTimeBrt == DateTime.MinValue ? string.Empty : trade.AnchorTimeBrt.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)),
-                        double.IsNaN(trade.AnchorPrice) ? string.Empty : trade.AnchorPrice.ToString("F2", CultureInfo.InvariantCulture),
-                        double.IsNaN(trade.AvwapEntryReference) ? string.Empty : trade.AvwapEntryReference.ToString("F4", CultureInfo.InvariantCulture),
-                        double.IsNaN(trade.EntryLevel) ? string.Empty : trade.EntryLevel.ToString("F2", CultureInfo.InvariantCulture)
-                    }));
+
+                    writer.WriteLine(BuildTradeCsvLine(trade));
                 }
+
+                csvHeaderWritten = true;
+                lastCsvExportStatus = "OK: " + resolvedCsvPath;
+                DebugLog(DateTime.Now, "CSV_EXPORT_OK", resolvedCsvPath);
             }
             catch (Exception ex)
             {
-                if (EnableDebugLogs)
-                    Print(VersionName + " CSV export error: " + ex.Message);
+                lastCsvExportStatus = "ERRO CSV: " + ex.Message;
+                Print(VersionName + " CSV export error: " + ex.Message);
             }
+        }
+
+        private string BuildTradeCsvLine(TradeRecord trade)
+        {
+            return string.Join(",", new string[]
+            {
+                trade.TradeId.ToString(CultureInfo.InvariantCulture),
+                Csv(trade.Version),
+                Csv(trade.Instrument),
+                Csv(trade.EntryTimeBrt.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)),
+                Csv(trade.ExitTimeBrt.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)),
+                trade.Direction.ToString(),
+                trade.EntryPrice.ToString("F2", CultureInfo.InvariantCulture),
+                trade.ExitPrice.ToString("F2", CultureInfo.InvariantCulture),
+                trade.StopPrice.ToString("F2", CultureInfo.InvariantCulture),
+                trade.TargetPrice.ToString("F2", CultureInfo.InvariantCulture),
+                trade.ExitType.ToString(),
+                trade.GrossPnl.ToString("F2", CultureInfo.InvariantCulture),
+                trade.Cost.ToString("F2", CultureInfo.InvariantCulture),
+                trade.NetPnl.ToString("F2", CultureInfo.InvariantCulture),
+                trade.DayPnlAfterTrade.ToString("F2", CultureInfo.InvariantCulture),
+                trade.TradesTodayAfterTrade.ToString(CultureInfo.InvariantCulture),
+                trade.IsBridgeTrade ? "true" : "false",
+                Csv(trade.AnchorTimeBrt == DateTime.MinValue ? string.Empty : trade.AnchorTimeBrt.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)),
+                double.IsNaN(trade.AnchorPrice) ? string.Empty : trade.AnchorPrice.ToString("F2", CultureInfo.InvariantCulture),
+                double.IsNaN(trade.AvwapEntryReference) ? string.Empty : trade.AvwapEntryReference.ToString("F4", CultureInfo.InvariantCulture),
+                double.IsNaN(trade.EntryLevel) ? string.Empty : trade.EntryLevel.ToString("F2", CultureInfo.InvariantCulture)
+            });
         }
 
         private static string Csv(string value)
@@ -1013,10 +1025,46 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private string ResolveCsvPath()
         {
-            if (!string.IsNullOrWhiteSpace(CsvExportPath))
-                return CsvExportPath;
-            string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-            return Path.Combine(documents, "NinjaTrader 8", "export", VersionName + "_trades.csv");
+            string baseName = string.Format(
+                CultureInfo.InvariantCulture,
+                "{0}_{1}_{2}_trades.csv",
+                VersionName,
+                Instrument != null ? SanitizeFileName(Instrument.FullName) : "Instrument",
+                DateTime.Now.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture));
+
+            if (string.IsNullOrWhiteSpace(CsvExportPath))
+            {
+                string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+                string folder = Path.Combine(documents, "NinjaTrader 8", "export", VersionName);
+                Directory.CreateDirectory(folder);
+                return Path.Combine(folder, baseName);
+            }
+
+            string path = CsvExportPath.Trim();
+            bool looksLikeCsvFile = path.EndsWith(".csv", StringComparison.OrdinalIgnoreCase);
+
+            if (looksLikeCsvFile)
+            {
+                string directory = Path.GetDirectoryName(path);
+                if (!string.IsNullOrWhiteSpace(directory))
+                    Directory.CreateDirectory(directory);
+
+                return path;
+            }
+
+            Directory.CreateDirectory(path);
+            return Path.Combine(path, baseName);
+        }
+
+        private string SanitizeFileName(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return "Instrument";
+
+            foreach (char c in Path.GetInvalidFileNameChars())
+                value = value.Replace(c, '_');
+
+            return value.Replace(' ', '_');
         }
 
         private TimeSpan ParseTime(string value)
