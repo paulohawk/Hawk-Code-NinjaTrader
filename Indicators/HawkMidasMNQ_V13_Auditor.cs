@@ -7,6 +7,7 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Windows;
+using System.Xml.Serialization;
 using System.Windows.Media;
 using NinjaTrader.Data;
 using NinjaTrader.Gui.Tools;
@@ -165,6 +166,13 @@ namespace NinjaTrader.NinjaScript.Indicators
                 EnableCsvExport = false;
                 CsvExportPath = string.Empty;
                 EnableDebugLogs = false;
+                ShowZigZagMarkers = true;
+                ZigZagMarkerFontSize = 10;
+                ZigZagMarkerOffsetTicks = 4;
+                ZigZagHighBrush = Brushes.OrangeRed;
+                ZigZagLowBrush = Brushes.LimeGreen;
+                SuperTrendBullBrush = Brushes.LimeGreen;
+                SuperTrendBearBrush = Brushes.Red;
 
                 AddPlot(Brushes.DodgerBlue, "SuperTrend");
                 AddPlot(Brushes.Goldenrod, "ActiveAVWAP");
@@ -439,10 +447,37 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private void DrawPivot(PivotInfo pivot)
         {
-            if (pivot.Type == PivotType.High)
-                Draw.TriangleDown(this, PivotTag(pivot), false, CurrentBar - pivot.BarIndex, pivot.Price + TickSizePoints * 4.0, Brushes.OrangeRed);
-            else
-                Draw.TriangleUp(this, PivotTag(pivot), false, CurrentBar - pivot.BarIndex, pivot.Price - TickSizePoints * 4.0, Brushes.LimeGreen);
+            if (!ShowZigZagMarkers || !ShouldPlotVisualMarker(pivot.TimeBrt))
+                return;
+
+            bool isHigh = pivot.Type == PivotType.High;
+            string glyph = isHigh ? "▼" : "▲";
+            Brush brush = isHigh ? ZigZagHighBrush : ZigZagLowBrush;
+            double offset = TickSizePoints * ZigZagMarkerOffsetTicks;
+            double y = isHigh ? pivot.Price + offset : pivot.Price - offset;
+
+            Draw.Text(
+                this,
+                PivotTag(pivot),
+                false,
+                glyph,
+                CurrentBar - pivot.BarIndex,
+                y,
+                0,
+                brush,
+                new SimpleFont("Arial", ZigZagMarkerFontSize),
+                TextAlignment.Center,
+                Brushes.Transparent,
+                Brushes.Transparent,
+                0);
+        }
+
+        private bool ShouldPlotVisualMarker(DateTime timeBrt)
+        {
+            TimeSpan tod = timeBrt.TimeOfDay;
+            return tod >= ParseTime(TradingStartBrt)
+                && tod <= ParseTime(LastEntryBrt)
+                && !calendarBlocked;
         }
 
         private string PivotTag(PivotInfo pivot)
@@ -796,9 +831,9 @@ namespace NinjaTrader.NinjaScript.Indicators
             Values[2][0] = contextActive ? entryLevel : double.NaN;
 
             if (trendSide == TrendBull)
-                PlotBrushes[0][0] = Brushes.LimeGreen;
+                PlotBrushes[0][0] = SuperTrendBullBrush;
             else if (trendSide == TrendBear)
-                PlotBrushes[0][0] = Brushes.Red;
+                PlotBrushes[0][0] = SuperTrendBearBrush;
 
             string status = calendarBlocked ? "BLOQUEADO CALENDARIO" : dailyLocked ? "TRAVADO" : "LIBERADO";
             double winRate = closedTrades.Count == 0 ? 0 : wins * 100.0 / closedTrades.Count;
@@ -1119,6 +1154,64 @@ namespace NinjaTrader.NinjaScript.Indicators
         [NinjaScriptProperty]
         [Display(Name = "EnableDebugLogs", GroupName = "06 Auditoria", Order = 3)]
         public bool EnableDebugLogs { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Mostrar marcadores ZigZag", GroupName = "07 Visual", Order = 1)]
+        public bool ShowZigZagMarkers { get; set; }
+
+        [NinjaScriptProperty]
+        [Range(6, 30)]
+        [Display(Name = "Tamanho marcador ZigZag", GroupName = "07 Visual", Order = 2)]
+        public int ZigZagMarkerFontSize { get; set; }
+
+        [NinjaScriptProperty]
+        [Range(0, 50)]
+        [Display(Name = "Offset visual marcador ZigZag em ticks", GroupName = "07 Visual", Order = 3)]
+        public int ZigZagMarkerOffsetTicks { get; set; }
+
+        [XmlIgnore]
+        [Display(Name = "Cor ZigZag Topo", GroupName = "07 Visual", Order = 4)]
+        public Brush ZigZagHighBrush { get; set; }
+
+        [Browsable(false)]
+        public string ZigZagHighBrushSerializable
+        {
+            get { return Serialize.BrushToString(ZigZagHighBrush); }
+            set { ZigZagHighBrush = Serialize.StringToBrush(value); }
+        }
+
+        [XmlIgnore]
+        [Display(Name = "Cor ZigZag Fundo", GroupName = "07 Visual", Order = 5)]
+        public Brush ZigZagLowBrush { get; set; }
+
+        [Browsable(false)]
+        public string ZigZagLowBrushSerializable
+        {
+            get { return Serialize.BrushToString(ZigZagLowBrush); }
+            set { ZigZagLowBrush = Serialize.StringToBrush(value); }
+        }
+
+        [XmlIgnore]
+        [Display(Name = "Cor SuperTrend Comprador", GroupName = "07 Visual", Order = 6)]
+        public Brush SuperTrendBullBrush { get; set; }
+
+        [Browsable(false)]
+        public string SuperTrendBullBrushSerializable
+        {
+            get { return Serialize.BrushToString(SuperTrendBullBrush); }
+            set { SuperTrendBullBrush = Serialize.StringToBrush(value); }
+        }
+
+        [XmlIgnore]
+        [Display(Name = "Cor SuperTrend Vendedor", GroupName = "07 Visual", Order = 7)]
+        public Brush SuperTrendBearBrush { get; set; }
+
+        [Browsable(false)]
+        public string SuperTrendBearBrushSerializable
+        {
+            get { return Serialize.BrushToString(SuperTrendBearBrush); }
+            set { SuperTrendBearBrush = Serialize.StringToBrush(value); }
+        }
         #endregion
     }
 }

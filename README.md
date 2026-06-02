@@ -69,6 +69,19 @@ Principais recursos:
 - EOD BRT: `17:00`
 - Datas bloqueadas: `2026-05-25`
 
+
+## Ajustes visuais
+
+O indicador permite configurar:
+
+- exibição dos marcadores do ZigZag;
+- tamanho dos marcadores do ZigZag;
+- offset visual dos marcadores;
+- cor dos pivôs de topo e fundo;
+- cor do SuperTrend comprador e vendedor.
+
+Por padrão, os marcadores do ZigZag são plotados apenas dentro da janela operacional BRT.
+
 ## Observações de conversão Pine → NinjaTrader
 
 - A decisão operacional é feita após converter `Time[0]` para BRT; com `EnableDebugLogs = true`, cada candle registra `RAW Time[0]`, `Kind`, BRT convertido, `dateBrt`, hora BRT, timezone operacional e `SourceTimeZoneMode`.
