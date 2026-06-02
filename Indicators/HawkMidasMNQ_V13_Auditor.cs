@@ -10,6 +10,7 @@ using System.Windows;
 using System.Xml.Serialization;
 using System.Windows.Media;
 using NinjaTrader.Data;
+using NinjaTrader.Gui;
 using NinjaTrader.Gui.Tools;
 using NinjaTrader.NinjaScript;
 using NinjaTrader.NinjaScript.DrawingTools;
@@ -452,7 +453,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             bool isHigh = pivot.Type == PivotType.High;
             string glyph = isHigh ? "▼" : "▲";
-            Brush brush = isHigh ? ZigZagHighBrush : ZigZagLowBrush;
+            Brush brush = isHigh
+                ? (ZigZagHighBrush ?? Brushes.OrangeRed)
+                : (ZigZagLowBrush ?? Brushes.LimeGreen);
             double offset = TickSizePoints * ZigZagMarkerOffsetTicks;
             double y = isHigh ? pivot.Price + offset : pivot.Price - offset;
 
@@ -831,9 +834,9 @@ namespace NinjaTrader.NinjaScript.Indicators
             Values[2][0] = contextActive ? entryLevel : double.NaN;
 
             if (trendSide == TrendBull)
-                PlotBrushes[0][0] = SuperTrendBullBrush;
+                PlotBrushes[0][0] = SuperTrendBullBrush ?? Brushes.LimeGreen;
             else if (trendSide == TrendBear)
-                PlotBrushes[0][0] = SuperTrendBearBrush;
+                PlotBrushes[0][0] = SuperTrendBearBrush ?? Brushes.Red;
 
             string status = calendarBlocked ? "BLOQUEADO CALENDARIO" : dailyLocked ? "TRAVADO" : "LIBERADO";
             double winRate = closedTrades.Count == 0 ? 0 : wins * 100.0 / closedTrades.Count;
@@ -1176,8 +1179,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Browsable(false)]
         public string ZigZagHighBrushSerializable
         {
-            get { return Serialize.BrushToString(ZigZagHighBrush); }
-            set { ZigZagHighBrush = Serialize.StringToBrush(value); }
+            get { return NinjaTrader.Gui.Serialize.BrushToString(ZigZagHighBrush ?? Brushes.OrangeRed); }
+            set { ZigZagHighBrush = NinjaTrader.Gui.Serialize.StringToBrush(value) ?? Brushes.OrangeRed; }
         }
 
         [XmlIgnore]
@@ -1187,8 +1190,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Browsable(false)]
         public string ZigZagLowBrushSerializable
         {
-            get { return Serialize.BrushToString(ZigZagLowBrush); }
-            set { ZigZagLowBrush = Serialize.StringToBrush(value); }
+            get { return NinjaTrader.Gui.Serialize.BrushToString(ZigZagLowBrush ?? Brushes.LimeGreen); }
+            set { ZigZagLowBrush = NinjaTrader.Gui.Serialize.StringToBrush(value) ?? Brushes.LimeGreen; }
         }
 
         [XmlIgnore]
@@ -1198,8 +1201,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Browsable(false)]
         public string SuperTrendBullBrushSerializable
         {
-            get { return Serialize.BrushToString(SuperTrendBullBrush); }
-            set { SuperTrendBullBrush = Serialize.StringToBrush(value); }
+            get { return NinjaTrader.Gui.Serialize.BrushToString(SuperTrendBullBrush ?? Brushes.LimeGreen); }
+            set { SuperTrendBullBrush = NinjaTrader.Gui.Serialize.StringToBrush(value) ?? Brushes.LimeGreen; }
         }
 
         [XmlIgnore]
@@ -1209,8 +1212,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Browsable(false)]
         public string SuperTrendBearBrushSerializable
         {
-            get { return Serialize.BrushToString(SuperTrendBearBrush); }
-            set { SuperTrendBearBrush = Serialize.StringToBrush(value); }
+            get { return NinjaTrader.Gui.Serialize.BrushToString(SuperTrendBearBrush ?? Brushes.Red); }
+            set { SuperTrendBearBrush = NinjaTrader.Gui.Serialize.StringToBrush(value) ?? Brushes.Red; }
         }
         #endregion
     }
